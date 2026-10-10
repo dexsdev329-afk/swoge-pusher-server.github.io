@@ -253,7 +253,12 @@ async function principal() {
       const env = {};
       for (const [k, v] of Object.entries(process.env)) if (!/^(PARIS_|ODDS_API_|DATA_DIR$)/.test(k)) env[k] = v;
       Object.assign(env, { DATA_DIR: dir, ODDS_API_KEY: CLE_BANC, ODDS_API_TOTAL: '20000', ODDS_API_LIGUES: 'foot=soccer_epl,foot=soccer_france_ligue_one',
-                           PARIS_PRIX_LIGUES: 'soccer_epl', PARIS_PRIX_OBSERVE: 'soccer_france_ligue_one', PARIS_PRIX_RELEVE_H: '2', PARIS_PRIX_AVANT_TOUS: '1' });
+                           PARIS_PRIX_LIGUES: 'soccer_epl', PARIS_PRIX_OBSERVE: 'soccer_france_ligue_one', PARIS_PRIX_RELEVE_H: '2', PARIS_PRIX_AVANT_TOUS: '1',
+                           /* Lot 3 (10/10/2026) : une cle observee suit desormais PARIS_PRIX_OBSERVE_H (12 h par
+                              defaut) et non plus PARIS_PRIX_RELEVE_H. Le scenario garde la cadence d'avant (2 h)
+                              pour payer les memes releves : l'egalite journal actif / coupe doit porter sur assez de
+                              releves payees (>= 5), c'est l'intention de l'essai. */
+                           PARIS_PRIX_OBSERVE_H: '2' });
       if (journal !== undefined) env.PARIS_PRIX_JOURNAL = journal;
       const sortie = execFileSync(process.execPath, [__filename, '--scenario'], { cwd: __dirname, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
       fs.rmSync(dir, { recursive: true, force: true });
@@ -987,8 +992,15 @@ async function principal() {
     let rendu = '';
     bac.$ = () => ({ set innerHTML(v) { rendu = v; } });
     vm.runInContext(page.slice(dImp, fImp + 2), bac);
+    /* Lot 3 (10/10/2026) : impRend montre aussi l'observation des sports a deux
+       issues (obsRend) ; la carte se rend avec TOUT ce qu'elle appelle, sinon
+       l'essai ne rendrait plus le vrai etatImport. */
+    const dObs = page.indexOf('var OBS_NOMS='), fObs = page.indexOf('\n}\n', page.indexOf('function obsRend('));
+    ok(dObs > 0 && fObs > dObs, 'la page porte obsRend (lot 3)');
+    vm.runInContext(page.slice(dObs, fObs + 2), bac);
     bac.impRend(JSON.parse(JSON.stringify(imp.etatImport())));
     ok(/Price-age journal \(0 credits, read-only\)/.test(rendu), 'impRend(etatImport()) affiche la ligne du journal dans la carte du calendrier');
+    ok(/Market watch \(not sold\)/.test(rendu) && /PARIS_ELO_ENGAGEMENT_MAX\): not set/.test(rendu), 'et l observation du lot 3, avec le plafond Elo vide');
     const blocs = [...page.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     ok(blocs.every((b) => { try { new Function(b); return true; } catch (er) { return false; } }), 'le script de la page compile');
   }

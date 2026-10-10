@@ -36,6 +36,10 @@ const parisImport = require('./paris_import');
 /* Le journal des releves de prix deja payees (lot 1 de la cle 20K) : branche
    par paris_import ; ici, seulement la route admin qui en rend un jour brut. */
 const prixJournal = require('./prix_journal');
+/* Le carnet d'observation des sports a deux issues (lot 3, 10/10/2026) : le
+   verrou lui passe le moneyline DraftKings qu'ESPN rend deja (0 credit, 0
+   requete de plus). Il ne vend rien et ne decide rien. */
+const prixObserve = require('./prix_observe');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
@@ -169,7 +173,14 @@ function verrouFrais(t) {
   const lot = paris.catalogue().matchs.filter((m) => m.debut > t && m.debut <= t + horizon && !m.ferme);
   verrouCache.enVol = true;
   return (async () => {
-    if (lot.length) paris.poseHeuresReelles(await espn.releve(lot, { maintenant: t }), t);
+    if (lot.length) {
+      const par = await espn.releve(lot, { maintenant: t });
+      paris.poseHeuresReelles(par, t);
+      /* Le moneyline DraftKings de la meme releve, au carnet d'observation
+         (lot 3). Dans son propre try : une observation qui leve ne doit
+         jamais casser le verrou de fermeture. */
+      try { prixObserve.noteDk(par, t); } catch (e) { console.log('[obs] verrou : ' + (e && e.message)); }
+    }
     verrouCache.proche = t;
     if (large) verrouCache.large = t;
     return true;
@@ -6705,6 +6716,22 @@ const server = http.createServer(async (req, res) => {
     const a = String(q.get('addr') || '').trim().toLowerCase().slice(0, 100);
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(game.clvParAdresse({ now: Date.now(), addr: a || null })));
+  }
+
+  /* ---- LA MISE PAR SPORT (lot 3, 10/10/2026) ----
+   * `GET /paris/mises[?jours=N]` : game.misesParSport sur N jours (30 par
+   * defaut, borne de 1 a 90), par jeton puis par sport. Lu chaque jour pendant
+   * l'observation des sports a deux issues : il dit quel sport porte l'argent
+   * (l'ordre de bascule) et si quelqu'un exploite l'Elo. Il compte les
+   * adresses et ce qu'elles misent : derriere la garde admin, comme
+   * /paris/liste. Lecture seule, aucun geste, aucun credit. */
+  if (path === '/paris/mises') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const j = Math.min(90, Math.max(1, Math.floor(Number(q.get('jours')) || 30)));
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(game.misesParSport(j * 86400000, Date.now())));
   }
 
   if (path === '/paris/regle' || path === '/paris/rembourse') {

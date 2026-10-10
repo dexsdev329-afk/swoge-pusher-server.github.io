@@ -171,18 +171,21 @@ function luDe(livre) {
      ou Pinnacle compte aussi parmi les livres), Betfair exclu, Pinnacle
      renomme pour n'etre pas reconnu comme reference.
    Aucune borne recopiee : si la vente change ses regles, le journal suit. */
-function sourcesDe(ev) {
+/* `iss` (lot 3, 10/10/2026) : les issues du sport de la releve, la meme regle
+   que le carnet (prix_marche.issuesDe) — a deux issues, un livre a nul est
+   ecarte ici comme a la vente. Defaut : les trois du football. */
+function sourcesDe(ev, iss) {
   const livres = (ev && Array.isArray(ev.bookmakers)) ? ev.bookmakers : [];
   const seul = (cle) => {
     const lv = livres.find((b) => b && b.key === cle);
     if (!lv) return { p: null, lu: null };
-    const r = pm.referenceDe(Object.assign({}, ev, { bookmakers: [lv] }));
+    const r = pm.referenceDe(Object.assign({}, ev, { bookmakers: [lv] }), iss);
     return { p: r ? r.p : null, lu: r ? luDe(lv) : null };
   };
   const b = seul(pm.BOURSE), p = seul('pinnacle');
   const ordinaires = livres.filter((x) => x && x.key !== pm.BOURSE)
     .map((x) => (x.key === 'pinnacle' ? Object.assign({}, x, { key: 'pinnacle#livre' }) : x));
-  const rm = pm.referenceDe(Object.assign({}, ev, { bookmakers: ordinaires }));
+  const rm = pm.referenceDe(Object.assign({}, ev, { bookmakers: ordinaires }), iss);
   return { b: b.p, p: p.p, md: rm && rm.ref === 'mediane' ? rm.p : null, luB: b.lu, luP: p.lu };
 }
 
@@ -193,19 +196,21 @@ function ligneDe(fait, now) {
   const parId = new Map();
   for (const ev of fait.evs || []) if (ev && ev.id && !parId.has(String(ev.id))) parId.set(String(ev.id), ev);
   const limite = t + horizonMs();
+  const iss = pm.issuesDe(fait.sport, L) || undefined;
   const e = [];
   for (const r of fait.refs || []) {
     const debut = Number(r.debut) || 0;
     if (debut > limite) continue;
     if (!r.ref || !r.p) { e.push([String(r.id), debut, 'x']); continue; }
-    const s = sourcesDe(parId.get(String(r.id)));
+    const s = sourcesDe(parId.get(String(r.id)), iss);
     e.push([String(r.id), debut, REF_COURTE[r.ref] || String(r.ref), trois(r.p), trois(s.b), trois(s.p), trois(s.md),
             Number(r.livres) || 0, s.luB, s.luP]);
   }
   const ligne = { v: V, m: 'h2h', t, l: L, q: fait.quoi === null || fait.quoi === undefined ? '' : String(fait.quoi),
                   c: Math.round(pm.releveMs() / MINUTE), av: process.env.PARIS_PRIX_AVANT_TOUS === '1' ? 1 : 0,
                   am: Math.round(pm.AGE_MAX_MS / MINUTE), n: (fait.refs || []).length };
-  if (!pm.ligues().has(L)) ligne.o = 1;
+  /* `vendue` (lot 3) : un tournoi vendu par le joker du tennis n'est pas observe */
+  if (!pm.vendue(L)) ligne.o = 1;
   if (fait.sport !== null && fait.sport !== undefined) ligne.s = String(fait.sport);
   if (fait.ecrit === false) ligne.ko = 1;
   ligne.e = e;

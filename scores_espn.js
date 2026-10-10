@@ -310,9 +310,33 @@ async function tableau(chemin, deb, fin, prendre) {
 function lis(ev) {
   const c = (ev && ev.competitions && ev.competitions[0]) || null;
   if (!c || !Array.isArray(c.competitors) || c.competitors.length !== 2) return null;
+  /* ---- LE MONEYLINE DRAFTKINGS, PAR CAMP (lot 3, 10/10/2026) ----
+   * `odds[0].moneyline.<home|away>.close.odds`, en cote americaine. Champ NON
+   * documente par ESPN : observe le 09/10 sur 63 lots d'avant-match (NFL,
+   * NHL, MLB), fournisseur « DraftKings » partout, `close` present partout et
+   * qui bouge dans la journee (JAX -395 a 17:28 UTC, -380 a 23:47) ; absent
+   * pendant le match. Lu sur le `homeAway` DU CAMP, jamais sur sa position :
+   * releve oriente ensuite sur notre domicile comme le score. `close`
+   * SEULEMENT, jamais `open` : ce sont des lignes d'anticipation (JAX +110 a
+   * l'ouverture, -380 a la cloture) — sans `close`, pas de cote, et le lot le
+   * dit (`dkSansClose`). Chaque lecture est dans un try/catch : un objet
+   * odds bancal ne fait jamais perdre le score de la rencontre. */
+  const o = Array.isArray(c.odds) ? c.odds[0] : null;
+  let fournisseur = null, dkSansClose = false;
+  try { fournisseur = (o && o.provider && o.provider.name) ? String(o.provider.name) : null; } catch (e) { fournisseur = null; }
+  const ml = (x) => {
+    try {
+      const cote = o && o.moneyline && (x.homeAway === 'home' || x.homeAway === 'away') ? o.moneyline[x.homeAway] : null;
+      if (!cote) return null;
+      const v = cote.close && cote.close.odds;
+      if (v === undefined || v === null || v === '') { dkSansClose = true; return null; }
+      return americaine(v);
+    } catch (e) { return null; }
+  };
   const camp = (x) => ({
     nom: (x.team && (x.team.displayName || x.team.name)) || '',
     points: Number(x.score),
+    ml: ml(x),
   });
   const a = camp(c.competitors[0]), b = camp(c.competitors[1]);
   if (!a.nom || !b.nom) return null;
@@ -322,7 +346,18 @@ function lis(ev) {
      d'un match prolonge, et le score rendu compte la prolongation. */
   return { a, b, quand: Date.parse(ev.date) || 0,
            etat: st.state || 'pre', fini: !!st.completed, statut: String(st.name || ''),
-           detail: st.shortDetail || st.detail || st.description || '' };
+           detail: st.shortDetail || st.detail || st.description || '',
+           fournisseur, dkSansClose };
+}
+/** Une cote americaine (« -142 », « +120 ») en cote decimale, ou null. */
+function americaine(s) {
+  const txt = String(s === undefined || s === null ? '' : s).trim();
+  if (!/^[+-]?\d+(\.\d+)?$/.test(txt)) return null;
+  const v = Number(txt);
+  /* au moins 100 en valeur absolue ; « EVEN » (+100) n'a jamais ete vu dans
+     les 63 lots du 09/10 et n'est pas devine */
+  if (!isFinite(v) || Math.abs(v) < 100) return null;
+  return v > 0 ? 1 + v / 100 : 1 + 100 / -v;
 }
 
 /*
@@ -396,6 +431,14 @@ async function releve(matchs, opts) {
         su.score = `${dom.points}-${ext.points}`;
         su.resultat = dom.points > ext.points ? '1'
                     : ext.points > dom.points ? '2' : 'N';
+      }
+      /* Le moneyline DraftKings dans NOTRE orientation (lot 3) : la cote du
+         camp qui porte le nom de notre domicile. Jamais au football (trois
+         issues, sa mesure est faite) ; seulement les deux cotes lues. Le
+         carnet d'observation (prix_observe.noteDk) le relit ; rien d'autre. */
+      if (m.sport !== 'foot') {
+        if (dom.ml > 1 && ext.ml > 1) su.dk = { 1: dom.ml, 2: ext.ml, fournisseur: e.fournisseur };
+        else if (e.dkSansClose) su.dkSansClose = true;
       }
       out.set(m.id, su);
     }
@@ -586,5 +629,5 @@ async function reprise(ligues, opts) {
 }
 
 module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour,
-                   releve, finies, reprise,
+                   releve, finies, reprise, americaine,
                    releveTennis, tourDe };

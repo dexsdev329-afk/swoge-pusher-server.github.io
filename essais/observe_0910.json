@@ -1,0 +1,495 @@
+{
+ "source": "calendrier public du 09/10/2026 (17:23 UTC) x tableaux ESPN du meme jour ; moneyline DraftKings close seulement",
+ "rencontres": [
+  {
+   "sport": "nhl",
+   "dom": "Columbus Blue Jackets",
+   "ext": "Pittsburgh Penguins",
+   "elo": {
+    "1": 1.73,
+    "2": 1.91
+   },
+   "dk": {
+    "dom": "-118",
+    "ext": "-102"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Detroit Red Wings",
+   "ext": "Seattle Kraken",
+   "elo": {
+    "1": 1.8,
+    "2": 1.84
+   },
+   "dk": {
+    "dom": "-142",
+    "ext": "+120"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Washington Capitals",
+   "ext": "New York Rangers",
+   "elo": {
+    "1": 1.66,
+    "2": 2.01
+   },
+   "dk": {
+    "dom": "-148",
+    "ext": "+124"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Winnipeg Jets",
+   "ext": "Anaheim Ducks",
+   "elo": {
+    "1": 1.78,
+    "2": 1.86
+   },
+   "dk": {
+    "dom": "-125",
+    "ext": "+105"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Boston Bruins",
+   "ext": "Philadelphia Flyers",
+   "elo": {
+    "1": 1.71,
+    "2": 1.94
+   },
+   "dk": {
+    "dom": "-130",
+    "ext": "+110"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "New Jersey Devils",
+   "ext": "Vancouver Canucks",
+   "elo": {
+    "1": 1.44,
+    "2": 2.46
+   },
+   "dk": {
+    "dom": "-278",
+    "ext": "+225"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "San Jose Sharks",
+   "ext": "Edmonton Oilers",
+   "elo": {
+    "1": 2.32,
+    "2": 1.5
+   },
+   "dk": {
+    "dom": "+130",
+    "ext": "-155"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Florida Panthers",
+   "ext": "Minnesota Wild",
+   "elo": {
+    "1": 1.87,
+    "2": 1.77
+   },
+   "dk": {
+    "dom": "-135",
+    "ext": "+114"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Buffalo Sabres",
+   "ext": "Utah Mammoth",
+   "elo": {
+    "1": 1.77,
+    "2": 1.86
+   },
+   "dk": {
+    "dom": "-112",
+    "ext": "-108"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Chicago Blackhawks",
+   "ext": "Carolina Hurricanes",
+   "elo": {
+    "1": 2.29,
+    "2": 1.51
+   },
+   "dk": {
+    "dom": "+190",
+    "ext": "-230"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Colorado Avalanche",
+   "ext": "Toronto Maple Leafs",
+   "elo": {
+    "1": 1.6,
+    "2": 2.1
+   },
+   "dk": {
+    "dom": "-205",
+    "ext": "+170"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "St Louis Blues",
+   "ext": "Columbus Blue Jackets",
+   "elo": {
+    "1": 2,
+    "2": 1.67
+   },
+   "dk": {
+    "dom": "-125",
+    "ext": "+105"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Pittsburgh Penguins",
+   "ext": "Dallas Stars",
+   "elo": {
+    "1": 2.07,
+    "2": 1.62
+   },
+   "dk": {
+    "dom": "+130",
+    "ext": "-155"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Montréal Canadiens",
+   "ext": "Detroit Red Wings",
+   "elo": {
+    "1": 1.74,
+    "2": 1.91
+   },
+   "dk": {
+    "dom": "-218",
+    "ext": "+180"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Ottawa Senators",
+   "ext": "Nashville Predators",
+   "elo": {
+    "1": 1.65,
+    "2": 2.03
+   },
+   "dk": {
+    "dom": "-162",
+    "ext": "+136"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "New York Islanders",
+   "ext": "Tampa Bay Lightning",
+   "elo": {
+    "1": 1.83,
+    "2": 1.81
+   },
+   "dk": {
+    "dom": "+136",
+    "ext": "-162"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "mlb",
+   "dom": "Cleveland Guardians",
+   "ext": "Chicago White Sox",
+   "elo": {
+    "1": 1.54,
+    "2": 2.23
+   },
+   "dk": {
+    "dom": "-137",
+    "ext": "+113"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Calgary Flames",
+   "ext": "Anaheim Ducks",
+   "elo": {
+    "1": 1.77,
+    "2": 1.87
+   },
+   "dk": {
+    "dom": "+105",
+    "ext": "-125"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nhl",
+   "dom": "Vegas Golden Knights",
+   "ext": "Los Angeles Kings",
+   "elo": {
+    "1": 1.42,
+    "2": 2.52
+   },
+   "dk": {
+    "dom": "-162",
+    "ext": "+136"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Jacksonville Jaguars",
+   "ext": "Philadelphia Eagles",
+   "elo": {
+    "1": 1.6,
+    "2": 2.11
+   },
+   "dk": {
+    "dom": "-395",
+    "ext": "+310"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Green Bay Packers",
+   "ext": "Chicago Bears",
+   "elo": {
+    "1": 1.57,
+    "2": 2.16
+   },
+   "dk": {
+    "dom": "+100",
+    "ext": "-120"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Miami Dolphins",
+   "ext": "Cincinnati Bengals",
+   "elo": {
+    "1": 2.91,
+    "2": 1.31
+   },
+   "dk": {
+    "dom": "+270",
+    "ext": "-340"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "New York Jets",
+   "ext": "Cleveland Browns",
+   "elo": {
+    "1": 1.62,
+    "2": 2.07
+   },
+   "dk": {
+    "dom": "-135",
+    "ext": "+114"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Tennessee Titans",
+   "ext": "Houston Texans",
+   "elo": {
+    "1": 2.55,
+    "2": 1.41
+   },
+   "dk": {
+    "dom": "+330",
+    "ext": "-425"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Pittsburgh Steelers",
+   "ext": "Indianapolis Colts",
+   "elo": {
+    "1": 1.59,
+    "2": 2.11
+   },
+   "dk": {
+    "dom": "-148",
+    "ext": "+124"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "New England Patriots",
+   "ext": "Las Vegas Raiders",
+   "elo": {
+    "1": 1.39,
+    "2": 2.62
+   },
+   "dk": {
+    "dom": "-198",
+    "ext": "+164"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "New Orleans Saints",
+   "ext": "Minnesota Vikings",
+   "elo": {
+    "1": 1.94,
+    "2": 1.71
+   },
+   "dk": {
+    "dom": "+124",
+    "ext": "-148"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Washington Commanders",
+   "ext": "New York Giants",
+   "elo": {
+    "1": 1.54,
+    "2": 2.22
+   },
+   "dk": {
+    "dom": "-192",
+    "ext": "+160"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Los Angeles Chargers",
+   "ext": "Denver Broncos",
+   "elo": {
+    "1": 1.95,
+    "2": 1.7
+   },
+   "dk": {
+    "dom": "+150",
+    "ext": "-180"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Arizona Cardinals",
+   "ext": "Detroit Lions",
+   "elo": {
+    "1": 2.35,
+    "2": 1.48
+   },
+   "dk": {
+    "dom": "+210",
+    "ext": "-258"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Seattle Seahawks",
+   "ext": "San Francisco 49ers",
+   "elo": {
+    "1": 1.56,
+    "2": 2.17
+   },
+   "dk": {
+    "dom": "-162",
+    "ext": "+136"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "mlb",
+   "dom": "Milwaukee Brewers",
+   "ext": "Los Angeles Dodgers",
+   "elo": {
+    "1": 1.8,
+    "2": 1.83
+   },
+   "dk": {
+    "dom": "-112",
+    "ext": "-107"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Atlanta Falcons",
+   "ext": "Baltimore Ravens",
+   "elo": {
+    "1": 2.13,
+    "2": 1.58
+   },
+   "dk": {
+    "dom": "-175",
+    "ext": "+145"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Los Angeles Rams",
+   "ext": "Buffalo Bills",
+   "elo": {
+    "1": 1.58,
+    "2": 2.14
+   },
+   "dk": {
+    "dom": "-175",
+    "ext": "+145"
+   },
+   "fournisseur": "DraftKings"
+  },
+  {
+   "sport": "nfl",
+   "dom": "Denver Broncos",
+   "ext": "Seattle Seahawks",
+   "elo": {
+    "1": 1.89,
+    "2": 1.75
+   },
+   "dk": {
+    "dom": "+105",
+    "ext": "-125"
+   },
+   "fournisseur": "DraftKings"
+  }
+ ]
+}

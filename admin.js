@@ -2066,7 +2066,71 @@ function impRend(e){
      '<br><span class="muted2" style="padding:0;text-align:left;display:inline">'+
      'Tennis keys are per tournament — they disappear when the tournament ends.</span></div>';
   l+=jpRend(e.journalPrix);
+  l+=obsRend(e.observation, e.eloEngagement);
+  l+='<div id="misesBody"></div>';
   $("#impBody").innerHTML='<div class="impg">'+cartes+'</div>'+l;
+}
+/* ---- L'OBSERVATION DES SPORTS A DEUX ISSUES (lot 3, 10/10/2026) ----
+ * Ce que /paris/import rend dans « observation » (prix_observe.bilan), sport par
+ * sport : le NOMBRE de rencontres d'abord. Sous 40, aucune part n'est
+ * affichee : « not enough games yet (n/40) ». La porte est calculee par le
+ * serveur ; la carte la montre et ne decide rien — la bascule reste une
+ * variable (PARIS_PRIX_LIGUES). Des comptes : ent(), jamais fmt(). Anglais. */
+var OBS_NOMS={nhl:'NHL',nfl:'NFL',nba:'NBA',mlb:'MLB',tennis:'Tennis',cricket:'Cricket',foot:'Football'};
+function obsPct(x){ var n=Number(x); if(x==null||!isFinite(n)) return '&mdash;'; return (Math.round(n*1000)/10).toFixed(1)+'%'; }
+function obsPts(x){ var n=Number(x); if(x==null||!isFinite(n)) return '&mdash;'; return (n>0?'+':'')+(Math.round(n*1000)/10).toFixed(1)+' pts'; }
+function obsRend(o, pe){
+  var s='';
+  if(pe){
+    s+='<div class="impl'+(pe.invalide?' impwarn':'')+'">Elo exposure cap per game (PARIS_ELO_ENGAGEMENT_MAX): '+
+      (pe.valeur!=null?'<b>'+ent(pe.valeur)+'</b> $SWOGEBET on games priced by our Elo':pe.invalide?'<b>IGNORED</b> ('+esc(pe.brut)+' is not a positive number) &mdash; global cap only':'not set &mdash; global cap only')+'</div>';
+  }
+  if(!o) return s;
+  if(o.erreur) return s+'<div class="impl impwarn">Market watch: '+esc(o.erreur)+'</div>';
+  var ps=o.parSport||{}, ks=Object.keys(ps).sort(), seuil=(o.assez&&o.assez.rencontres)||40;
+  s+='<div class="impl"><b>Market watch (not sold)</b> &mdash; DraftKings via ESPN '+(o.actif?'(0 credits)':'<b class="impwarn">OFF</b> (PARIS_OBS_US=0)')+
+     ' and the eu prices of observed keys. Nothing here changes what is sold.';
+  if(!ks.length) return s+'<br><span class="muted2" style="padding:0;text-align:left;display:inline">No game observed yet.</span></div>';
+  ks.forEach(function(k){
+    var x=ps[k]||{}, P=x.porte||{}, ed=x.euDk||{}, fr=x.fraicheur2h||{}, cv=x.couvertureEu7j||{};
+    s+='<br><b>'+esc(OBS_NOMS[k]||k)+'</b>: '+ent(x.rencontres)+' game(s)';
+    if(!x.conclut){ s+=' &mdash; not enough games yet ('+ent(x.rencontres)+'/'+ent(seuil)+')'; }
+    else {
+      s+=' &middot; Elo beatable '+obsPct(x.part)+' of '+ent(x.issues)+' outcomes (low bound '+obsPct(x.wilsonBas)+')';
+      s+=' &middot; eu&ndash;DK gap '+(ed.rencontres>=20?obsPts(ed.ecartMedian)+' (signed '+obsPts(ed.signeeMediane)+', '+ent(ed.rencontres)+' games)':'not enough pairs ('+ent(ed.rencontres)+'/20)');
+      s+=' &middot; 2-hour-old price beatable '+ent(fr.battables)+'/'+ent(fr.issues)+(fr.rencontres>=seuil?' (high bound '+obsPct(fr.wilsonHaut)+')':'');
+    }
+    s+=' &middot; eu fetches 7 days: '+ent(cv.reussies)+' ok, '+ent(cv.refusees)+' refused, '+ent(cv.erreurs)+' failed';
+    var g=P.bascule===true?'<b class="impok">gate passed</b>':P.bascule===false?'<b class="impwarn">gate closed</b>':'<span class="bmut">gate not reached</span>';
+    s+=' &middot; '+g+((P.raisons||[]).length?' &mdash; '+P.raisons.map(esc).join('; '):'');
+  });
+  return s+'<br><span class="muted2" style="padding:0;text-align:left;display:inline">Gate P1&ndash;P5 written in advance (EXPLOITATION 8.8nonies). Tennis cannot be switched: no real-time lock.</span></div>';
+}
+/* ---- LA MISE PAR SPORT (lot 3, 10/10/2026) ----
+ * GET /paris/mises (30 jours), par jeton puis par sport : ce que chaque sport
+ * porte vraiment. Les deux jetons ne s'additionnent jamais. Des comptes. */
+var MISES_JETON={swogebet:'$SWOGEBET',swoge:'$SWOGE'};
+function misesRend(d){
+  var pj=(d&&d.parJeton)||{}, js=Object.keys(pj).sort();
+  var s='<div class="impl"><b>Stakes by sport ('+ent((d&&d.jours)||30)+' days)</b>';
+  if(!js.length) return s+' &mdash; no bet in the window.</div>';
+  js.forEach(function(j){
+    var lignes=pj[j]||{};
+    Object.keys(lignes).sort(function(a,b){ return (lignes[b].mise||0)-(lignes[a].mise||0); }).forEach(function(k){
+      var x=lignes[k];
+      s+='<br>'+esc(MISES_JETON[j]||j)+' &middot; <b>'+esc(k==='combine'?'Parlays':(OBS_NOMS[k]||k))+'</b>: '+ent(x.tickets)+' ticket(s), '+ent(x.adresses)+' address(es), staked '+ent(x.mise)+
+        ', open '+ent(x.enJeu)+', house net '+ent(x.netMaison)+' on '+ent(x.miseJugee)+' settled'+(x.rembourses?', '+ent(x.rembourses)+' refunded':'')+(x.dansCombines?', in '+ent(x.dansCombines)+' parlay(s)':'');
+    });
+  });
+  return s+'</div>';
+}
+async function loadMises(){
+  try{
+    var r=await fetch("/paris/mises?jours=30",{headers:{"x-admin-key":KEY}});
+    var el=$("#misesBody"); if(!el) return;
+    if(!r.ok){ el.innerHTML='<div class="impl impbad">could not load the stakes by sport ('+r.status+')</div>'; return; }
+    el.innerHTML=misesRend(await r.json());
+  }catch(e){ var el2=$("#misesBody"); if(el2) el2.innerHTML='<div class="impl impbad">'+esc(e.message)+'</div>'; }
 }
 /* ---- LE JOURNAL DES RELEVES DE PRIX (lot 1, 10/10/2026) ----
  * Une ligne : actif ou coupe, combien de fichiers et d'octets, les lignes par
@@ -2182,6 +2246,7 @@ async function loadImport(){
     var r=await fetch("/paris/import",{headers:{"x-admin-key":KEY}});
     if(!r.ok){ $("#impBody").innerHTML='<div class="muted2">could not load ('+r.status+')</div>'; return; }
     impRend(await r.json());
+    loadMises();
   }catch(e){ $("#impBody").innerHTML='<div class="muted2">'+esc(e.message)+'</div>'; }
 }
 /* ================= LES GALERIES DES SALLES A ECRAN =================
@@ -2401,7 +2466,7 @@ $("#impGo").onclick=async function(){
     if(j.error){ $("#impMsg").textContent="✗ "+j.error; $("#impMsg").className="impbad"; }
     else { $("#impMsg").textContent="✓ "+j.rencontres+" fixture(s) in the calendar";
            $("#impMsg").className="impok"; }
-    if(j.etat) impRend(j.etat); else loadImport();
+    if(j.etat){ impRend(j.etat); loadMises(); } else loadImport();
   }catch(e){ $("#impMsg").textContent="✗ "+e.message; $("#impMsg").className="impbad"; }
   b.disabled=false;
 };

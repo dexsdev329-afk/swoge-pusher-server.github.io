@@ -59,6 +59,8 @@ const path = require('path');
 const cotes = require('./cotes');
 const espn = require('./scores_espn');
 const prixMarche = require('./prix_marche');
+/* La liste seule (joker du tennis, cricket refuse) : lot 3, 10/10/2026. */
+const prixLigues = require('./prix_ligues');
 /* Le journal des releves deja payees (lot 1 de la cle 20K, 10/10/2026) :
    abonne au crochet `apresNote`, il garde chaque reponse /odds notee, a 0
    credit, sans rien changer a ce qui se vend (prix_journal.js, EXPLOITATION
@@ -68,6 +70,11 @@ const prixJournal = require('./prix_journal');
 prixJournal.branche();
 const AlerteSolde = require('./alerte_solde');   /* credits bas : alerte privee au proprietaire */
 const paris = require('./paris');
+/* Le carnet d'observation des sports a deux issues (lot 3, 10/10/2026) :
+   chaque releve d'une cle OBSERVEE y laisse son historique (ok / refuse /
+   erreur, et sa couverture) et ses prix eu avec nos cotes Elo du meme instant.
+   0 credit de plus : il relit ce que la releve a deja paye. */
+const prixObserve = require('./prix_observe');
 
 const BASE = 'https://api.the-odds-api.com/v4';
 const CLE = process.env.ODDS_API_KEY || '';
@@ -638,6 +645,12 @@ function etatImport() {
        combien de rencontres a venir sont au prix ou SUSPENDUES — une
        suspension ne se voit pas sur la page, qui n'affiche que l'ouvert. */
     prix: etatPrix(),
+    /* L'observation des sports a deux issues (lot 3, 10/10/2026) : par sport,
+       la mesure et la porte P1-P5 ecrite d'avance (EXPLOITATION 8.8nonies).
+       Aucune decision : la bascule reste une variable (PARIS_PRIX_LIGUES). */
+    observation: (() => { try { return prixObserve.bilan(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
+    /* Le plafond d'engagement des rencontres cotees a l'Elo (vide = rien ne change). */
+    eloEngagement: paris.eloEngagementMax(),
     /* Le journal des releves payees (lot 1, 10/10/2026) : fichiers, octets,
        lignes par cause LUES SUR LE DISQUE, echecs, illisibles. Aucun verdict :
        la mesure se fait hors serveur (outils/age_prix.js). */
@@ -969,7 +982,7 @@ async function importeMatchs() {
        * la reglaient plus. On garde son ancienne entree, SUSPENDUE (relecture du
        * 08/10). */
       const ancien = anciensBruts.get(m.id);
-      if (ancien && prixMarche.ligues().has(m.source && m.source.ligue)) {
+      if (ancien && prixMarche.vendue(m.source && m.source.ligue)) {
         habilles.push(Object.assign({}, ancien, { debut: m.debut, prixMarche: undefined, suspendu: true,
           suspenduRaison: (e.message.split('— ')[1] || e.message).slice(0, 120) }));
         continue;
@@ -1176,7 +1189,7 @@ async function importeMatchs() {
   const suspendues = {}, aVenir = {};
   for (const m of habilles) {
     const l = m.source && m.source.ligue;
-    if (!l || !prixMarche.ligues().has(l) || !(Date.parse(m.debut) > Date.now())) continue;
+    if (!l || !prixMarche.vendue(l) || !(Date.parse(m.debut) > Date.now())) continue;
     aVenir[l] = (aVenir[l] || 0) + 1;
     if (m.suspendu) suspendues[l] = (suspendues[l] || 0) + 1;
   }
@@ -1443,7 +1456,12 @@ function avecPrix(m, now) {
   const l = m && m.source && m.source.ligue;
   const sortie = Object.assign({}, m);
   delete sortie.prixMarche; delete sortie.suspendu; delete sortie.suspenduRaison;
-  if (!l || !prixMarche.ligues().has(l) || !(Date.parse(m.debut) > t)) return sortie;
+  if (!l || !prixMarche.vendue(l) || !(Date.parse(m.debut) > t)) return sortie;
+  /* Le tennis « vendu » (lot 3) : jamais au prix du marche sans verrou d'heure
+     reelle, meme si le carnet garde un prix de son observation — SUSPENDU,
+     jamais rendu a l'Elo (prix_ligues.venteImpossible). */
+  if (prixMarche.venteImpossible(l)) return Object.assign(sortie, { cotesGenerees: true, suspendu: true,
+    suspenduRaison: 'pas de vente au prix du marche sans verrou d heure reelle (tennis)' });
   const r = prixMarche.pour(m.source.evenement, t);
   if (!r) return Object.assign(sortie, { cotesGenerees: true, suspendu: true,
     suspenduRaison: 'pas de prix du marche de moins de ' + Math.round(prixMarche.AGE_MAX_MS / 3600000) + ' h' });
@@ -1472,22 +1490,55 @@ function avecPrix(m, now) {
  * prioritaire, refusee sans alerte quand le jour est charge. Et le
  * calendrier ne se refait plus apres une releve qui n'a rien change a ce qui
  * se vend (le prix d'une cle observee n'entre pas dans les cotes). */
+/* ---- UNE CLE DONT ON NE SAIT PAS LE NOMBRE D'ISSUES NE COUTE RIEN (lot 3, 10/10/2026) ----
+ * `prix_marche.note` ne note rien sans sport connu (on ne devine pas un nombre
+ * d'issues) : la date de releve n'etait donc jamais ecrite, et prixPerimes la
+ * redemandait a chaque passage de 30 min — jusqu'a 48 credits par jour et par
+ * cle, ~336 sur l'horizon de 7 jours (relecture du 09/10 : le catalogue garde
+ * les rencontres d'une ligue retiree d'ODDS_API_LIGUES). Une telle cle, ou
+ * une cle refusee (cricket), n'est donc JAMAIS payee, et c'est dit une fois
+ * par processus. Une cle soccer_* garde les trois issues du football, comme
+ * avant ce lot. */
+const SANS_SPORT_DIT = new Set();
 let filePrix = Promise.resolve();
 function rafraichitPrix(clefs, pourquoi, ageMin) {
   const tour = filePrix.then(async () => {
     let vendues = 0;
     for (const clef of clefs) {
       if (Date.now() - prixMarche.derniere(clef) < (ageMin || 0)) continue;
-      const vendue = prixMarche.ligues().has(clef);
+      /* `vendue` et non plus `ligues().has` : le joker du tennis (lot 3) */
+      const vendue = prixMarche.vendue(clef);
+      const sport = sportDeLaCle(clef);
+      if (!prixMarche.issuesDe(sport, clef)) {
+        if (!SANS_SPORT_DIT.has(clef)) {
+          SANS_SPORT_DIT.add(clef);
+          console.log(`[odds] prix ${clef} : ` + (prixMarche.refusee(clef) ? 'cle refusee (cricket)'
+            : prixMarche.venteImpossible(clef) ? 'vendue sans verrou d heure reelle (tennis) : ses rencontres restent suspendues'
+            : 'sport inconnu (absente d ODDS_API_LIGUES et de ses jokers)') + ' — jamais relevee, 0 credit');
+        }
+        continue;
+      }
+      const info = { classe: vendue ? 0 : 3 };
       try {
         const evs = await appel(`/sports/${clef}/odds`, { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' },
-                                1, 'prix ' + clef, vendue ? prixMarche.ligues().size : undefined, { classe: vendue ? 0 : 3 });
-        const c = prixMarche.note(evs, clef, undefined, { quoi: pourquoi });
+                                1, 'prix ' + clef, vendue ? prixMarche.ligues().size : undefined, info);
+        const c = prixMarche.note(evs, clef, undefined, { quoi: pourquoi, sport });
         console.log(`[odds] prix du marche ${clef} (${pourquoi}) : ${JSON.stringify(c)}`);
-        /* un championnat OBSERVE : on dit tout de suite ce que notre Elo y laisse */
-        if (!vendue) console.log(`[odds] observe ${clef} : ${JSON.stringify(ecartAuMarche(clef))}`);
-        else vendues++;
-      } catch (e) { console.log('[odds] prix ' + clef + ' : ' + (e.message || e)); }
+        /* un championnat OBSERVE : on dit tout de suite ce que notre Elo y laisse,
+           et le carnet d'observation garde la releve (lot 3) */
+        if (!vendue) {
+          console.log(`[odds] observe ${clef} : ${JSON.stringify(ecartAuMarche(clef))}`);
+          try { prixObserve.noteEu(clef, sport, c, Date.now(), 'ok'); } catch (x) { console.log('[obs] ' + clef + ' : ' + (x.message || x)); }
+        } else vendues++;
+      } catch (e) {
+        console.log('[odds] prix ' + clef + ' : ' + (e.message || e));
+        /* Le refus d'une cle observee est VOULU (classe 3, jamais prioritaire) :
+           garde a l'historique, il ne compte pas contre la porte P3 ; une
+           erreur du fournisseur, si (EXPLOITATION 8.8nonies). */
+        if (!vendue) {
+          try { prixObserve.noteEu(clef, sport, null, Date.now(), info.code === 'REFUSE' ? 'refuse' : 'erreur'); } catch (x) { /* jamais bloquant */ }
+        }
+      }
     }
     return vendues;
   });
@@ -1513,6 +1564,18 @@ function liguesAvecRencontre(now) {
   for (const m of paris.catalogue().matchs) if (m.debut > t && m.source && m.source.ligue) out.add(m.source.ligue);
   return out;
 }
+/* ---- LE SPORT D'UNE CLE (lot 3, 10/10/2026) ----
+ * Celui de sa ligne d'ODDS_API_LIGUES, sinon celui du joker qui la suit
+ * (`tennis=*` : tennis_atp_… / tennis_wta_…, jamais un `_winner`). null
+ * sinon : le nombre d'issues vient du sport, et une cle sans sport n'est
+ * jamais payee (`rafraichitPrix`). */
+function sportDeLaCle(clef) {
+  const k = String(clef || '');
+  const l = LIGUES.find((x) => x.clef === k);
+  if (l) return l.sport;
+  const j = LIGUES.find((x) => x.clef === '*' && JOKERS[x.sport] && JOKERS[x.sport]({ key: k }));
+  return j ? j.sport : null;
+}
 /* ---- CE QUE NOTRE 1-N-2 LAISSE AU MARCHE, EN DIRECT (09/10/2026) ----
  * Pour un championnat OBSERVE (ou vendu) : chaque rencontre a venir du
  * catalogue, ouverte, dont le prix du marche est frais et dans le bon sens ;
@@ -1533,7 +1596,8 @@ function ecartAuMarche(ligue, now) {
       if (!c) continue;
       out.avecPrix++;
       let meilleure = -1;
-      for (const i of ['1', 'N', '2']) {
+      /* les issues du SPORT (lot 3) : deux au hockey, a la NFL, a la NBA, au tennis */
+      for (const i of (paris.sportConnu(m.sport) ? paris.issues(m.sport) : ['1', 'N', '2'])) {
         if (!(Number(c[i]) > 1) || !(r.p[i] > 0)) continue;
         const e = Number(c[i]) * r.p[i] - 1;
         out.issues++;
@@ -1559,7 +1623,14 @@ function prixInconnues() {
   /* exactement ce que le joker suivra : `tennis_atp_…` / `tennis_wta_…`, sans
      les classements `_winner` (JOKERS) */
   const jokers = LIGUES.filter((l) => l.clef === '*' && JOKERS[l.sport]).map((l) => JOKERS[l.sport]);
-  return [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !jokers.some((j) => j({ key: c })));
+  const out = [...prixMarche.aRelever()].filter((c) => !connues.has(c) && !jokers.some((j) => j({ key: c })));
+  /* Un joker des deux listes (lot 3) : `tennis_atp_*` ne releve rien si
+     ODDS_API_LIGUES ne suit pas le tennis par son propre joker. */
+  for (const e of [...prixMarche.ligues(), ...prixMarche.observees()]) {
+    if (e.indexOf('*') < 0 || !prixLigues.JOKER_PERMIS.test(e) || out.includes(e)) continue;
+    if (!jokers.some((j) => j({ key: e.slice(0, -1) + 'x' }))) out.push(e);
+  }
+  return out;
 }
 /* ---- LA PORTE DE VENTE SE DIT (09/10/2026) ----
  * `paris.ouvert` ferme une rencontre FABRIQUEE d'un championnat vendu qui n'a
@@ -1569,11 +1640,11 @@ function prixInconnues() {
  * demarrage echouait. Compte par championnat, ecrit au demarrage et apres un
  * import qui n'a rien obtenu. */
 function fermeesParLaPorte(now) {
-  const t = now || Date.now(), lg = prixMarche.ligues(), out = {};
+  const t = now || Date.now(), out = {};
   try {
     for (const m of paris.catalogue().matchs) {
       const l = m.source && m.source.ligue;
-      if (!l || !lg.has(l) || !(m.debut > t) || m.suspendu || m.prixMarche || !m.cotesGenerees) continue;
+      if (!l || !prixMarche.vendue(l) || !(m.debut > t) || m.suspendu || m.prixMarche || !m.cotesGenerees) continue;
       out[l] = (out[l] || 0) + 1;
     }
   } catch (e) { /* catalogue illisible */ }
@@ -1588,26 +1659,34 @@ function ditLaPorte(quand) {
 }
 function etatPrix(now) {
   const t = now || Date.now(), out = {};
-  const vendues = prixMarche.ligues(), couv = prixMarche.lis().couverture || {};
-  for (const c of prixMarche.aRelever()) {
+  const couv = prixMarche.lis().couverture || {};
+  let avec = new Set();
+  try { avec = liguesAvecRencontre(t); } catch (e) { /* catalogue illisible : les cles ecrites en clair */ }
+  /* les cles ecrites, plus celles du calendrier que couvre un joker (lot 3) */
+  for (const c of prixMarche.aRelever(avec)) {
     const d = prixMarche.derniere(c);
     out[c] = { releve: d ? new Date(d).toISOString() : null, auPrix: 0, suspendues: 0, fermeesSansPrix: 0,
                couverture: couv[c] || null };
-    if (!vendues.has(c)) Object.assign(out[c], { observe: true, ecart: ecartAuMarche(c, t) });
+    if (!prixMarche.vendue(c)) Object.assign(out[c], { observe: true, cadenceH: Math.round(prixMarche.cadenceDe(c) / 360000) / 10, ecart: ecartAuMarche(c, t) });
   }
   try {
     for (const m of paris.catalogue().matchs) {
       const l = m.source && m.source.ligue;
       if (!out[l] || !(m.debut > t)) continue;
       if (m.suspendu) out[l].suspendues++; else if (m.prixMarche) out[l].auPrix++;
-      else if (m.cotesGenerees && vendues.has(l)) out[l].fermeesSansPrix++;
+      else if (m.cotesGenerees && prixMarche.vendue(l)) out[l].fermeesSansPrix++;
     }
   } catch (e) { /* catalogue illisible : les dates suffisent */ }
   return out;
 }
+/* ---- QUI EST PERIME, CLE PAR CLE (lot 3, 10/10/2026) ----
+ * Une cle VENDUE suit `releveMs` (PARIS_PRIX_RELEVE_H) ; une cle OBSERVEE
+ * suit `observeMs` (PARIS_PRIX_OBSERVE_H, 12 h par defaut) : `cadenceDe`.
+ * Le joker du tennis ne developpe que les cles du calendrier : une cle sans
+ * rencontre a venir ne coute jamais un credit. */
 function prixPerimes(now) {
-  const t = now || Date.now(), avec = liguesAvecRencontre(t), cadence = prixMarche.releveMs();
-  return [...prixMarche.aRelever()].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= cadence);
+  const t = now || Date.now(), avec = liguesAvecRencontre(t);
+  return [...prixMarche.aRelever(avec)].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= prixMarche.cadenceDe(c));
 }
 /* Avant le coup d'envoi : de 75 a 20 min avant (les compositions tombent
    environ une heure avant), pour un championnat dont une rencontre porte des
@@ -1616,12 +1695,13 @@ function prixPerimes(now) {
    c'est la que le prix bouge le plus (compositions, blessures). */
 function prixAvantMatch(aDesParis, now) {
   const t = now || Date.now();
-  const lg = prixMarche.ligues(), out = new Set();
+  const out = new Set();
   if (typeof aDesParis !== 'function') return [];
   if (process.env.PARIS_PRIX_AVANT_TOUS === '1') aDesParis = () => true;
   for (const m of paris.catalogue().matchs) {
     const l = m.source && m.source.ligue;
-    if (!l || !lg.has(l) || out.has(l)) continue;
+    /* `vendue` (lot 3) : un tournoi vendu par joker a aussi son avant-match */
+    if (!l || !prixMarche.vendue(l) || out.has(l)) continue;
     if (!(m.debut >= t + 20 * 60000 && m.debut <= t + 75 * 60000)) continue;
     if (t - prixMarche.derniere(l) < PRIX_AVANT_MS) continue;
     if (aDesParis(m.id)) out.add(l);
@@ -1721,18 +1801,22 @@ async function calibre(ligueDemandee) {
     /* Un grand championnat au prix du marche frais n'a rien a apprendre a
        l'Elo (on ne vend plus son Elo) : son credit sert aux ligues qui
        vendent encore l'Elo, que la part du jour coupait (08/10/2026). */
-    if (!ligueDemandee && prixMarche.ligues().has(l.clef) && Date.now() - prixMarche.derniere(l.clef) < PRIX_JOUR_MS) continue;
+    if (!ligueDemandee && prixMarche.vendue(l.clef) && Date.now() - prixMarche.derniere(l.clef) < PRIX_JOUR_MS) continue;
     let evs;
     try {
       evs = await appel(`/sports/${l.clef}/odds`,
         { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' }, 1, 'odds ' + l.clef);
     } catch (e) { console.log('[odds] ' + e.message); continue; }
     /* La meme reponse porte le prix du marche des grands championnats : on le
-       note au passage, sans un credit de plus (08/10/2026). */
-    if (prixMarche.aRelever().has(l.clef)) {
+       note au passage, sans un credit de plus (08/10/2026). Lot 3 : `vendue` ou
+       `observee` (le joker du tennis), avec le SPORT de la ligne (deux issues
+       au hockey, a la NFL, a la NBA, au tennis) ; une cle observee laisse aussi
+       sa releve au carnet d'observation. */
+    if (prixMarche.vendue(l.clef) || prixMarche.observee(l.clef)) {
       try {
-        const c = prixMarche.note(evs, l.clef, undefined, { quoi: 'etalonnage' });
+        const c = prixMarche.note(evs, l.clef, undefined, { quoi: 'etalonnage', sport: l.sport });
         console.log(`[odds] prix du marche ${l.clef} (etalonnage) : ${JSON.stringify(c)}`);
+        if (!prixMarche.vendue(l.clef) && !c.sportInconnu && !c.venteImpossible) prixObserve.noteEu(l.clef, l.sport, c, Date.now(), 'ok');
       } catch (e) { console.log('[odds] prix du marche ' + l.clef + ' illisible : ' + (e.message || e)); }
     }
 
@@ -1893,6 +1977,10 @@ function planifie(signale, aRegler) {
   });
 
   const releve = () => sur('scores', async () => {
+    /* La ligne `[obs]` du jour, par sport (lot 3) : ce que le carnet
+       d'observation mesure, avant les scores — une releve de scores qui leve
+       ne doit pas la taire. Jamais bloquante. */
+    try { for (const x of prixObserve.lignes()) console.log(x); } catch (e) { console.log('[obs] bilan illisible : ' + (e.message || e)); }
     const finis = await importeScores(aRegler);
     if (finis.length && typeof signale === 'function') signale(finis);
   });
@@ -1933,7 +2021,19 @@ function planifie(signale, aRegler) {
     /* Toujours ecrit : c'est la seule ligne qui dit, apres un changement de
        variable, ce qui se vend vraiment au prix du marche. */
     console.log('[odds] prix du marche : vendu sur ' + prixMarche.ligues().size + ' (' + [...prixMarche.ligues()].join(', ') + ')'
-      + ', observe sur ' + prixMarche.observees().size + ', releve toutes les ' + Math.round(prixMarche.releveMs() / 3600000) + ' h');
+      + ', observe sur ' + prixMarche.observees().size + ', releve toutes les ' + Math.round(prixMarche.releveMs() / 3600000) + ' h'
+      /* lot 3 : la cadence d'une cle observee, toujours dite */
+      + ', observe toutes les ' + Math.round(prixMarche.observeMs() / 3600000) + ' h');
+    /* Ce qui est ecrit et ne sera jamais releve : un joker autre que le tennis,
+       une cle cricket (lot 3). */
+    const refus = prixLigues.refusees();
+    if (refus.length) console.log('[odds] IGNORE(S) : ' + refus.join(' ; '));
+    /* Le plafond d'engagement des rencontres cotees a l'Elo (lot 3) : vide =
+       rien ne change ; une valeur invalide est IGNOREE et dite ici. */
+    const pe = paris.eloEngagementMax();
+    console.log('[paris] PARIS_ELO_ENGAGEMENT_MAX : ' + (pe.valeur !== null ? pe.valeur + ' $SWOGEBET par rencontre cotee a l Elo'
+      : pe.invalide ? 'IGNORE (« ' + pe.brut + ' » n est pas un nombre strictement positif) — plafond global seul' : 'vide — plafond global seul'));
+    try { console.log(prixObserve.ligneDemarrage()); } catch (e) { /* jamais bloquant */ }
     ditLaPorte('demarrage');
     /* Le journal des releves : actif ou coupe, ce qu'il garde. Lire son etat
        ici remplit aussi le compte par fichier (une fois par processus). */
@@ -1989,7 +2089,7 @@ if (require.main === module) {
                   '--calibre': () => calibre(a.find((x) => !x.startsWith('--'))),
                   /* Le prix du marche des grands championnats (1 credit chacun),
                      puis le calendrier qui en descend (0 credit). */
-                  '--prix': async () => { await rafraichitPrix([...prixMarche.aRelever()], 'a la main'); await importeMatchs(); },
+                  '--prix': async () => { await rafraichitPrix([...prixMarche.aRelever(liguesAvecRencontre())], 'a la main'); await importeMatchs(); },
                   '--sports': () => listeSports(a.find((x) => !x.startsWith('--'))),
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
@@ -2004,6 +2104,7 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    finDuMois, fin,
                    etatImport, noteDernier,
                    trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, causesAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
+                   sportDeLaCle, liguesAvecRencontre,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota,

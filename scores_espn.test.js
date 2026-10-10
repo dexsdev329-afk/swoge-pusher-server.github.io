@@ -309,6 +309,64 @@ console.log('\n-- qui recoit quel score --');
                     async () => { throw new Error('reseau coupe'); });
     eq(e.refusDuJour()['soccer/esp.1'].refus, avantRefus + 2, 'une coupure aussi');
 
+    // ================== 13. DEUX ISSUES : LE TIR AU BUT, ET LE MONEYLINE DRAFTKINGS (lot 3, 10/10/2026)
+    /* Reponses ESPN REELLES reduites (bancs_espn_deux_issues.json) : EDM 3 -
+     * LA 4 du 10/01/2026, Final/SO, cinq periodes — le tir au but vainqueur
+     * compte un but, le score n'est jamais egal (52 matchs NHL du 10 au
+     * 15/01 : 12 au-dela du temps reglementaire, 0 egal) ; et BOS - PHI du
+     * 10/10/2026 avant le coup d'envoi, moneyline DraftKings close -135 / +114,
+     * open -130 / +110. */
+    console.log('\n-- deux issues : tir au but, moneyline DraftKings --');
+    const B2 = JSON.parse(fs.readFileSync(path.join(__dirname, 'bancs_espn_deux_issues.json'), 'utf8'));
+    const so = B2.nhl_so.events[0], pre = B2.nhl_pre.events[0];
+    const nhlNous = (dom, ext, quand, id) => ({ id, sport: 'nhl', domicile: dom, exterieur: ext, debut: Date.parse(quand), source: { ligue: 'icehockey_nhl' } });
+    const regleSo = await e.finies([nhlNous('Edmonton Oilers', 'Los Angeles Kings', '2026-01-11T03:00Z', 'so1')], { prendre: commeLeVrai([so]) });
+    eq(regleSo.length, 1, 'le match fini aux tirs au but se regle');
+    eq(regleSo[0] && regleSo[0].score, '3-4', 'avec le score ESPN, tir au but compris (3-4)');
+    eq(regleSo[0] && regleSo[0].resultat, '2', 'donc l exterieur gagne : jamais un nul au hockey');
+    ok(regleSo[0] && !regleSo[0].aMain, 'et sans passer a la main (la regle des 90 minutes ne touche que le football)');
+    /* lis : les champs d'avant ne bougent pas, le moneyline s'ajoute par camp */
+    const l = e.lis(pre);
+    eq(JSON.stringify({ a: l.a.nom, b: l.b.nom, pa: l.a.points, pb: l.b.points, quand: l.quand, etat: l.etat, fini: l.fini, statut: l.statut, detail: l.detail }),
+       JSON.stringify({ a: 'Boston Bruins', b: 'Philadelphia Flyers', pa: 0, pb: 0, quand: Date.parse('2026-10-10T17:00Z'), etat: 'pre', fini: false, statut: 'STATUS_SCHEDULED', detail: '10/10 - 1:00 PM EDT' }),
+       'lis : noms, points, heure, etat, statut, detail inchanges');
+    ok(Math.abs(l.a.ml - (1 + 100 / 135)) < 1e-9 && Math.abs(l.b.ml - 2.14) < 1e-9, `lis expose le moneyline CLOSE par camp (${l.a.ml.toFixed(4)} / ${l.b.ml})`);
+    eq(l.fournisseur, 'DraftKings', 'et son fournisseur');
+    ok(Math.abs(e.americaine('-142') - 1.704225) < 1e-6 && e.americaine('+120') === 2.2, 'cote americaine : -142 -> 1,7042 ; +120 -> 2,20');
+    ok(e.americaine('EVEN') === null && e.americaine('-50') === null && e.americaine('') === null, 'rien de devine : EVEN, -50, vide -> null');
+    /* releve : orientee sur NOTRE domicile, lue sur le homeAway du camp — jamais sur sa position dans le tableau */
+    const dkDe = async (evx, dom, ext, sport, ligue) => (await e.releve([Object.assign(nhlNous(dom, ext, '2026-10-10T17:00Z', 'k'), { sport: sport || 'nhl', source: { ligue: ligue || 'icehockey_nhl' } })],
+                                                         { prendre: commeLeVrai([evx]) })).get('k');
+    const droit = await dkDe(pre, 'Boston Bruins', 'Philadelphia Flyers');
+    ok(droit && droit.dk && Math.abs(droit.dk[1] - (1 + 100 / 135)) < 1e-9 && Math.abs(droit.dk[2] - 2.14) < 1e-9 && droit.dk.fournisseur === 'DraftKings',
+       'notre domicile = celui d ESPN : dk = { 1: 1,7407, 2: 2,14, DraftKings }');
+    const envers = await dkDe(pre, 'Philadelphia Flyers', 'Boston Bruins');
+    ok(envers && envers.dk && Math.abs(envers.dk[1] - 2.14) < 1e-9 && Math.abs(envers.dk[2] - (1 + 100 / 135)) < 1e-9,
+       'notre domicile = l exterieur d ESPN : les cotes suivent les equipes (1 = Philadelphie, +114)');
+    const permute = JSON.parse(JSON.stringify(pre));
+    permute.competitions[0].competitors.reverse();
+    const perm = await dkDe(permute, 'Philadelphia Flyers', 'Boston Bruins');
+    ok(perm && perm.dk && Math.abs(perm.dk[1] - 2.14) < 1e-9,
+       'le tableau range l exterieur EN PREMIER : la cote se lit sur homeAway, pas sur la position (G7)');
+    eq(JSON.stringify([droit.score, droit.resultat, droit.fini, droit.etat, droit.statut]), JSON.stringify(['0-0', 'N', false, 'pre', 'STATUS_SCHEDULED']),
+       'releve : score, resultat, fini, etat, statut inchanges');
+    /* close seulement : un lot qui n'a que `open` ne donne AUCUNE cote */
+    const ouvert = JSON.parse(JSON.stringify(pre));
+    for (const side of ['home', 'away']) delete ouvert.competitions[0].odds[0].moneyline[side].close;
+    const sansClose = await dkDe(ouvert, 'Boston Bruins', 'Philadelphia Flyers');
+    ok(sansClose && !sansClose.dk && sansClose.dkSansClose === true, 'open sans close : aucune cote (jamais de repli sur open), et c est dit (dkSansClose)');
+    /* un objet odds bancal ne fait pas perdre le score */
+    const bancal = JSON.parse(JSON.stringify(so));
+    bancal.competitions[0].odds = [{ provider: null, moneyline: { home: { close: { odds: { pas: 'un nombre' } } }, away: 7 } }];
+    const lb = e.lis(bancal);
+    ok(lb && lb.a.points === 3 && lb.b.points === 4 && lb.a.ml === null && lb.b.ml === null, 'un objet odds bancal : le score reste lu, aucune cote');
+    /* le football ne porte jamais de dk (trois issues) */
+    const foot = JSON.parse(JSON.stringify(pre));
+    foot.competitions[0].competitors[0].team.displayName = 'Borussia Dortmund';
+    foot.competitions[0].competitors[1].team.displayName = 'Bayern Munich';
+    const vf = await dkDe(foot, 'Borussia Dortmund', 'Bayern Munich', 'foot', 'soccer_germany_bundesliga');
+    ok(vf && !('dk' in vf) && !('dkSansClose' in vf), 'un match de football ne porte pas de dk');
+
     console.log(`\nscores_espn.test.js : ${n} verifications OK`);
   });
 }

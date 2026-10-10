@@ -579,15 +579,48 @@ function ouvert(m, now) {
    * sur 414 battables face au marche, la meilleure a +37,6 %. Une rencontre
    * FABRIQUEE d'un championnat vendu, sans prix du marche, est donc fermee ici
    * comme a l'import. Une cote relevee a la main (`cotesGenerees` faux) n'est
-   * pas concernee. */
-  if (m.cotesGenerees && !m.prixMarche && m.source && m.source.ligue
-      && prixLigues.ligues().has(m.source.ligue)) return false;
+   * pas concernee.
+   * `vendue` et non plus `ligues().has` (lot 3, 10/10/2026) : la meme reponse
+   * pour une cle ecrite en clair, et le joker du tennis (`tennis_atp_*`) ferme
+   * lui aussi une rencontre fabriquee sans prix — sinon un tournoi bascule
+   * par joker se serait vendu a l'Elo jusqu'a l'import suivant.
+   * Et le tennis « vendu » (lot 3) ne se vend jamais au prix du marche :
+   * aucun verrou d'heure reelle ne le ferme (prix_ligues.venteImpossible).
+   * L'import le suspend ; ici, meme un catalogue qui porterait un prix est
+   * ferme. */
+  if (m.cotesGenerees && m.source && m.source.ligue && prixLigues.vendue(m.source.ligue)
+      && (!m.prixMarche || prixLigues.venteImpossible(m.source.ligue))) return false;
   const r = HEURES_REELLES.get(m.id);
   if (r) {
     if (r.etat === 'in' || r.etat === 'post') return false;
     if (r.quand > 0 && r.quand - AVANCE_REELLE_MS <= t) return false;
   }
   return true;
+}
+
+/* ---- L'ENGAGEMENT D'UNE RENCONTRE COTEE A L'ELO (lot 3, 10/10/2026) ----
+ * Pendant l'observation des sports a deux issues, leur Elo reste en vente :
+ * mesure du 09/10 (DraftKings vu par ESPN, 35 rencontres NHL/NFL/MLB), 15
+ * issues sur 70 battables, soit 21,4 % (borne basse de Wilson 13,4 %), pires
+ * cas +29,8 % et +22,5 %, sous des plafonds de 1 M par pari et 2 M par
+ * rencontre (PARI_MAX, PARI_ENGAGEMENT_MAX, globaux). `PARIS_ELO_ENGAGEMENT_MAX`
+ * pose un plafond d'engagement PAR RENCONTRE propre aux rencontres cotees a
+ * l'Elo (cote fabriquee, aucun prix du marche) ; il ne releve jamais le
+ * plafond global, il ne peut que le baisser.
+ * VIDE PAR DEFAUT : rien ne change (decision du 09/10 : un plafond change ce
+ * qui est vendu, la valeur revient au proprietaire ; recommandee : 300 000).
+ * Une valeur qui n'est pas un nombre strictement positif est IGNOREE — et dite
+ * au demarrage (paris_import.planifie) et dans /paris/import : « 0 » ne veut
+ * pas dire « fermer », il ne veut rien dire. */
+/** Cette rencontre est-elle cotee a l'Elo (cote fabriquee, sans prix du marche) ? */
+function aLElo(m) { return !!(m && m.cotesGenerees && !m.prixMarche); }
+/** `{ valeur, brut, invalide }` : `valeur` null quand la variable est vide ou invalide. */
+function eloEngagementMax() {
+  const brut = process.env.PARIS_ELO_ENGAGEMENT_MAX;
+  const txt = String(brut === undefined || brut === null ? '' : brut).trim();
+  if (!txt) return { valeur: null, brut: null, invalide: false };
+  const v = Number(txt);
+  return isFinite(v) && v > 0 ? { valeur: v, brut: txt, invalide: false } : { valeur: null, brut: txt, invalide: true };
 }
 
 /* ================== LE SCORE, ET CE QU'ON EN DEDUIT ==================
@@ -687,6 +720,7 @@ module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
   COTE_MIN, COTE_MAX, MARGE_MIN,
   charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS,
+  aLElo, eloEngagementMax,
   AGE_PRIX_MS, prixTropVieux, demandePrix, prixDemandes, PRES_MS, FRAIS_MS,
   rapport, vue, marge, margeDe, valide,
   scoreLu, resultatDuScore,

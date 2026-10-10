@@ -1,0 +1,103 @@
+{
+ "_source": "Reponses ESPN reelles reduites aux champs lus : NHL du 10/01/2026 (EDM 3 - LA 4, Final/SO, cinq periodes) et NHL du 10/10/2026 avant le coup d envoi (BOS - PHI, moneyline DraftKings close/open), releve le 09/10/2026.",
+ "nhl_so": {
+  "events": [
+   {
+    "id": "401803060",
+    "date": "2026-01-11T03:00Z",
+    "status": {
+     "type": {
+      "name": "STATUS_FINAL",
+      "state": "post",
+      "completed": true,
+      "detail": "Final/SO",
+      "shortDetail": "Final/SO"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Edmonton Oilers"
+        },
+        "score": "3"
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Los Angeles Kings"
+        },
+        "score": "4"
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "nhl_pre": {
+  "events": [
+   {
+    "id": "401892469",
+    "date": "2026-10-10T17:00Z",
+    "status": {
+     "type": {
+      "name": "STATUS_SCHEDULED",
+      "state": "pre",
+      "completed": false,
+      "detail": "Sat, October 10th at 1:00 PM EDT",
+      "shortDetail": "10/10 - 1:00 PM EDT"
+     }
+    },
+    "competitions": [
+     {
+      "competitors": [
+       {
+        "homeAway": "home",
+        "team": {
+         "displayName": "Boston Bruins"
+        },
+        "score": "0"
+       },
+       {
+        "homeAway": "away",
+        "team": {
+         "displayName": "Philadelphia Flyers"
+        },
+        "score": "0"
+       }
+      ],
+      "odds": [
+       {
+        "provider": {
+         "name": "DraftKings"
+        },
+        "details": "BOS -135",
+        "moneyline": {
+         "home": {
+          "close": {
+           "odds": "-135"
+          },
+          "open": {
+           "odds": "-130"
+          }
+         },
+         "away": {
+          "close": {
+           "odds": "+114"
+          },
+          "open": {
+           "odds": "+110"
+          }
+         }
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

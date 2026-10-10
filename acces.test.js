@@ -46,6 +46,10 @@ const PRIVEES = ['/admin', '/players', '/stats',
                     nomme chaque joueur, ce qu il mise, et s il nous bat. */
                  '/paris/clv',
                  '/paris/clv?addr=0x' + 'a'.repeat(40),
+                 /* La mise par sport (lot 3, 10/10/2026) : combien d adresses
+                    misent quoi, sport par sport et par jeton. */
+                 '/paris/mises',
+                 '/paris/mises?jours=90',
                  /* Le robinet. Ouvert, il ne fuit pas des informations : il
                     fabrique des jetons que personne n'a deposes. C'est la
                     porte a laisser fermee avant toutes les autres. */

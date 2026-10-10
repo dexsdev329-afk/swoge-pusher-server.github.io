@@ -168,4 +168,52 @@ function jeu() {
   eq(b.taux, 0, 'et le taux le sait');
 }
 
+// ================== 5. LA MISE PAR SPORT, PAR JETON (lot 3, 10/10/2026)
+/* game.misesParSport : quel sport porte l'argent (l'ordre de bascule au prix
+   du marche), et si quelqu'un exploite l'Elo. Des tickets ecrits a la main :
+   chaque champ y est choisi, rien ne depend du catalogue sauf l'ancien ticket
+   sans jambes, qui doit le relire. */
+{
+  const g = jeu();
+  const T = Date.parse('2026-10-10T12:00:00Z'), J = 86400000;
+  const foot = M[0];
+  const tk = (id, addr, jambes, mise, rapport, t, etat, jeton) => Object.assign({ id, addr, jambes, mise, rapport, t, cote: rapport / mise,
+    regle: etat !== 'ouvert', gagne: etat === 'gagne' ? true : etat === 'perdu' ? false : null, match: jambes[0] && jambes[0].match },
+    jeton ? { jeton } : {});
+  g.paris = [
+    tk('s1', A, [{ match: 'nhl-1', sport: 'nhl' }], 1000, 1900, T - 1 * J, 'gagne', 'swogebet'),
+    tk('s2', B, [{ match: 'nhl-2', sport: 'nhl' }], 3000, 5400, T - 2 * J, 'perdu', 'swogebet'),
+    tk('s3', A, [{ match: 'nhl-3', sport: 'nhl' }], 500, 950, T - 3 * J, 'ouvert', 'swogebet'),
+    tk('s4', A, [{ match: 'nhl-4', sport: 'nhl' }], 700, 1300, T - 4 * J, 'rembourse', 'swogebet'),
+    tk('c1', B, [{ match: 'nhl-5', sport: 'nhl' }, { match: 'nfl-1', sport: 'nfl' }], 200, 800, T - 1 * J, 'perdu', 'swogebet'),
+    tk('v1', A, [{ match: 'nfl-2', sport: 'nfl' }], 9999, 19000, T - 31 * J, 'perdu', 'swogebet'),     // hors fenetre
+    { id: 'old1', addr: B, match: foot, choix: '1', mise: 400, rapport: 800, t: T - 1 * J, regle: true, gagne: false },   // ancien ticket $SWOGE, sans jambes
+  ];
+  const r = g.misesParSport(30 * J, T);
+  const sb = (r.parJeton.swogebet || {}), sw = (r.parJeton.swoge || {});
+  const nhl = sb.nhl || {};
+  eq(nhl.tickets, 4, 'quatre simples NHL dans la fenetre, en $SWOGEBET');
+  eq(nhl.adresses, 2, 'deux adresses distinctes (A comptee une fois pour trois tickets)');
+  eq(nhl.mise, 5200, 'mise NHL : 1000 + 3000 + 500 + 700');
+  eq(nhl.enJeu, 500, 'en jeu : le ticket non regle');
+  eq(nhl.miseJugee, 4000, 'mise jugee : gagne + perdu, le rembourse exclu');
+  eq(nhl.rendu, 1900, 'rendu : le gagnant');
+  eq(nhl.netMaison, 2100, 'net de la maison : 4000 - 1900, le rembourse hors du net');
+  eq(nhl.rembourses, 1, 'le rembourse est compte a part');
+  eq(nhl.dansCombines, 1, 'et la NHL est touchee par un combine');
+  const comb = sb.combine || {};
+  eq(comb.tickets, 1, 'le combine va dans « combine », pas dans un sport');
+  eq(comb.netMaison, 200, 'avec son propre net');
+  eq((sb.nfl || {}).tickets, 0, 'la NFL n a aucun simple dans la fenetre (le ticket de 31 jours en est exclu)');
+  eq((sb.nfl || {}).dansCombines, 1, 'mais elle est touchee par le combine');
+  eq((sw.foot || {}).tickets, 1, 'l ancien ticket sans jambes : en $SWOGE, son sport relu au catalogue (_infosMatch)');
+  eq((sw.foot || {}).netMaison, 400, 'et ses chiffres a lui');
+  eq(sb.foot, undefined, 'les deux jetons ne s additionnent jamais');
+  /* G10 : la fenetre — un jour de plus fait entrer le ticket de 31 jours */
+  const r32 = g.misesParSport(32 * J, T);
+  eq(r32.parJeton.swogebet.nfl && r32.parJeton.swogebet.nfl.tickets, 1, 'sur 32 jours, le ticket de 31 jours entre dans la NFL');
+  eq(g.misesParSport(30 * J, T - 2.5 * J).parJeton.swogebet.nhl.tickets, 2, 'la fenetre finit a `now` : un ticket pose apres n entre pas');
+  eq(r.jours, 30, 'la fenetre est dite');
+}
+
 console.log(`\nbilan_paris.test.js : ${n} verifications OK\n`);

@@ -3617,13 +3617,28 @@ class Game {
     return pire;
   }
 
+  /* ---- LE PLAFOND D'ENGAGEMENT D'UNE RENCONTRE (lot 3, 10/10/2026) ----
+   * PARI_ENGAGEMENT_MAX (2 M) partout ; sur une rencontre cotee a l'Elo,
+   * PARIS_ELO_ENGAGEMENT_MAX s'il est pose et plus bas (paris.eloEngagementMax :
+   * vide par defaut = rien ne change). Mesure qui le justifie : 21,4 % des
+   * issues Elo battables face a DraftKings le 09/10 (15/70, borne basse 13,4 %),
+   * pendant l'observation des sports a deux issues (EXPLOITATION 8.8nonies).
+   * UN seul endroit : la vente (parieCombine) et la place affichee
+   * (parisOuverts) le lisent ici, sinon l'une finirait par dire autre chose
+   * que l'autre. */
+  plafondEngagement(m) {
+    const e = paris.eloEngagementMax();
+    if (e.valeur === null || !paris.aLElo(m)) return cfg.PARI_ENGAGEMENT_MAX;
+    return Math.min(cfg.PARI_ENGAGEMENT_MAX, e.valeur);
+  }
+
   /** Les matchs ouverts, avec la place qu'il reste sur chacun. */
   parisOuverts(now) {
     const t = now || Date.now();
     return paris.ouverts(t).map((m) => {
       const v = paris.vue(m, t);
       v.engagement = Number(this.engagementMatch(m.id).toFixed(6));
-      v.place = Math.max(0, cfg.PARI_ENGAGEMENT_MAX - v.engagement);
+      v.place = Math.max(0, this.plafondEngagement(m) - v.engagement);
       return v;
     });
   }
@@ -3762,10 +3777,11 @@ class Game {
           if (total > pire) pire = total;
         }
       }
-      if (pire > cfg.PARI_ENGAGEMENT_MAX) {
-        const m = paris.match(j.match);
-        throw new Error(m.domicile + ' v ' + m.exterieur + ' is full — ' +
-          Math.max(0, Math.floor(cfg.PARI_ENGAGEMENT_MAX - this.engagementMatch(j.match))) +
+      const mj = paris.match(j.match);
+      const plafond = this.plafondEngagement(mj);
+      if (pire > plafond) {
+        throw new Error(mj.domicile + ' v ' + mj.exterieur + ' is full — ' +
+          Math.max(0, Math.floor(plafond - this.engagementMatch(j.match))) +
           ' $SWOGEBET of exposure left');
       }
     }
@@ -4091,6 +4107,57 @@ class Game {
     b.enJeu = Number(b.enJeu.toFixed(6));
     b.aGagner = Number(b.aGagner.toFixed(6));
     return b;
+  }
+
+  /* ---- LA MISE REELLE PAR SPORT, PAR JETON (lot 3, 10/10/2026) ----
+   * `_bilansParis` ne groupe que par adresse : rien ne disait QUEL sport porte
+   * l'argent, donc lequel basculer d'abord au prix du marche (« ordre, pas
+   * verrou » de la porte, EXPLOITATION 8.8nonies). Les tickets d'avant le
+   * champ `jeton` sont en $SWOGE, les autres en $SWOGEBET (`jetonDuTicket`) :
+   * les deux ne s'additionnent JAMAIS. Par jeton puis par sport :
+   *   tickets, adresses distinctes, mise, enJeu (non regle), miseJugee et
+   *   rendu (regles, rembourses exclus), netMaison = miseJugee - rendu,
+   *   rembourses (comptes, hors du net), dansCombines (combines touchant ce
+   *   sport ; le combine lui-meme va dans « combine »).
+   * Un ticket compte s'il a ete POSE dans la fenetre (`p.t`). Un simple va
+   * dans le sport de sa jambe (la jambe garde son sport depuis la pose ; un
+   * ancien ticket sans jambes ou sans sport le reprend de `_infosMatch`,
+   * sinon « inconnu »). Lecture seule. */
+  misesParSport(fenetreMs, now) {
+    const t = Number(now) || Date.now();
+    const f = Number(fenetreMs) > 0 ? Number(fenetreMs) : 30 * 86400000;
+    const depuis = t - f;
+    const parJeton = {}, adresses = {};
+    const ligne = (jeton, k) => {
+      const pj = parJeton[jeton] || (parJeton[jeton] = {});
+      return pj[k] || (pj[k] = { tickets: 0, adresses: 0, mise: 0, enJeu: 0, miseJugee: 0, rendu: 0, netMaison: 0, rembourses: 0, dansCombines: 0 });
+    };
+    for (const p of (this.paris || [])) {
+      const tp = Number(p && p.t);
+      if (!(tp >= depuis && tp <= t)) continue;
+      const jeton = Game.jetonDuTicket(p);
+      const jambes = Array.isArray(p.jambes) && p.jambes.length ? p.jambes : [{ match: p.match }];
+      const sports = [...new Set(jambes.map((j) => (j && j.sport) || ((this._infosMatch(j && j.match) || {}).sport) || 'inconnu'))];
+      const k = jambes.length > 1 ? 'combine' : sports[0];
+      if (jambes.length > 1) for (const s of sports) ligne(jeton, s).dansCombines++;
+      const x = ligne(jeton, k);
+      x.tickets++; x.mise += Number(p.mise) || 0;
+      const cle = jeton + '\u0000' + k;
+      (adresses[cle] || (adresses[cle] = new Set())).add(String(p.addr || '').toLowerCase());
+      if (!p.regle) { x.enJeu += Number(p.mise) || 0; continue; }
+      if (p.gagne === null) { x.rembourses++; continue; }
+      x.miseJugee += Number(p.mise) || 0;
+      if (p.gagne) x.rendu += Number(p.rapport) || 0;
+    }
+    for (const [jeton, pj] of Object.entries(parJeton)) {
+      for (const [k, x] of Object.entries(pj)) {
+        const a = adresses[jeton + '\u0000' + k];
+        x.adresses = a ? a.size : 0;
+        for (const c of ['mise', 'enJeu', 'miseJugee', 'rendu']) x[c] = Number(x[c].toFixed(6));
+        x.netMaison = Number((x.miseJugee - x.rendu).toFixed(6));
+      }
+    }
+    return { depuis: new Date(depuis).toISOString(), jusqua: new Date(t).toISOString(), jours: Math.round(f / 86400000 * 10) / 10, parJeton };
   }
 
   /** Le bilan d'UN joueur. Zero partout s'il n'a jamais parie. */
