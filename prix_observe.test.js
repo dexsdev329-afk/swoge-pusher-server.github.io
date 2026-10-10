@@ -21,6 +21,18 @@
  *  4. le carnet : relu apres un redemarrage, purge, ecrit en deux temps, un
  *     fichier illisible mis de cote, une lecture refusee jamais gardee — G16 ;
  *     PARIS_OBS_US=0 coupe tout ; aucune requete reseau.
+ * Ajouts des mutations du 10/10/2026 (31 garde-fous qu'aucun essai ne tenait) :
+ *  3ter. la porte au point qui distingue chaque regle — P5 sur les BORNES (pas
+ *     les parts) et sur 40 rencontres de fraicheur, P4 signee ET |ecart|, P3 et
+ *     P4 dans la porte, P2 rapport seulement ; P3 non mesurable sous 10 releves
+ *     reussies (jamais « failed » pour des refus voulus) ;
+ *  3quater. le carnet qui nourrit la porte — prix eu de plus de 3 h ignore,
+ *     aucune cote « Elo » d'une rencontre au marche, un changement de notre Elo
+ *     n'est pas un mouvement de DK, debutParSport pose une fois, cloture DK
+ *     avant eu, derniere paire, 6 paires, heure du catalogue (G8), P1 du tennis ;
+ *  4. jamais d'ecriture directe du carnet, releves purgees, 7 a 365 jours ;
+ *  6. la carte refuse l'ecart sous 20 paires et la borne sous 40 rencontres ;
+ *  2. un autre fournisseur est compte (af), jamais garde comme prix.
  * Un echec s'ecrit RATE ; la derniere ligne donne RATES : n/total.
  */
 const fs = require('fs');
@@ -106,7 +118,12 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     eq(r.dk.fin.c[1], 1.70, 'la cloture est la cote de t - 1 h');
     ok(r.dk.bouge === 1 && r.dk.n === 3, 'dkBouge : la cote a change (3 points distincts)');
     eq(r.debut, Q, 'le coup d envoi garde est le plus tot des deux (ESPN)');
-    eq(obs.noteDk(par('nfl-ins', su(2.10, 1.75, Q, 'pre', 'FanDuel')), t1), 0, 'un autre fournisseur : ignore');
+    /* un autre fournisseur n'est jamais un prix garde, mais il est COMPTE (af) :
+       sans compte, un changement de fournisseur chez ESPN tarirait le carnet
+       sans un mot (relecture du 10/10) */
+    eq(obs.noteDk(par('nfl-ins', su(2.10, 1.75, Q, 'pre', 'FanDuel')), t1), 1, 'un autre fournisseur : la rencontre est comptee');
+    ok(obs.etat().rencontres['nfl-ins'].dk === null && obs.etat().rencontres['nfl-ins'].af === 1, 'mais aucun point DK n est garde (dk vide, af = 1)');
+    eq(obs.noteDk(par('nfl-ins', su(2.10, 1.75, Q, 'pre', 'FanDuel')), t2), 0, 'compte une fois : rien ne change, rien n est ecrit');
     eq(obs.noteDk(par('mlb-ins', su(1.70, 2.20, Q)), t1), 0, 'MLB hors de PARIS_OBS_DK_SPORTS par defaut (nfl,nhl,nba) : ignoree');
     process.env.PARIS_OBS_DK_SPORTS = 'nfl,nhl,nba,mlb';
     eq(obs.noteDk(par('mlb-ins', su(1.70, 2.20, Q)), t1), 1, 'ajoutee a la variable : notee (0 credit)');
@@ -114,6 +131,9 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     eq(obs.noteDk(par('nfl-ins', { etat: 'pre', quand: Q, dkSansClose: true }), t1), 1, 'ESPN sans close : aucun point, mais compte');
     const rn = obs.etat().rencontres['nfl-ins'];
     ok(rn && rn.sc === 1 && rn.dk === null, 'sc = 1, dk vide');
+    const bn = obs.bilan(D + H).parSport.nfl;
+    ok(bn.dkSansClose === 1 && bn.dkAutreFournisseur === 1 && bn.rencontres === 0, `le bilan compte ce qui est ecarte, sans en faire une rencontre (${bn.dkSansClose}, ${bn.dkAutreFournisseur})`);
+    ok(/\[obs\] nfl : 0 rencontres.*DK ecarte : 1 sans close, 1 autre fournisseur/.test(obs.lignes(D + H).join('\n')), 'et la ligne [obs] le dit');
     eq(obs.noteDk(par('inconnue', su(1.8, 2.0, Q)), t1), 0, 'une rencontre absente du catalogue : ignoree');
     eq(obs.noteDk(par('nhl-ins', su(0.9, 2.0, Q)), t1), 0, 'une cote <= 1 : ignoree');
   }
@@ -213,7 +233,9 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     for (let i = 0; i < 7; i++) obs.noteEu('basketball_nba', 'nba', { pinnacle: 9, aucun: 1 }, T3 - (7 - i) * 12 * H, 'ok');
     let b3 = obs.bilan(T3).parSport.nba;
     eq(b3.couvertureEu7j.partAucun, 0.1, 'aucun : 7 sur 70 = 10 %, refait a la main');
-    eq(b3.porte.P3.ok, false, 'sept releves reussies : P3 non tenue (10 exigees)');
+    /* sous 10 releves reussies, P3 n'est pas tenue — et pas encore mesurable
+       (null), plutot que « failed » (relecture du 10/10) */
+    eq(b3.porte.P3.ok, null, 'sept releves reussies : P3 non tenue, pas encore mesurable (10 exigees)');
     for (let i = 0; i < 3; i++) obs.noteEu('basketball_nba', 'nba', { pinnacle: 9, aucun: 1 }, T3 - i * MIN, 'ok');
     obs.noteEu('basketball_nba', 'nba', null, T3 - 2 * H, 'refuse');
     obs.noteEu('basketball_nba', 'nba', null, T3 - 3 * H, 'erreur');
@@ -223,6 +245,12 @@ const recharge = () => { obs.flush(); obs.oublie(); };
        `dix reussies, aucun 10 % : P3 tenue ; le refus (voulu) ne compte pas contre elle, la releve de 8 jours sort de la fenetre (${JSON.stringify(b3.porte.P3)})`);
     obs.noteEu('basketball_nba', 'nba', { pinnacle: 8, aucun: 2 }, T3 - 30 * MIN, 'ok');
     eq(obs.bilan(T3).parSport.nba.porte.P3.ok, false, 'un aucun de plus (12/110 > 10 %) : P3 tombe');
+    /* sept jours de releves REFUSEES (classe 3, voulu) : P3 n'est pas mesurable,
+       elle n'echoue pas — un refus n'est pas une condition */
+    obs.oublie(); fs.rmSync(obs.fichier(), { force: true });
+    for (let i = 0; i < 14; i++) obs.noteEu('basketball_nba', 'nba', null, T3 - i * 11 * H, 'refuse');
+    const p3r = obs.bilan(T3).parSport.nba.porte.P3;
+    ok(p3r.ok === null && p3r.refusees === 14 && p3r.reussies === 0, `quatorze refus, aucune releve reussie : P3 non mesurable, pas « failed » (${JSON.stringify(p3r)})`);
     /* P5, COMPAREE a l'Elo : etat ecrit a la main dans le carnet */
     obs.oublie(); fs.rmSync(obs.fichier(), { force: true });
     const st = obs.etat(), T5 = Date.now(), d5 = T5 - H;
@@ -259,6 +287,170 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     eq(bt.battablesElo, 45, 'l Elo du tennis contre le prix eu : 2,2 x 0,5 > 1 sur chaque rencontre');
   }
 
+  console.log('\n-- 3ter. la porte au point qui distingue chaque regle (mutations du 10/10) --');
+  {
+    /* Un sport ou tout est tenu (P1 : 40 rencontres, 10 jours ; P3 : 10
+       releves reussies ; P4 : paires de 0,1 point ; DK a bouge partout), puis
+       une seule chose change. Les essais du 3bis ne jugeaient la porte que sur
+       des cas extremes (20/40 contre 0/40) : sept mutants de la porte y
+       survivaient (EXPLOITATION 8.8nonies). */
+    const porteDe = (o) => {
+      obs.oublie(); fs.rmSync(obs.fichier(), { force: true });
+      const st = obs.etat(), T = Date.now(), d = T - H;
+      st.debutParSport.nhl = T - 10 * J;
+      const rel = o.releves || Array.from({ length: 10 }, () => ({ e: 'ok', pi: 9, a: 0 }));
+      rel.forEach((x, L) => { st.releves['k' + L] = [{ t: T - L * H, s: 'nhl', e: x.e, b: 0, pi: x.pi || 0, md: 0, a: x.a || 0, nul: 0 }]; });
+      for (let i = 0; i < (o.rencontres || 40); i++) {
+        const elo = i < o.eloK ? { 1: 1.95, 2: 1.95 } : { 1: 1.70, 2: 2.05 };
+        const pA2h = i < (o.marcheK || 0) ? { 1: 0.40, 2: 0.60 } : { 1: 0.54, 2: 0.46 };
+        st.rencontres['c' + i] = { s: 'nhl', l: 'icehockey_nhl', ev: 'x' + i, dom: 'A' + i, ext: 'B' + i, debut: d, eu: null,
+          pa: [[d - 2 * H].concat(o.paire || [0.551, 0.55])],
+          dk: { premier: null, a2h: (o.a2h === undefined || i < o.a2h) ? { t: d - 3 * H, c: { 1: 1.8, 2: 2.05 }, p: pA2h, elo } : null,
+                fin: { t: d - 10 * MIN, c: { 1: 1.75, 2: 2.12 }, p: { 1: 0.55, 2: 0.45 }, elo }, n: 2, bouge: 1 } };
+      }
+      return obs.bilan(T).parSport.nhl;
+    };
+    const temoin = porteDe({ eloK: 20 });
+    ok(temoin.porte.bascule === true, `temoin : tout tenu, la porte est franchie (${temoin.porte.raisons.join(';')})`);
+    /* P5 compare les BORNES, pas les parts : Elo 8/40 (20 %, borne basse
+       10,5 %), prix de 2 h 3/40 (7,5 %, borne haute 19,9 %) — la part du
+       marche est plus basse, rien ne le prouve */
+    let b = porteDe({ eloK: 8, marcheK: 3 });
+    ok(b.parRencontre.battables === 8 && b.fraicheur2h.parRencontre.battables === 3, `Elo 8/40 rencontres battables, prix de 2 h 3/40 (${b.parRencontre.battables}, ${b.fraicheur2h.parRencontre.battables})`);
+    proche(b.porte.P5.eloBas, 0.105, 1e-3, 'borne basse de l Elo 10,5 %');
+    proche(b.porte.P5.fraicheurHaut, 0.1986, 1e-3, 'borne haute du marche 19,9 %');
+    ok(b.porte.P5.ok === false && b.porte.bascule === false && /P5 failed/.test(b.porte.raisons.join(' ')), 'P5 refusee, porte fermee : une part plus basse n est pas une preuve');
+    /* P5 compte PAR RENCONTRE (les deux issues d'une rencontre ne sont pas
+       independantes), pas par issue. Donne pour equivalent par les mutations
+       du 10/10 (« les bornes se confondent ») : faux, une recherche sur 40 a
+       120 rencontres trouve des cas qui departagent. Elo 17/40 rencontres
+       (borne basse 28,5 %), marche 5/40 (borne haute 26,1 %) : P5 tenue ;
+       comptee par issue (17/80 contre 5/80 : 13,7 % contre 13,8 %) elle
+       tomberait. */
+    b = porteDe({ eloK: 17, marcheK: 5 });
+    proche(b.porte.P5.eloBas, 0.2851, 1e-3, 'Elo 17/40 rencontres : borne basse 28,5 %');
+    proche(b.porte.P5.fraicheurHaut, 0.2611, 1e-3, 'marche 5/40 rencontres : borne haute 26,1 %');
+    ok(b.porte.P5.ok === true && b.porte.bascule === true, `P5 comptee par rencontre : tenue, porte franchie (${b.porte.P5.ok}, ${b.porte.bascule})`);
+    /* P5 : moins de 40 rencontres de fraicheur — non mesurable, jamais jugee */
+    b = porteDe({ eloK: 20, a2h: 5 });
+    ok(b.fraicheur2h.rencontres === 5 && b.porte.P5.ok === null && b.porte.bascule === null && /P5 not measurable yet/.test(b.porte.raisons.join(' ')),
+       `5 rencontres de fraicheur sur 40 : P5 non mesurable (${b.porte.P5.ok})`);
+    /* P4 : la mediane SIGNEE voit un prix plus tranche que le moneyline, que
+       |ecart| ne voit pas — 0,62 contre 0,605 : |ecart| 1,5 point, signee +1,5 */
+    b = porteDe({ eloK: 20, paire: [0.62, 0.605] });
+    ok(b.porte.P4.ecartMedian <= 0.02 && b.porte.P4.signeeMediane > 0.01, `|ecart| ${b.porte.P4.ecartMedian} <= 2 points, signee ${b.porte.P4.signeeMediane} > 1 point`);
+    ok(b.porte.P4.ok === false && b.porte.bascule === false && /P4 failed/.test(b.porte.raisons.join(' ')), 'P4 refuse un prix eu plus tranche que DK, et ferme la porte');
+    /* P4 : |ecart| tient l'orientation, que la signee ne voit pas — 0,40 contre 0,60 */
+    b = porteDe({ eloK: 20, paire: [0.40, 0.60] });
+    ok(Math.abs(b.porte.P4.signeeMediane) < 1e-9 && b.porte.P4.ecartMedian > 0.02 && b.porte.P4.ok === false, `prix eu a l envers : signee 0, |ecart| ${b.porte.P4.ecartMedian} — P4 refuse`);
+    /* P3 dans la porte : fausse (aucun 20 % sur 10 releves reussies), elle ferme */
+    b = porteDe({ eloK: 20, releves: Array.from({ length: 10 }, () => ({ e: 'ok', pi: 8, a: 2 })) });
+    ok(b.porte.P3.ok === false && b.porte.P4.ok === true && b.porte.P5.ok === true && b.porte.bascule === false && /P3 failed/.test(b.porte.raisons.join(' ')),
+       `P3 seule fausse (aucun 20 %) : porte fermee (${b.porte.bascule})`);
+    /* sept releves reussies : P3 non mesurable, la porte n'est pas atteinte */
+    b = porteDe({ eloK: 20, releves: Array.from({ length: 7 }, () => ({ e: 'ok', pi: 9, a: 0 })) });
+    ok(b.porte.P3.ok === null && b.porte.bascule === null && /P3 not measurable yet/.test(b.porte.raisons.join(' ')), `7 releves reussies : P3 non mesurable, porte non atteinte (${b.porte.bascule})`);
+    /* P2 n'est qu'un rapport : 200 rencontres, Elo 10/400 issues (borne basse
+       1,4 % < 5 %), marche 0/200 — P5 tenue, la porte passe */
+    b = porteDe({ eloK: 10, rencontres: 200 });
+    ok(b.porte.P2.ok === false && b.porte.P5.ok === true && b.porte.bascule === true, `P2 fausse (rapport), P5 tenue sur 200 : porte franchie (P2 ${b.porte.P2.ok}, P5 ${b.porte.P5.ok}, ${b.porte.bascule})`);
+  }
+
+  console.log('\n-- 3quater. ce qui nourrit la porte : le carnet ecrit juste (mutations du 10/10) --');
+  {
+    const raz = () => { obs.oublie(); fs.rmSync(obs.fichier(), { force: true }); };
+    const ev = (id, dom, ext, quand) => ({ id, commence_time: new Date(quand).toISOString(), home_team: dom, away_team: ext });
+    const deux = (key, e, c1, c2) => ({ key, markets: [{ key: 'h2h', outcomes: [{ name: e.home_team, price: c1 }, { name: e.away_team, price: c2 }] }] });
+    /* noteEu : un prix eu de plus de 3 h (pour() en rend jusqu'a 36 h) n'est ni note ni apparie */
+    {
+      raz();
+      const t = Date.now(), D = t + 10 * H;
+      poseCatalogue([match('nhl-q1', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', D, 1.8, 2.0)]);
+      const e1 = ev('ev-nhl-q1', 'Boston Bruins', 'Toronto Maple Leafs', D);
+      pm.note([Object.assign({}, e1, { bookmakers: [deux('pinnacle', e1, 1.92, 1.96)] })], 'icehockey_nhl', t - 4 * H, { sport: 'nhl' });
+      ok(pm.pour('ev-nhl-q1', t + MIN), 'temoin : pour() rend encore ce prix de 4 h');
+      obs.noteDk(par('nhl-q1', su(1.95, 1.90, D)), t);
+      const k = obs.noteEu('icehockey_nhl', 'nhl', { pinnacle: 1 }, t + MIN, 'ok');
+      const r = obs.etat().rencontres['nhl-q1'];
+      ok(k === 0 && r && r.eu === null && r.pa.length === 0, `prix eu de 4 h : ni note, ni paire (${k}, ${JSON.stringify(r && r.pa)})`);
+    }
+    /* eloDe : une rencontre au prix du marche n'apporte aucune cote « Elo » */
+    {
+      raz();
+      const t = Date.now(), D = t + 10 * H;
+      poseCatalogue([match('nhl-q2', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', D, 1.8, 2.0, { prixMarche: { ref: 'pinnacle', t: new Date(t).toISOString(), p: { 1: 0.5, 2: 0.5 } } })]);
+      ok(paris.match('nhl-q2') && paris.match('nhl-q2').prixMarche, 'temoin : le catalogue garde prixMarche');
+      obs.noteDk(par('nhl-q2', su(1.95, 1.90, D)), t);
+      const r = obs.etat().rencontres['nhl-q2'];
+      ok(r && r.dk && r.dk.fin.elo === null, `rencontre au prix du marche : fin.elo null (${JSON.stringify(r && r.dk && r.dk.fin.elo)})`);
+    }
+    /* un changement de NOTRE Elo seul ecrit un point, sans compter comme un mouvement de DK */
+    {
+      raz();
+      const t = Date.now(), D = t + 10 * H;
+      poseCatalogue([match('nhl-q3', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', D, 1.8, 2.0)]);
+      obs.noteDk(par('nhl-q3', su(1.95, 1.90, D)), t);
+      poseCatalogue([match('nhl-q3', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', D, 1.7, 2.1)]);
+      const c = obs.noteDk(par('nhl-q3', su(1.95, 1.90, D)), t + 30 * MIN);
+      const r = obs.etat().rencontres['nhl-q3'];
+      ok(c === 1 && r.dk.fin.elo[1] === 1.7 && r.dk.n === 2, `l Elo change, DK non : un point, fin.elo a jour (${c}, ${JSON.stringify(r.dk.fin.elo)})`);
+      eq(r.dk.bouge, 0, 'et DK n a pas bouge (P5 ne se valide pas sur notre propre mouvement)');
+    }
+    /* debutParSport : le premier jour d'observation reste le premier (les 7 jours de P1) */
+    {
+      raz();
+      const t = Date.now();
+      poseCatalogue([match('nhl-q4', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', t + 30 * H, 1.8, 2.0), match('nhl-q5', 'nhl', 'Edmonton Oilers', 'Los Angeles Kings', t + 3 * J, 1.5, 2.6)]);
+      obs.noteDk(par('nhl-q4', su(1.95, 1.90, t + 30 * H)), t - 2 * J);
+      obs.noteDk(par('nhl-q5', su(1.55, 2.45, t + 3 * J)), t);
+      eq(obs.etat().debutParSport.nhl, t - 2 * J, 'debutParSport.nhl = le premier releve, pas le dernier');
+    }
+    /* la reference : la cloture DK passe avant le prix eu ; la DERNIERE paire compte */
+    {
+      raz();
+      const st = obs.etat(), T = Date.now(), d = T - H;
+      st.rencontres.r1 = { s: 'nhl', l: 'icehockey_nhl', ev: 'x', dom: 'A', ext: 'B', debut: d,
+        eu: { t: d - H, te: d - H, p: { 1: 0.5, 2: 0.5 }, elo: { 1: 1.9, 2: 1.9 } },
+        dk: { premier: null, a2h: null, fin: { t: d - 10 * MIN, c: { 1: 1.5, 2: 2.7 }, p: { 1: 0.64, 2: 0.36 }, elo: { 1: 1.9, 2: 1.9 } }, n: 1, bouge: 0 },
+        pa: [[d - 3 * H, 0.70, 0.50], [d - 2 * H, 0.551, 0.55]] };
+      const b = obs.bilan(T).parSport.nhl;
+      ok(b.sources.dk === 1 && b.sources.eu === 0, `la cloture DK d abord, le prix eu seulement a defaut (${JSON.stringify(b.sources)})`);
+      proche(b.euDk.ecartMedian, 0.001, 1e-9, 'la DERNIERE paire de la rencontre compte, pas la premiere');
+    }
+    /* 6 paires au plus par rencontre */
+    {
+      raz();
+      const t = Date.now(), D = t + 20 * H;
+      poseCatalogue([match('nhl-q6', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', D, 1.8, 2.0)]);
+      const e6 = ev('ev-nhl-q6', 'Boston Bruins', 'Toronto Maple Leafs', D);
+      for (let i = 0; i < 8; i++) {
+        const ti = t + i * 5 * MIN;
+        pm.note([Object.assign({}, e6, { bookmakers: [deux('pinnacle', e6, 1.92, 1.96)] })], 'icehockey_nhl', ti, { sport: 'nhl' });
+        obs.noteDk(par('nhl-q6', su(1.95 + i / 100, 1.90, D)), ti);
+        obs.noteEu('icehockey_nhl', 'nhl', { pinnacle: 1 }, ti + MIN, 'ok');
+      }
+      eq(obs.etat().rencontres['nhl-q6'].pa.length, 6, 'huit releves appariees : six paires gardees');
+    }
+    /* G8 : l'heure du catalogue passee suffit, meme si ESPN dit encore « pre » a venir */
+    {
+      raz();
+      const t = Date.now();
+      poseCatalogue([match('nhl-q7', 'nhl', 'Boston Bruins', 'Toronto Maple Leafs', t - 5 * MIN, 1.8, 2.0)]);
+      const c = obs.noteDk(par('nhl-q7', su(1.95, 1.90, t + 10 * MIN)), t);
+      ok(c === 0 && !obs.etat().rencontres['nhl-q7'], `coup d envoi du catalogue passe, ESPN « pre » a venir : ignore (${c})`);
+    }
+    /* P1 du tennis : en nombre de rencontres, sans date */
+    {
+      raz();
+      const st = obs.etat(), T = Date.now(), d = T - H;
+      st.debutParSport.tennis = T - J;
+      for (let i = 0; i < 40; i++) st.rencontres['t' + i] = { s: 'tennis', l: 'tennis_atp_x', ev: 'te' + i, dom: 'P' + i, ext: 'Q' + i, debut: d, dk: null, pa: [],
+        eu: { t: d - 2 * H, te: d - 2 * H, p: { 1: 0.5, 2: 0.5 }, elo: { 1: 2.2, 2: 1.7 } } };
+      const P1 = obs.bilan(T).parSport.tennis.porte.P1;
+      ok(P1.ok === true && P1.joursObservation < 7, `tennis : 40 rencontres en 1 jour, P1 tenue sans date (${P1.ok}, ${P1.joursObservation} j)`);
+    }
+  }
+
   console.log('\n-- 4. le carnet : relu, purge, deux temps, illisible, lecture refusee (G16), coupe-circuit --');
   {
     obs.oublie(); fs.rmSync(obs.fichier(), { force: true });
@@ -269,6 +461,15 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     const sur = JSON.parse(fs.readFileSync(obs.fichier(), 'utf8'));
     ok(sur.rencontres['nhl-c1'] && sur.rencontres['nhl-c2'], 'ecrit sur le disque');
     eq(fs.readdirSync(BAC).filter((f) => /paris_observe\.json\.tmp/.test(f)).length, 0, 'en deux temps : aucun temporaire ne reste');
+    /* ... ce qui passe aussi avec une ecriture directe : on regarde donc OU
+       l'ecriture va. Un arret au milieu d'une ecriture directe laisserait un
+       carnet tronque, mis de cote au redemarrage (mutations du 10/10) */
+    {
+      const ecrits = [], vrai = fs.writeFileSync;
+      fs.writeFileSync = function (f, ...a) { ecrits.push(String(f)); return vrai.call(fs, f, ...a); };
+      try { obs.noteDk(par('nhl-c1', su(1.86, 1.94, D)), Date.now()); obs.flush(); } finally { fs.writeFileSync = vrai; }
+      ok(ecrits.includes(obs.fichier() + '.tmp') && !ecrits.includes(obs.fichier()), `jamais d ecriture directe du carnet, toujours par le temporaire (${ecrits.map((f) => path.basename(f)).join(',')})`);
+    }
     /* au plus une ecriture par minute */
     const avant = fs.readFileSync(obs.fichier(), 'utf8');
     obs.noteDk(par('nhl-c1', su(1.90, 1.90, D)), Date.now());
@@ -282,9 +483,18 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     const st = obs.etat();
     st.rencontres.vieille = { s: 'nhl', l: 'icehockey_nhl', ev: 'v', dom: 'a', ext: 'b', debut: Date.now() - 8 * J, dk: null, eu: null, pa: [] };
     st.rencontres.recente = { s: 'nhl', l: 'icehockey_nhl', ev: 'r', dom: 'a', ext: 'b', debut: Date.now() - 6 * J, dk: null, eu: null, pa: [] };
+    /* les releves aussi (l'historique de P3) : une cle dont toutes les releves sont vieilles disparait */
+    st.releves.cle_vieille = [{ t: Date.now() - 9 * J, s: 'nhl', e: 'ok', b: 0, pi: 1, md: 0, a: 0, nul: 0 }];
+    st.releves.icehockey_nhl = [{ t: Date.now() - 9 * J, s: 'nhl', e: 'ok', b: 0, pi: 1, md: 0, a: 0, nul: 0 }];
     obs.noteEu('icehockey_nhl', 'nhl', { pinnacle: 1 }, Date.now(), 'ok');
     recharge();
     ok(!obs.etat().rencontres.vieille && obs.etat().rencontres.recente, 'PARIS_OBS_JOURS=7 : la rencontre de 8 jours est purgee, celle de 6 jours reste');
+    ok(!obs.etat().releves.cle_vieille && obs.etat().releves.icehockey_nhl.length === 1 && obs.etat().releves.icehockey_nhl[0].t > Date.now() - J,
+       `et les releves de 9 jours aussi (${JSON.stringify(Object.keys(obs.etat().releves))}, ${obs.etat().releves.icehockey_nhl.length})`);
+    process.env.PARIS_OBS_JOURS = '1';
+    eq(obs.joursGardes(), 7, 'PARIS_OBS_JOURS=1 : 7 jours au moins (P1 et P3 en lisent 7)');
+    process.env.PARIS_OBS_JOURS = '1000';
+    eq(obs.joursGardes(), 365, 'PARIS_OBS_JOURS=1000 : 365 au plus');
     delete process.env.PARIS_OBS_JOURS;
     eq(obs.joursGardes(), 60, 'retention par defaut : 60 jours');
     /* lecture refusee : rien n'est garde, le fichier reste */
@@ -363,6 +573,27 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     ok(/Stakes by sport \(30 days\)/.test(m) && /\$SWOGEBET &middot; <b>NHL<\/b>: 3 ticket\(s\), 2 address\(es\), staked 1,234/.test(m) && /\$SWOGE &middot; <b>Football<\/b>/.test(m) && /<b>Parlays<\/b>/.test(m),
        'la mise par sport : par jeton, des comptes entiers, les combines a part');
     ok(/no bet in the window/.test(bac.misesRend({ jours: 30, parJeton: {} })), 'aucune mise : dit');
+    /* 40 rencontres (la part s'affiche) mais 5 paires eu-DK et 5 rencontres de
+       fraicheur : ni ecart ni borne haute — la carte refuse de conclure sous
+       son propre seuil (mutations du 10/10 : rien ne le tenait) */
+    obs.oublie(); fs.rmSync(obs.fichier(), { force: true });
+    const s6 = obs.etat(), d6 = T - H;
+    const pose6 = (nPaires, nFraiches) => {
+      for (let i = 0; i < 40; i++) {
+        const elo = { 1: 1.70, 2: 2.05 };
+        s6.rencontres['n' + i] = { s: 'nhl', l: 'icehockey_nhl', ev: 'n' + i, dom: 'A' + i, ext: 'B' + i, debut: d6, eu: null,
+          pa: i < nPaires ? [[d6 - 2 * H, 0.551, 0.55]] : [],
+          dk: { premier: null, a2h: i < nFraiches ? { t: d6 - 3 * H, c: { 1: 1.8, 2: 2.05 }, p: { 1: 0.54, 2: 0.46 }, elo } : null,
+                fin: { t: d6 - 10 * MIN, c: { 1: 1.75, 2: 2.12 }, p: { 1: 0.55, 2: 0.45 }, elo }, n: 2, bouge: 1 } };
+      }
+      return bac.obsRend(obs.bilan(T), null);
+    };
+    const peuPaires = pose6(5, 5);
+    ok(/<b>NHL<\/b>: 40 game\(s\) &middot; Elo beatable/.test(peuPaires), 'temoin : 40 rencontres, la part s affiche');
+    ok(/eu&ndash;DK gap not enough pairs \(5\/20\)/.test(peuPaires) && !/signed/.test(peuPaires), 'sous 20 paires : « not enough pairs (5/20) », aucun ecart');
+    ok(/2-hour-old price beatable 0\/10 &middot;/.test(peuPaires) && !/high bound/.test(peuPaires), 'sous 40 rencontres de fraicheur : le compte, aucune borne haute');
+    const assez6 = pose6(20, 40);
+    ok(/eu&ndash;DK gap \+0\.1 pts \(signed \+0\.1 pts, 20 games\)/.test(assez6) && /\(high bound /.test(assez6), 'a 20 paires et 40 rencontres de fraicheur : l ecart et la borne s affichent');
   }
 
   fs.rmSync(BAC, { recursive: true, force: true });

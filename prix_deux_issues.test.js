@@ -33,6 +33,11 @@
  *  9. le reglement : un score egal au hockey est refuse ;
  * 10. PARIS_ELO_ENGAGEMENT_MAX : vide, rien ne change ; pose, il plafonne les
  *     seules rencontres cotees a l'Elo ; invalide, il est ignore — G14.
+ * Ajouts des mutations du 10/10 (garde-fous qu'aucun essai ne tenait) : le
+ * journal des releves lit les trois sources sur deux issues (§1) ;
+ * l'etalonnage note la cle observee avec son sport et garde sa releve (§4bis) ;
+ * etatPrix, `--prix` et prixInconnues suivent le joker (§7) ; le demarrage
+ * dit le joker refuse et le plafond Elo, pris ou ignore (§12).
  * Un echec s'ecrit RATE ; la derniere ligne donne RATES : n/total.
  */
 const fs = require('fs');
@@ -121,6 +126,7 @@ const cotes = require('./cotes');
 const paris = require('./paris');
 const imp = require('./paris_import');
 const obs = require('./prix_observe');
+const pj = require('./prix_journal');
 const { Game } = require('./game');
 const cfg = require('./config');
 const { ethers } = require('ethers');
@@ -154,6 +160,16 @@ const importe = async () => { await imp.importeMatchs(); paris.charge(); };
     ok(c.betfair === 1 && c.pinnacle === 1 && c.issues === 2 && c.nul === 0, `note avec le sport : une reference par rencontre, deux issues (${JSON.stringify(c)})`);
     eq(Object.keys(pm.lis().evenements.h1.p).sort().join(','), '1,2', 'le carnet garde p sur {1, 2}');
     ok(pm.pour('h2') && Math.abs(pm.pour('h2').p[1] + pm.pour('h2').p[2] - 1) < 2e-5, 'pour() rend le prix a deux issues, somme 1');
+    /* Le journal des releves (lot 1) lit Betfair, Pinnacle et la mediane avec
+       les issues du SPORT (pm.issuesDe) : sans elles, toute ligne NHL, NFL,
+       NBA ou tennis perdait ses trois sources (null), et cela ne se serait vu
+       qu'a la mesure hors serveur (mutations du 10/10). */
+    const l = pj.ligneDe({ t: Date.now(), ligue: 'icehockey_nhl', sport: 'nhl', quoi: 'essai', evs: ODDS.icehockey_nhl(),
+                           refs: [{ id: 'h1', debut: DEMAIN, ref: 'betfair', p: { 1: 0.5, 2: 0.5 }, livres: 4 }] });
+    const x = l.e[0];
+    ok(Array.isArray(x[4]) && Array.isArray(x[5]) && Array.isArray(x[6]) && x[4][0] > 0 && x[5][0] > 0 && x[6][0] > 0,
+       `journal NHL : Betfair, Pinnacle et la mediane lus sur deux issues (${JSON.stringify(x.slice(4, 7))})`);
+    eq(l.s, 'nhl', 'et la ligne porte son sport');
   }
 
   console.log('\n-- 2. un livre a nul n est jamais la reference d un sport a deux issues (G1) --');
@@ -248,6 +264,25 @@ const importe = async () => { await imp.importeMatchs(); paris.charge(); };
        'et chaque rencontre avec son prix eu et notre Elo du meme instant');
   }
 
+  console.log('\n-- 4bis. l etalonnage d une cle observee : le prix a deux issues, et la releve au carnet --');
+  {
+    /* L'etalonnage hebdomadaire paie deja /odds : il note le prix de la cle
+       observee AVEC le sport de sa ligne (sinon sportInconnu : credit paye,
+       rien note) et laisse la releve au carnet d'observation. Rien ne le
+       tenait (mutations du 10/10). Le carnet est vide de h1/h2 d'abord : le
+       prix lu apres ne peut venir que de l'etalonnage. */
+    const c = pm.lis(); delete c.evenements.h1; delete c.evenements.h2; fs.writeFileSync(pm.fichier(), JSON.stringify(c));
+    ok(!pm.pour('h1'), 'temoin : plus aucun prix pour h1');
+    const avant = (obs.etat().releves.icehockey_nhl || []).length;
+    const c0 = credits();
+    await imp.calibre('icehockey_nhl');
+    eq(credits() - c0, 1, 'un credit : celui de l etalonnage, rien de plus');
+    const r = pm.pour('h1');
+    ok(r && r.p && !('N' in r.p) && Math.abs(r.p[1] + r.p[2] - 1) < 2e-5, `l etalonnage note la cle observee sur deux issues (${JSON.stringify(r && r.p)})`);
+    const h = obs.etat().releves.icehockey_nhl || [];
+    ok(h.length === avant + 1 && h[h.length - 1].e === 'ok' && h[h.length - 1].s === 'nhl', `et laisse sa releve au carnet d observation (${h.length - avant})`);
+  }
+
   console.log('\n-- 5. l observation n est jamais prioritaire (G3) --');
   {
     poseQuota(20000, imp.partDuJour(20000));
@@ -312,6 +347,25 @@ const importe = async () => { await imp.importeMatchs(); paris.charge(); };
     eq(credits() - c0, 1, 'un credit');
     ok(pm.pour('t1') && !('N' in pm.pour('t1').p) && pm.pour('t1').p[2] > 0.65, 'note au tennis : deux issues, le favori a l exterieur');
     eq(imp.prixInconnues().join(','), '', 'tennis_atp_* suivi par tennis=* : rien a signaler');
+    /* ce que le panneau et `--prix` voient : le joker developpe sur le
+       calendrier, pas seulement les cles ecrites (mutations du 10/10) */
+    ok(Object.keys(imp.etatPrix()).includes('tennis_atp_shanghai_masters'), 'etatPrix montre le tournoi que couvre tennis_atp_*');
+    ok(imp.clefsALaMain().includes('tennis_atp_shanghai_masters') && !imp.clefsALaMain().some((k) => k.indexOf('*') >= 0),
+       '--prix (clefsALaMain) le releve aussi, jamais un joker brut');
+    /* un joker que ODDS_API_LIGUES ne suit pas (pas de tennis=*) ne releve
+       rien : il est signale. LIGUES se lit au chargement : processus enfant. */
+    {
+      const { execFileSync } = require('child_process');
+      const bacE = fs.mkdtempSync(path.join(os.tmpdir(), 'deux-issues-enfant-'));
+      try {
+        const env = Object.assign({}, process.env, { DATA_DIR: bacE, ODDS_API_KEY: '', ODDS_API_LIGUES: 'nhl=icehockey_nhl', PARIS_PRIX_OBSERVE: 'tennis_atp_*' });
+        const sortie = execFileSync(process.execPath, ['-e', "process.stdout.write('\\nPI=' + JSON.stringify(require('./paris_import').prixInconnues()) + '\\n')"],
+                                    { cwd: __dirname, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const ligne = sortie.split('\n').find((x) => x.startsWith('PI='));
+        const pi = ligne ? JSON.parse(ligne.slice(3)) : null;
+        ok(Array.isArray(pi) && pi.includes('tennis_atp_*'), `sans tennis=* dans ODDS_API_LIGUES : tennis_atp_* est signale (${JSON.stringify(pi)})`);
+      } finally { fs.rmSync(bacE, { recursive: true, force: true }); }
+    }
     delete process.env.PARIS_PRIX_OBSERVE;
   }
 
@@ -407,6 +461,35 @@ const importe = async () => { await imp.importeMatchs(); paris.charge(); };
     const p = imp.prixPerimes(Date.now() + 24 * H);
     ok(!p.some((k) => /^icehockey|^american|^tennis|^basketball/.test(k)), `PARIS_PRIX_OBSERVE vide : aucune cle a deux issues a relever (${p.join(',')})`);
     eq(pm.observees().size, 0, 'rien d observe');
+  }
+
+  console.log('\n-- 12. ce que le demarrage dit (joker refuse, plafond Elo) --');
+  {
+    /* Les seules lignes qui disent au journal si une variable posee est prise
+       ou ignoree — dont PARIS_ELO_ENGAGEMENT_MAX, pose a 300 000 en production.
+       Rien ne les tenait (mutations du 10/10). planifie est arrete aussitot :
+       aucune minuterie ne part, aucun credit. */
+    const capte = () => {
+      const lu = [], vrai = console.log;
+      let ctl = null;
+      console.log = (...a) => { lu.push(a.join(' ')); };
+      try { ctl = imp.planifie(() => {}, () => false); } finally { console.log = vrai; if (ctl) ctl.arrete(); }
+      return lu.join('\n');
+    };
+    const c0 = credits();
+    process.env.PARIS_PRIX_OBSERVE = 'basketball_*';
+    process.env.PARIS_ELO_ENGAGEMENT_MAX = '300000';
+    let txt = capte();
+    ok(/\[odds\] IGNORE\(S\) : PARIS_PRIX_OBSERVE basketball_\* \(joker refuse/.test(txt), 'un joker refuse est dit au demarrage');
+    ok(/\[paris\] PARIS_ELO_ENGAGEMENT_MAX : 300000 \$SWOGEBET par rencontre cotee a l Elo/.test(txt), 'le plafond Elo pose est dit, avec sa valeur');
+    process.env.PARIS_ELO_ENGAGEMENT_MAX = 'abc';
+    txt = capte();
+    ok(/\[paris\] PARIS_ELO_ENGAGEMENT_MAX : IGNORE \(« abc » n est pas un nombre strictement positif\) — plafond global seul/.test(txt), 'une valeur invalide est dite IGNOREE');
+    delete process.env.PARIS_ELO_ENGAGEMENT_MAX;
+    delete process.env.PARIS_PRIX_OBSERVE;
+    txt = capte();
+    ok(/\[paris\] PARIS_ELO_ENGAGEMENT_MAX : vide — plafond global seul/.test(txt) && !/IGNORE\(S\)/.test(txt), 'vide : dit vide, rien d ignore');
+    eq(credits() - c0, 0, 'et le demarrage arrete aussitot n a paye aucun credit');
   }
 
   fs.rmSync(BAC, { recursive: true, force: true });

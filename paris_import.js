@@ -1688,6 +1688,11 @@ function prixPerimes(now) {
   const t = now || Date.now(), avec = liguesAvecRencontre(t);
   return [...prixMarche.aRelever(avec)].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= prixMarche.cadenceDe(c));
 }
+/* Les cles de `--prix` (a la main) : les cles ecrites, plus celles du
+   calendrier que couvre un joker (lot 3). Nommee pour qu'un essai la tienne :
+   ecrite dans le bloc `require.main`, aucune verification ne la voyait
+   (mutations du 10/10/2026). */
+function clefsALaMain(now) { return [...prixMarche.aRelever(liguesAvecRencontre(now))]; }
 /* Avant le coup d'envoi : de 75 a 20 min avant (les compositions tombent
    environ une heure avant), pour un championnat dont une rencontre porte des
    paris et dont le dernier releve a plus de 2 h. Avec un forfait paye,
@@ -2089,7 +2094,7 @@ if (require.main === module) {
                   '--calibre': () => calibre(a.find((x) => !x.startsWith('--'))),
                   /* Le prix du marche des grands championnats (1 credit chacun),
                      puis le calendrier qui en descend (0 credit). */
-                  '--prix': async () => { await rafraichitPrix([...prixMarche.aRelever(liguesAvecRencontre())], 'a la main'); await importeMatchs(); },
+                  '--prix': async () => { await rafraichitPrix(clefsALaMain(), 'a la main'); await importeMatchs(); },
                   '--sports': () => listeSports(a.find((x) => !x.startsWith('--'))),
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
@@ -2104,7 +2109,7 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    finDuMois, fin,
                    etatImport, noteDernier,
                    trieReglements, prolongationPossible, avecPrix, rafraichitPrix, prixPerimes, prixAvantMatch, causesAvantMatch, etatPrix, ecartAuMarche, prixInconnues, fermeesParLaPorte, ditLaPorte, PRIX_JOUR_MS,
-                   sportDeLaCle, liguesAvecRencontre,
+                   sportDeLaCle, liguesAvecRencontre, clefsALaMain,
                    AUTO_PLAFOND, AUTO_DELAI_MIN, AUTO_ACTIF,
                    PAYS_LIGUE, NOM_PAYS, chargePays, clePays, paysDe,
                    partDuJour, joursRestants, autorise, identifiant, etatQuota,

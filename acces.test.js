@@ -106,6 +106,15 @@ function lance(port, cle) {
   });
 }
 const arrete = (s) => { try { s.p.kill('SIGKILL'); } catch (e) {} fs.rmSync(s.bac, { recursive: true, force: true }); };
+/* ---- AUCUN SERVEUR NE SURVIT A L'ESSAI ----
+ * Une verification ratee (assert) sautait l'`arrete` de son bloc : le serveur
+ * restait vivant sur son port fixe, et les executions suivantes tombaient a
+ * tort (« sans ADMIN_KEY, /paris/mises est ferme (503) » en 0,4 s — vu aux
+ * mutations du 10/10/2026, PID orphelin sur 8791). Chaque serveur lance est
+ * donc arrete a la sortie, quelle qu'elle soit : par son PID, jamais par nom. */
+const LANCES = new Set();
+process.on('exit', () => { for (const s of LANCES) arrete(s); });
+const lanceSuivi = async (port, cle) => { const s = await lance(port, cle); LANCES.add(s); return s; };
 /* `suivre:false` pour voir la REDIRECTION elle-meme : `fetch` la suit par
    defaut, et le pont /admin?key= rendrait alors 200 ou 401 selon ce qui se
    trouve au bout — on ne verifierait plus qu il redirige. */
@@ -116,7 +125,7 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
 (async () => {
   // ============================ sans cle configuree : TOUT est ferme
   {
-    const s = await lance(8791, null);
+    const s = await lanceSuivi(8791, null);
     for (const porte of PRIVEES) {
       const c = await code(8791, porte);
       eq(c, 503, `sans ADMIN_KEY, ${porte.split('?')[0]} est ferme (503)`);
@@ -206,7 +215,7 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
   // ============================ avec une cle : elle seule ouvre
   {
     const CLE = 'cle-de-test-9f3a';
-    const s = await lance(8792, CLE);
+    const s = await lanceSuivi(8792, CLE);
     /* LA BONNE CLE D'ABORD. Les refus qui suivent nourrissent le compteur
        d'essais rates, et passe le plafond le serveur bloque l'adresse — c'est
        voulu. Verifier l'ouverture APRES une serie de refus ne testerait donc
@@ -232,6 +241,14 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
        'ni la liste des joueurs');
     eq(await code(8792, '/usage', { 'x-admin-key': CLE }), 200,
        'mais l en-tete, oui');
+    /* /paris/mises (lot 3) : la fenetre demandee est bornee a 90 jours — une
+       demande folle ne fait pas parcourir tout l'historique des paris a chaque
+       appel. Rien ne tenait la borne (mutations du 10/10/2026). */
+    {
+      const r = await fetch('http://127.0.0.1:8792/paris/mises?jours=1000', { headers: { 'x-admin-key': CLE } });
+      eq(r.status, 200, 'avec la cle, /paris/mises repond');
+      eq((await r.json()).jours, 90, '/paris/mises?jours=1000 : borne a 90 jours');
+    }
 
     /* ---- LE PONT, ET RIEN QUE LE PONT ----
      *
@@ -298,7 +315,7 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
   /* Une cle de dix caracteres se devine en quelques heures a mille essais par
      seconde. A dix essais par dix minutes, il faut des siecles. */
   {
-    const s = await lance(8793, 'une-autre-cle');
+    const s = await lanceSuivi(8793, 'une-autre-cle');
     /* Les essais passent par l'EN-TETE, puisque c'est desormais le seul canal
        qu'une cle emprunte. Le compteur, lui, n'a pas change de role : il
        ralentit celui qui devine. */

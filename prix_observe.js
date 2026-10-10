@@ -48,6 +48,8 @@
  *   eu : le dernier prix eu releve avant le coup d'envoi, avec notre Elo.
  *   pa : les paires [t, p_eu(1), p_DK(1)] (6 au plus).
  *   sc : ESPN rendait un moneyline SANS `close` (aucun point garde, compte).
+ *   af : ESPN rendait le moneyline d'un AUTRE fournisseur (aucun point garde,
+ *     compte : un changement de fournisseur se voit au lieu de tarir le carnet).
  *
  * ---- l'ecriture ----
  *
@@ -108,7 +110,8 @@ const ASSEZ = Object.freeze({ rencontres: 40, issues: 80 });
  *  P3 couverture eu sur 7 jours : `aucun` <= 10 % des rencontres relevees, et
  *     au moins 10 releves reussies. Un REFUS d'une cle observee est voulu
  *     (classe 3, jamais prioritaire) et ne dit rien de la cle une fois vendue,
- *     qui passera en classe 0 : il n'est pas une condition.
+ *     qui passera en classe 0 : il n'est pas une condition. Sous 10 releves
+ *     reussies, P3 n'est pas MESURABLE (null), elle n'echoue pas.
  *  P4 semantique (sports US) : sur >= 20 rencontres appariees eu / DK a moins
  *     de 15 min, mediane SIGNEE de |p_eu - 0,5| - |p_DK - 0,5| <= 1 point (un
  *     prix au temps reglementaire, nul rembourse, est plus TRANCHE que le
@@ -299,7 +302,14 @@ function noteDk(par, now) {
       continue;
     }
     const dk = su.dk;
-    if (String(dk.fournisseur || '') !== FOURNISSEUR) continue;
+    /* Un autre fournisseur n'est jamais un prix garde, mais il est COMPTE
+       (`af`, comme `sc`) : si ESPN changeait de fournisseur, P1, P4 et P5
+       cesseraient de grossir sans raison dite (relecture du 10/10/2026). */
+    if (String(dk.fournisseur || '') !== FOURNISSEUR) {
+      const r = rencontreDe(st, m, t);
+      if (!r.af) { r.af = 1; change++; }
+      continue;
+    }
     const c = { 1: r4(dk[1]), 2: r4(dk[2]) };
     if (!(c[1] > 1 && c[2] > 1)) continue;
     const p = cotes.probasImplicites(c, ['1', '2'], 1);
@@ -372,7 +382,7 @@ function noteEu(ligue, sport, compte, now, etatReleve) {
 function nouveauSport() {
   return { rencontres: 0, issues: 0, battablesElo: 0, rencontresBattables: 0, sources: { dk: 0, eu: 0 }, pire: null,
            fr: { rencontres: 0, issues: 0, battables: 0, rencontresBattables: 0 },
-           dk: { rencontres: 0, bouge: 0, sansClose: 0 }, ecarts: [], signees: [],
+           dk: { rencontres: 0, bouge: 0, sansClose: 0, autreFournisseur: 0 }, ecarts: [], signees: [],
            eu7: { releves: 0, reussies: 0, refusees: 0, erreurs: 0, rencontres: 0, aucun: 0, nul: 0 } };
 }
 /**
@@ -391,6 +401,7 @@ function bilan(now, jours) {
     if (!r || !(Number(r.debut) <= t) || Number(r.debut) < depuis) continue;
     const b = S(r.s);
     if (r.sc) b.dk.sansClose++;
+    if (r.af) b.dk.autreFournisseur++;
     /* l'Elo contre sa reference du MEME instant : la cloture DK, sinon le prix eu */
     const ref = (r.dk && r.dk.fin && r.dk.fin.elo) ? { p: r.dk.fin.p, elo: r.dk.fin.elo, src: 'dk' }
       : (r.eu && r.eu.elo && r.eu.t - r.eu.te <= EU_FRAIS_MS) ? { p: r.eu.p, elo: r.eu.elo, src: 'eu' } : null;
@@ -454,8 +465,14 @@ function conclusion(s, b, st, t) {
   const P1 = { rencontres: b.rencontres, issues: b.issues, joursObservation: Math.round(joursObs * 10) / 10,
                ok: b.rencontres >= PORTE.P1.rencontres && b.issues >= PORTE.P1.issues && (tennis || joursObs >= PORTE.P1.jours) };
   const P2 = { wilsonBas: wI ? pct(wI[0]) : null, ok: wI ? wI[0] >= PORTE.P2.wilsonBas : null, rapportSeulement: true };
+  /* Sous 10 releves REUSSIES, P3 n'est pas mesurable (null), elle n'echoue
+     pas : sept jours de releves refusees (classe 3, refus voulu) disaient
+     « P3 failed » alors qu'un refus n'est pas une condition (relecture argent
+     reel du 10/10/2026). Elle n'echoue (false) que si `aucun` depasse 10 % sur
+     au moins 10 releves reussies. Rien ne change pour la bascule : false comme
+     null la bloquent ; seule la raison dite change. */
   const P3 = { releves: e7.releves, reussies: e7.reussies, refusees: e7.refusees, erreurs: e7.erreurs, partAucun: pct(partAucun),
-               ok: e7.releves ? (partAucun !== null && partAucun <= PORTE.P3.aucunMax && e7.reussies >= PORTE.P3.reussiesMin) : null };
+               ok: e7.reussies >= PORTE.P3.reussiesMin && partAucun !== null ? partAucun <= PORTE.P3.aucunMax : null };
   let P4, P5;
   if (tennis) {
     P4 = { mesurable: false, ok: null };
@@ -494,7 +511,7 @@ function conclusion(s, b, st, t) {
                    wilsonHaut: fI ? pct(fI[1]) : null,
                    parRencontre: { battables: b.fr.rencontresBattables, wilsonHaut: fR ? pct(fR[1]) : null } },
     dkBouge: { rencontres: b.dk.rencontres, bouge: b.dk.bouge, part: pct(bougePart) },
-    dkSansClose: b.dk.sansClose,
+    dkSansClose: b.dk.sansClose, dkAutreFournisseur: b.dk.autreFournisseur,
     porte: { P1, P2, P3, P4, P5, bascule, raisons },
   };
 }
@@ -508,6 +525,9 @@ function lignes(now) {
     `[obs] ${s} : ${x.rencontres} rencontres, Elo battables ${x.battablesElo}/${x.issues} (${f(x.part)}, borne basse ${f(x.wilsonBas)}), `
     + `eu-DK ${pts(x.euDk.ecartMedian)} (signe ${pts(x.euDk.signeeMediane)}, n ${x.euDk.rencontres}), `
     + `prix de 2 h + 10 % : ${x.fraicheur2h.battables}/${x.fraicheur2h.issues}, DK a bouge ${x.dkBouge.bouge}/${x.dkBouge.rencontres}`
+    /* ce qu'ESPN rendait et qu'on n'a PAS garde : dit, sinon un carnet qui ne
+       grossit plus ne dirait pas pourquoi */
+    + (x.dkSansClose || x.dkAutreFournisseur ? `, DK ecarte : ${x.dkSansClose} sans close, ${x.dkAutreFournisseur} autre fournisseur` : '')
     + (x.conclut ? '' : ` — aucune conclusion sous ${ASSEZ.rencontres} rencontres (${x.rencontres})`)
     + (x.porte.bascule === true ? ' — PORTE FRANCHIE' : x.porte.bascule === false ? ' — porte fermee : ' + x.porte.raisons.join(' ; ') : ''));
 }
