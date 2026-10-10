@@ -42,6 +42,10 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  /* Le journal brut des releves de prix (lot 1, 10/10/2026) :
                     ce qu on vend et a quel prix, releve par releve. */
                  '/paris/journal-prix?jour=2026-10-10',
+                 /* La valeur de cloture par parieur (lot 2, 10/10/2026) :
+                    nomme chaque joueur, ce qu il mise, et s il nous bat. */
+                 '/paris/clv',
+                 '/paris/clv?addr=0x' + 'a'.repeat(40),
                  /* Le robinet. Ouvert, il ne fuit pas des informations : il
                     fabrique des jetons que personne n'a deposes. C'est la
                     porte a laisser fermee avant toutes les autres. */

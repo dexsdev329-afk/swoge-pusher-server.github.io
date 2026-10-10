@@ -34,6 +34,16 @@ const p4 = require('./puissance4');
    rejoindre, jouer, ticker et dire qui a gagne. C'est ce qui permet a un seul
    chemin d'argent de les servir tous les trois. */
 const paris = require('./paris');
+/* ---- LA VALEUR DE CLOTURE (lot 2, 10/10/2026) ----
+ * `clv` decrit, `prixJournal` tient l'index de cloture (lot 1), le carnet des
+ * prix dit les equipes du fournisseur (orientation). Nom `carnetPrix` et non
+ * `prixMarche` : la fonction de boutique plus bas porte deja ce nom. Aucun
+ * cycle : prix_journal -> prix_marche -> cotes -> paris, et rien de cela ne
+ * requiert game.js. DATA_DIR est fige au premier require (comme journal.js
+ * deja) : les essais le posent avant de requerir ce fichier. */
+const clv = require('./clv');
+const prixJournal = require('./prix_journal');
+const carnetPrix = require('./prix_marche');
 const boutique = require('./boutique');
 const skins = require('./skins');
 const personnages = require('./personnages');
@@ -3482,6 +3492,86 @@ class Game {
   }
 
   /**
+   * FIGER LA CLOTURE DES JAMBES D'UN MATCH (lot 2, CLV — collecte seule).
+   *
+   * Appele par `regleMatch`, dans un try/catch, apres l'ecriture du resultat
+   * et avant la boucle de paiement. Parcourt TOUS les paris, regles compris :
+   * un combine deja perdu sur un autre match porte `regle = true`, et sa
+   * jambe ici a quand meme une cloture a figer. Une seule lecture de
+   * l'index de cloture et du carnet par reglement. Ne touche ni `regle`, ni
+   * `gagne`, ni un solde. Une jambe deja figee ne se refige pas.
+   * `rembourseMatch` n'appelle rien : le bilan lit parisRegles[m].rembourse.
+   *
+   * ---- UN INDEX PAS LISIBLE MAINTENANT NE FIGE RIEN (relecture du 10/10) ----
+   * Avant, un index illisible a l'instant du reglement (lecture refusee,
+   * contenu corrompu, autre version) figeait chaque jambe 'absente', POUR
+   * TOUJOURS (la cle pc posee, jamais refigee). Desormais : rien n'est fige,
+   * la chose est dite, et chaque reglement REPREND les jambes de matchs deja
+   * regles (non rembourses) restees sans cloture — l'index garde 7 jours apres
+   * le coup d'envoi et n'ecrit plus rien d'une rencontre commencee : figee
+   * plus tard, la cloture est la meme. Seul un index ABSENT (journal coupe,
+   * volume neuf) fige 'absente'. Le parcours de tous les paris coute peu
+   * (quelques milliers de tickets, une boucle par reglement).
+   */
+  _figeClotures(matchId) {
+    if (!clv.actif()) return null;
+    const R = this.parisRegles || {};
+    const aFiger = [];
+    let reprises = 0;
+    for (const p of this.paris || []) {
+      for (const j of (p && p.jambes) || []) {
+        if (!j || !j.clv || j.clv.pv === null || j.clv.pv === undefined || ('pc' in j.clv)) continue;
+        const rg = R[j.match];
+        if (!rg || rg.rembourse) continue;     // pas encore regle, ou rembourse : rien a figer
+        aFiger.push(j);
+        if (j.match !== matchId) reprises++;
+      }
+    }
+    if (!aFiger.length) return null;
+    const lu = prixJournal.lisCloturesEtat();
+    if (lu.etat === 'illisible' || lu.etat === 'version') {
+      console.log('[clv] ' + matchId + ' : index de cloture ' + lu.etat + (lu.erreur ? ' (' + lu.erreur + ')' : '')
+        + ', rien de fige : ' + aFiger.length + ' jambe(s) reprise(s) au prochain reglement');
+      return { figees: 0, sansMouvement: 0, sans: 0, raisons: {}, enAttente: aFiger.length, index: lu.etat };
+    }
+    const index = lu.idx;
+    const carnet = (carnetPrix.lis() || {}).evenements || {};
+    let figees = 0, sansMouvement = 0;
+    const sans = {};
+    for (const j of aFiger) {
+      const ev = String(j.clv.ev);
+      const rec = index && Object.prototype.hasOwnProperty.call(index.ev, ev) ? index.ev[ev] : null;
+      const e = Object.prototype.hasOwnProperty.call(carnet, ev) ? carnet[ev] : null;
+      Object.assign(j.clv, clv.figeJambe(j, rec, R[j.match], e && e.dom ? { dom: e.dom, ext: e.ext } : null));
+      if (j.clv.pc === null) sans[j.clv.sans] = (sans[j.clv.sans] || 0) + 1;
+      else { figees++; if (j.clv.sans === 'sansMouvement') sansMouvement++; }
+    }
+    const nSans = aFiger.length - figees;
+    console.log('[clv] ' + matchId + ' : ' + figees + ' jambe(s) figee(s)' + (sansMouvement ? ' dont ' + sansMouvement + ' sans mouvement' : '')
+      + ', ' + nSans + ' sans cloture' + (nSans ? ' (' + Object.entries(sans).map(([k, v]) => k + ' ' + v).join(', ') + ')' : '')
+      + (reprises ? ' ; ' + reprises + ' reprise(s) d un reglement precedent' : ''));
+    return { figees, sansMouvement, sans: nSans, raisons: sans, reprises };
+  }
+
+  /** Un ticket tel qu'il peut partir chez le joueur (pariPose) : ses jambes
+      sans `clv` (la reference du marche et la cloture restent au serveur). */
+  ticketPublic(p) {
+    if (!p || typeof p !== 'object') return p;
+    return Object.assign({}, p, { jambes: Array.isArray(p.jambes)
+      ? p.jambes.map((j) => { const c = Object.assign({}, j); delete c.clv; return c; }) : p.jambes });
+  }
+
+  /** La valeur de cloture par adresse, pour la route proprietaire /paris/clv.
+      Lecture seule : aucune action sur une adresse, jamais. */
+  clvParAdresse(opt) {
+    const o = opt || {};
+    if (!clv.actif()) return { actif: false, seuil: clv.SEUIL_RENCONTRES, raison: 'Collection is off (PARIS_CLV=0).' };
+    return clv.bilan(this.paris || [], this.parisRegles || {}, {
+      now: Number(o.now) || Date.now(), addr: o.addr || null, index: prixJournal.lisClotures(),
+      nom: (a) => ((this.players && this.players.get(a)) || {}).name || null });
+  }
+
+  /**
    * CE QUE LA MAISON DEVRAIT PAYER AU PIRE SUR CE MATCH.
    *
    * ---- IL SE COMPTAIT PAR REPONSE, IL SE COMPTE PAR SCORE ----
@@ -3616,9 +3706,20 @@ class Game {
          qui quitte le catalogue emporte avec lui de quoi afficher ET de quoi
          regler le pari — le gagnant devient impayable. Quelques octets par
          pari contre de l'argent bloque : le choix n'en est pas un. */
-      return { match: m.id, marche, choix, cote: paris.coteDe(m, marche, choix),
-               domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
-               sport: m.sport, competition: m.competition, issues: m.issues.slice() };
+      /* ---- ET LE PRIX DONT SA COTE DESCEND (lot 2, CLV) ----
+       * Au prix du marche, la jambe garde la proba de l'issue choisie, l'heure
+       * et la source de ce prix : de quoi juger, au reglement, si le parieur a
+       * pris notre prix avant que le marche ne bouge. A l'Elo ou collecte
+       * coupee, la jambe n'a PAS de champ `clv` (ni meme une cle vide : elle
+       * reste identique, octet pour octet, a celle d'avant ce lot). aLaVente
+       * ne leve jamais ; rien d'autre ne change (cote, rapport, plafonds). Ne
+       * part jamais chez le joueur : voir mesParis et ticketPublic. */
+      const jambe = { match: m.id, marche, choix, cote: paris.coteDe(m, marche, choix),
+                      domicile: m.domicile, exterieur: m.exterieur, debut: m.debut,
+                      sport: m.sport, competition: m.competition, issues: m.issues.slice() };
+      const vente = clv.aLaVente(m, marche, choix);
+      if (vente) jambe.clv = vente;
+      return jambe;
     });
 
     const mise = Math.floor(Number(miseRaw));
@@ -4031,7 +4132,7 @@ class Game {
              pas bouger, il sert au reglement. */
           jambes: (p.jambes || []).map((j) => {
             const mj = this._infosMatch(j.match);
-            return Object.assign({}, j, {
+            const c = Object.assign({}, j, {
               domicile: mj ? mj.domicile : '?', exterieur: mj ? mj.exterieur : '?',
               debut: mj ? mj.debut : null, competition: mj ? mj.competition : '',
               /* Le SPORT, sans quoi la page ne sait pas si « 1 » se dit
@@ -4040,6 +4141,11 @@ class Game {
               sport: mj ? mj.sport : null,
               issues: mj ? mj.issues.slice() : [],
             });
+            /* La reference du marche et la cloture (lot 2) n'ont rien a faire
+               chez le joueur : meme regle que `source` (paris.vue). Passe par
+               ici : les paris de la connexion, pariPose et l'historique. */
+            delete c.clv;
+            return c;
           }),
         });
       });
@@ -4129,6 +4235,13 @@ class Game {
        lettre. */
     this.parisRegles[matchId] = { t: Date.now(), resultat,
                                   score: score ? `${score.a}-${score.b}` : null };
+
+    /* ---- LA CLOTURE SE FIGE ICI, AVANT DE PAYER (lot 2, CLV) ----
+     * Le reglement est le point unique ou chaque jambe passe une fois. Un
+     * echec (index illisible, disque, exception) ne doit JAMAIS empecher de
+     * payer : il est enferme ici et dit au journal de l'hote. Rien de ce qui
+     * suit ne lit ce que _figeClotures ecrit. */
+    try { this._figeClotures(matchId); } catch (e) { console.log('[clv] ' + matchId + ' : ' + ((e && e.message) || e)); }
 
     let paye = 0, gagnants = 0, mise = 0, perdus = 0, attente = 0;
     let payeBet = 0, payeSwoge = 0;

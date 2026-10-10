@@ -6690,6 +6690,23 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(r));
   }
 
+  /* ---- LA VALEUR DE CLOTURE PAR PARIEUR (lot 2, 10/10/2026) ----
+   * `GET /paris/clv[?addr=0x…]` : la collecte decrite (clv.bilan) — ce que
+   * chaque adresse a pris avant que le marche ne bouge, sous ses portes
+   * (aucun chiffre sous 40 rencontres, aucun verdict avant la porte 1). Elle
+   * nomme des joueurs et ce qu'ils misent : derriere la garde admin, comme
+   * /paris/liste. Lecture seule, aucun geste (pas de gardeEcriture), aucun
+   * credit : rien n'agit sur une adresse. `addr` ne fait que filtrer le
+   * detail. */
+  if (path === '/paris/clv') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = String(q.get('addr') || '').trim().toLowerCase().slice(0, 100);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(game.clvParAdresse({ now: Date.now(), addr: a || null })));
+  }
+
   if (path === '/paris/regle' || path === '/paris/rembourse') {
     if (!authed) return refuse(req, res, false);
     rate(req, true);
@@ -9537,7 +9554,10 @@ wss.on('connection', (ws) => {
             : game.parie(ws.addr, m.match, m.choix, m.mise, Date.now());
           persistSoon();
           notifyBetPlaced(ws.addr, pari);
-          send(ws, { type: 'pariPose', pari, balance: game.balanceStr(ws.addr),
+          /* Le ticket part SANS sa reference de marche (lot 2, CLV) :
+             ticketPublic retire `clv` des jambes ; le canal, lui, ne lit que
+             les champs qu il affiche. */
+          send(ws, { type: 'pariPose', pari: game.ticketPublic(pari), balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr),
                      matchs: avecDirect(game.parisOuverts(Date.now())),
                      mesParis: game.mesParis(ws.addr, 40) });

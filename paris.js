@@ -299,6 +299,18 @@ function marge(cotes, sport) {
   return margeDe(cotes, issues(sport), 1);
 }
 
+/* La proba sans marge du marche, issue par issue, ou null (voir valide). */
+function probasDuMarche(p, iss) {
+  if (!p || typeof p !== 'object') return null;
+  const v = {};
+  for (const i of iss) {
+    const x = Number(p[i]);
+    if (!(x > 0 && x < 1)) return null;
+    v[i] = Math.round(x * 1e5) / 1e5;
+  }
+  return v;
+}
+
 function valide(brut) {
   if (!brut || !Array.isArray(brut.matchs) || !Array.isArray(brut.sports))
     throw new Error('paris : le catalogue doit porter `sports` et `matchs`');
@@ -412,6 +424,16 @@ function valide(brut) {
       prixMarche: (m.prixMarche && typeof m.prixMarche === 'object') ? {
         ref: String(m.prixMarche.ref || ''), t: String(m.prixMarche.t || ''),
         livres: Number(m.prixMarche.livres) || 0,
+        /* ---- LA PROBA DU MARCHE RESTE SUR LA RENCONTRE (lot 2, CLV, 10/10/2026) ----
+         * L'import l'ecrit (paris_import.avecPrix) et elle etait jetee ici. La
+         * jambe la recopie a la vente (clv.aLaVente) : c'est le prix dont sa
+         * cote descend, a comparer plus tard a la cloture. Elle ne quitte
+         * jamais le serveur : `vue()` ne recopie pas `prixMarche`. Gardee
+         * seulement si chaque issue du sport est dans ]0 ; 1[, arrondie a 1e-5
+         * (l'arrondi du carnet) ; sinon null. Rien ne la relit pour coter :
+         * cotes.habille n'est appele que dans l'import, sur avecPrix(m), qui
+         * repose prixMarche lui-meme. */
+        p: probasDuMarche(m.prixMarche.p, issues(m.sport)),
       } : null,
     };
   });

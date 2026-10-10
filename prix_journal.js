@@ -76,9 +76,10 @@
  * deux temps (temporaire propre au processus, puis renommage). Il sert la CLV
  * (lot 2) et la derive des coupes (lot 6) : un seul ecrivain, hors du carnet
  * de vente. `cloturesDe(lignes)` le refait a partir du journal brut (meme
- * contenu, essai T14) : un index illisible repart de la releve en cours (dit
- * une fois au journal de l'hote), le brut garde de quoi le refaire hors
- * serveur.
+ * contenu, essai T14) : un index qui ne se decode pas est mis de cote
+ * (renomme `.illisible-<t>`, trois gardes, dit au journal de l'hote ; lot 2)
+ * et repart de la releve en cours ; une lecture refusee (EIO...) saute la
+ * releve sans rien ecraser. Le brut garde de quoi le refaire hors serveur.
  *
  * Il se relit et se reecrit en ENTIER a chaque releve, dans le processus qui
  * vend : il ne garde donc que les rencontres dont le coup d'envoi a moins de
@@ -275,6 +276,63 @@ function ajouteCloture(idx, ligne) {
   for (const [id, x] of Object.entries(idx.ev)) if (!(Number(x.debut) >= limite)) { delete idx.ev[id]; change = true; }
   return change;
 }
+/* ---- UN INDEX ILLISIBLE EST MIS DE COTE, PAS ECRASE (lot 2, 10/10/2026) ----
+ * Refait en silence a partir de la seule releve en cours, il emportait toutes
+ * les clotures d'avant : la CLV (lot 2) les fige au reglement, jusqu'a une
+ * semaine plus tard. Le fichier illisible est donc renomme a cote
+ * (`paris_prix_clotures.json.illisible-<t>`) et la chose est dite au journal
+ * de l'hote : le brut du journal garde de quoi le refaire hors serveur
+ * (`cloturesDe`). Si le renommage echoue lui-meme, on ecrase comme avant,
+ * et on le dit une fois par processus.
+ * SEUL un contenu qui ne se decode pas (SyntaxError) est mis de cote : une
+ * lecture qui echoue (EIO, EMFILE, EACCES...) ne dit rien du contenu, et
+ * renommer puis refaire un index peut-etre sain emportait toutes ses
+ * clotures (relecture du 10/10) ; `majClotures` saute alors cette releve.
+ * Les mises de cote gardees : les ILLISIBLES_GARDES plus recentes (une
+ * corruption repetee ne remplit pas le volume ; trois suffisent a refaire
+ * l'histoire, le brut du journal fait le reste). */
+const ILLISIBLES_GARDES = 3;
+function metDeCote(f, e, t) {
+  const cote = f + '.illisible-' + (Number.isFinite(t) ? t : Date.now());
+  try {
+    fs.renameSync(f, cote);
+    console.log('[odds] index de cloture illisible (' + String((e && e.message) || e).slice(0, 120) + '), mis de cote sous '
+      + path.basename(cote) + ' et refait a partir de cette releve');
+  } catch (e2) {
+    if (!ETAT.ditIndex) { ETAT.ditIndex = true; console.log('[odds] index de cloture illisible, refait a partir de cette releve : ' + (e.message || e)); }
+    return;
+  }
+  try {
+    const pre = path.basename(f) + '.illisible-';
+    const vieux = fs.readdirSync(path.dirname(f)).filter((x) => x.startsWith(pre))
+      .sort((a, b) => Number(b.slice(pre.length)) - Number(a.slice(pre.length))).slice(ILLISIBLES_GARDES);
+    for (const x of vieux) fs.unlinkSync(path.join(path.dirname(f), x));
+  } catch (e3) { /* la purge n'empeche jamais l'index de repartir */ }
+}
+/** L'index de cloture et son etat : { idx, etat } ; etat = 'ok' | 'absent'
+ *  (aucun fichier) | 'illisible' (lecture refusee ou contenu qui ne se decode
+ *  pas) | 'version' (une autre version). Lecture seule : c'est l'ecrivain
+ *  (`majClotures`) qui met de cote un index illisible. Lu UNE fois par
+ *  reglement (lot 2) : le gel distingue « pas d'index » de « index pas
+ *  lisible maintenant », qu'il ne fige pas (reprise au reglement suivant). */
+function lisCloturesEtat() {
+  let txt;
+  try { txt = fs.readFileSync(fichierClotures(), 'utf8'); } catch (e) {
+    return { idx: null, etat: e && e.code === 'ENOENT' ? 'absent' : 'illisible', erreur: String((e && (e.code || e.message)) || e) };
+  }
+  let idx;
+  try { idx = JSON.parse(txt); } catch (e) { return { idx: null, etat: 'illisible', erreur: 'json' }; }
+  return idx && idx.v === V && idx.ev && typeof idx.ev === 'object' ? { idx, etat: 'ok' } : { idx: null, etat: 'version' };
+}
+/** L'index de cloture tel qu'il est sur le disque, ou null (absent,
+ *  illisible, autre version). */
+function lisClotures() { return lisCloturesEtat().idx; }
+/** La cloture d'une rencontre, ou null : { l, debut, d, a, o? }. Relue du
+ *  disque a chaque appel : l'objet rendu n'est jamais l'index lui-meme. */
+function cloture(evId) {
+  const idx = lisClotures();
+  return idx && Object.prototype.hasOwnProperty.call(idx.ev, String(evId)) ? idx.ev[String(evId)] : null;
+}
 /* Le fichier : lu, mis a jour, ecrit en deux temps. Le temporaire porte le
    PID : pendant un redeploiement, l'ancien et le nouveau processus ecrivent
    un instant ensemble, et un temporaire commun pouvait melanger leurs deux
@@ -285,9 +343,14 @@ function majClotures(ligne) {
   if (!ligne || !Number.isFinite(ligne.t)) return false;
   try {
     const f = fichierClotures();
-    let idx = null;
-    try { idx = JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) {
-      if (e.code !== 'ENOENT' && !ETAT.ditIndex) { ETAT.ditIndex = true; console.log('[odds] index de cloture illisible, refait a partir de cette releve : ' + (e.message || e)); }
+    let idx = null, txt = null;
+    try { txt = fs.readFileSync(f, 'utf8'); } catch (e) {
+      /* une lecture refusee ne dit rien du contenu : on n'ecrase pas un
+         index peut-etre sain, cette releve reste au journal brut */
+      if (e.code !== 'ENOENT') { echec('clotures', e, ligne.t); return false; }
+    }
+    if (txt !== null) {
+      try { idx = JSON.parse(txt); } catch (e) { metDeCote(f, e, ligne.t); }
     }
     if (!idx || idx.v !== V || !idx.ev || typeof idx.ev !== 'object') idx = { v: V, ev: {} };
     if (!ajouteCloture(idx, ligne)) return true;
@@ -486,4 +549,6 @@ function ligneDemarrage() {
 module.exports = { V, AVANT_CLOTURE_MS, CLOTURE_JOURS, JOURS_DEFAUT, JOURS_MIN, JOURS_MAX,
                    dossier, fichierClotures, actif, joursGardes, horizonMs, jourDe,
                    sourcesDe, ligneDe, ecrit, ajouteCloture, majClotures, cloturesDe, journalDesPrix, branche,
+                   /* lot 2 (CLV) : la lecture de l'index au reglement */
+                   lisClotures, lisCloturesEtat, cloture, ILLISIBLES_GARDES,
                    lisLigne, lisTexte, lisJournal, etat, jourValide, litJourBrut, reponseJour, ligneDemarrage };

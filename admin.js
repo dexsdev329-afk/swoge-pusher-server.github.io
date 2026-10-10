@@ -583,6 +583,32 @@ function page(csrf) {
   </div>
 </div>
 
+<div data-vue="jeux" class="panel" style="margin-top:14px" id="clvPan">
+  <h2>&#128208; Closing line value</h2>
+  <div class="sub" style="margin:0 0 10px">
+    Does a bettor take our price before the market moves his way? <b>CLV</b> = our odds &times; the market&rsquo;s
+    last pre-kick-off probability &minus; 1. Our margin runs from about 5% on a favourite to over 30% on an outsider;
+    talent is judged on how the price moved, not on our margin. Judged per fixture with a price move, never under
+    40 fixtures, and no verdict until the instrument itself is validated. Read-only: nothing here acts on a player.
+  </div>
+  <div id="clvHaut"><div class="muted2">loading…</div></div>
+  <style>
+    /* Le meme habit que la table des paris ; sur telephone elle defile dans sa
+       boite (.btwrap) plutot que de pousser la page. */
+    #clvtbl{ width:100%; min-width:560px; border-collapse:collapse; font-size:12px; }
+    #clvtbl th,#clvtbl td{ padding:7px 8px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top; }
+    #clvtbl th{ color:#8DA0C4; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.6px; }
+    #clvtbl .n{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  </style>
+  <div class="btwrap">
+    <table id="clvtbl">
+      <thead><tr><th>Player</th><th class="n">Fixtures</th><th class="n">Avg CLV</th>
+        <th class="n">95% CI</th><th>Verdict</th></tr></thead>
+      <tbody id="clvBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <div data-vue="collection" class="panel" style="margin-top:14px">
   <h2>&#127822; The fruit collection</h2>
   <div class="sub" style="margin:0 0 10px">
@@ -1580,6 +1606,9 @@ function parisResume(p){
        parce que deux sens opposes sur la meme carte se lisent de travers. */
     '<div><i>Player result</i><b class="'+(net>0?"bas":net<0?"haut":"")+'">'+
       (net>0?"+":"")+fmt(net)+'</b></div>'+
+    /* La valeur de cloture (lot 2), tiree du meme appel que la carte : sous
+       le seuil, le compte de rencontres, jamais un chiffre. */
+    clvCase(p.address)+
     (b.ouverts?'<div><i>Still running</i><b>'+b.ouverts+' &middot; '+fmt(b.enJeu)+
       ' at stake</b></div>':'')+
     '</div>'+
@@ -2063,6 +2092,73 @@ function jpRend(j){
   s+='<br><span class="muted2" style="padding:0;text-align:left;display:inline">Measured off-server with <code>node outils/age_prix.js</code> — no rate or verdict is computed here.</span></div>';
   return s;
 }
+/* ================= LA VALEUR DE CLOTURE (lot 2, CLV, 10/10/2026) =================
+ * GET /paris/clv, toutes les 60 s. La carte MONTRE ce que le serveur decrit ;
+ * elle ne decide rien et rien ici n'agit sur un joueur. Trois regles :
+ *  - sous 40 rencontres avec mouvement, une adresse n'a NI moyenne NI verdict :
+ *    « Too few to judge — n of 40 fixtures measured » (la demi-largeur de son
+ *    IC se montre, elle dit de combien on est loin de conclure) ;
+ *  - tant que l'instrument n'est pas valide (porte 1), aucun verdict, et les
+ *    raisons sont dites ;
+ *  - tout ce qui vient du serveur passe par esc() (un nom de joueur est libre).
+ * Le texte montre est en anglais. */
+var CLVMAP={}, CLVSEUIL=40;
+function clvPct(x){ var n=Number(x); if(x==null||!isFinite(n)) return "—"; return (n>0?"+":"")+(Math.round(n*1000)/10).toFixed(1)+"%"; }
+function clvCase(addr){
+  var a=CLVMAP[String(addr||"").toLowerCase()];
+  if(!a) return '';
+  return '<div><i>CLV</i><b>'+(a.moyenne==null?ent(a.rencontres)+' of '+ent(CLVSEUIL)+' fixtures'
+    :clvPct(a.moyenne)+' over '+ent(a.rencontres)+' fixtures')+'</b></div>';
+}
+function clvRend(d){
+  if(!d) return { haut:'<div class="impl">No data.</div>', corps:'' };
+  if(!d.actif) return { haut:'<div class="impl impwarn">Closing line value: collection is <b>OFF</b> (PARIS_CLV=0) — nothing is recorded; sales and payouts are unaffected.</div>', corps:'' };
+  var seuil=Number(d.seuil)||40, ins=d.instrument||{}, po=d.population||{}, s='';
+  var ct=ins.controle||{};
+  if(ins.valide) s+='<div class="impl">Instrument validated: <b>'+ent(ins.observations)+'</b> fixture observations with a price move, closing price found for '+clvPct(ins.couverture).replace('+','')+' of settled legs, '+ent(ct.conformes)+' of '+ent(ct.jambes)+' legs matched the price index at the moment of sale, '+esc(ins.jours)+' days of collection.</div>';
+  else s+='<div class="impl impwarn"><b>Not validated yet</b> — no verdict is shown:<br>'+(ins.raisons||[]).map(function(r){ return '&middot; '+esc(r&&r.texte); }).join('<br>')+'</div>';
+  if(po.moyenne!=null&&po.ic95) s+='<div class="impl">All bettors: <b>'+ent(po.observations)+'</b> fixture observations with a price move, average CLV <b>'+clvPct(po.moyenne)+'</b> (95% CI '+clvPct(po.ic95[0])+' to '+clvPct(po.ic95[1])+'), average price move '+clvPct(po.moyenneR)+'.</div>';
+  else s+='<div class="impl">All bettors: '+ent(po.observations)+' fixture observation(s) with a price move &mdash; '+ent(po.manque)+' more before any average.</div>';
+  var sm=po.sansMouvement||{};
+  if(sm.jambes) s+='<div class="impl">'+ent(sm.jambes)+' leg(s) ('+clvPct(sm.partMise).replace('+','')+' of the stake with a closing price) were bet after our last pre-kick-off price: their closing line is the price we sold, so they cannot be measured and are left out.</div>';
+  var cl=d.clotures;
+  if(cl&&cl.rencontres) s+='<div class="impl">Closing price age at kick-off: median <b>'+esc(cl.ageMedianMin)+'</b> min, 90th percentile '+esc(cl.ageP90Min)+' min ('+ent(cl.rencontres)+' fixtures started in the last 7 days).</div>';
+  var cmp=d.comparaisons||{};
+  if(cmp.adressesJugees) s+='<div class="impl">'+ent(cmp.adressesJugees)+' address(es) tested: at the usual 95% bar about '+esc(cmp.fauxPositifsSansCorrection)+' would be flagged by luck alone, so the bar is raised to z = '+esc(cmp.z)+' (Bonferroni).</div>';
+  var rows=(d.adresses||[]).map(function(a){
+    var nom=a.nom?esc(a.nom):'<code>'+esc(short(String(a.addr||"")))+'</code>';
+    var fx=ent(a.rencontres)+(a.demiLargeur!=null?' <span class="bmut">&plusmn;'+clvPct(a.demiLargeur).replace('+','')+'</span>':'');
+    if(a.moyenne==null||!a.ic95){
+      var msg=a.rencontres<seuil?'Too few to judge &mdash; '+ent(a.rencontres)+' of '+ent(seuil)+' fixtures measured'
+                                :'Waiting for the instrument to be validated';
+      return '<tr><td>'+nom+'</td><td class="n">'+fx+'</td><td class="n">&mdash;</td><td class="n">&mdash;</td><td class="bmut">'+msg+'</td></tr>';
+    }
+    var v=a.verdict||{};
+    /* talent null : aucune foule de 40 jambes, sans lui, dans ses categories
+       d'issue — on ne compare pas plutot que de comparer a soi-meme */
+    var vt=(v.argent==='beats'?'<b class="impbad">Beats the closing line</b><br>':'')+
+           (v.talent==='sharper'?'<b>Sharper than the crowd</b>':v.talent==='inline'?'In line with the crowd':'<span class="bmut">No crowd of 40 legs to compare with</span>');
+    /* la porte 3 se lit sur la valeur concedee : elle s'affiche a cote */
+    var vc=a.valeurConcedee==null?'':' &middot; conceded '+(a.valeurConcedee>0?'+':'')+ent(a.valeurConcedee)+' (stake-weighted CLV '+clvPct(a.clvPonderee)+')';
+    return '<tr><td>'+nom+'</td><td class="n">'+fx+'</td><td class="n">'+clvPct(a.moyenne)+'</td>'+
+      '<td class="n">'+clvPct(a.ic95[0])+' to '+clvPct(a.ic95[1])+'</td>'+
+      '<td>'+vt+'<br><span class="bmut">sold margin '+clvPct(a.evVente)+' &middot; move vs crowd '+clvPct(a.ecartFoule)+vc+
+      (a.partFoule!=null?' &middot; '+clvPct(a.partFoule).replace('+','')+' of all observations':'')+'</span></td></tr>';
+  }).join('');
+  return { haut:s, corps:rows||'<tr><td colspan="5" class="muted2">no bet at market price yet</td></tr>' };
+}
+async function loadClv(){
+  try{
+    var r=await fetch("/paris/clv",{headers:{"x-admin-key":KEY}});
+    if(!r.ok){ $("#clvHaut").innerHTML='<div class="impl impbad">could not load the closing line value ('+r.status+')</div>'; return; }
+    var d=await r.json(), m={};
+    CLVSEUIL=Number(d.seuil)||40;
+    (d.adresses||[]).forEach(function(a){ m[String(a.addr||"").toLowerCase()]=a; });
+    CLVMAP=m;
+    var x=clvRend(d); $("#clvHaut").innerHTML=x.haut; $("#clvBody").innerHTML=x.corps;
+  }catch(e){ $("#clvHaut").innerHTML='<div class="impl impbad">'+esc(e.message)+'</div>'; }
+}
+loadClv(); setInterval(loadClv,60000);
 /* ================= L'AGENT X =================
  * L'etat du posteur quotidien, de /x/derniere : le dernier post parti, les
  * creneaux, les recents. Rien a cliquer — le posteur tourne seul. */
