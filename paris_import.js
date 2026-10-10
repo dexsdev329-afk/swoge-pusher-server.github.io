@@ -50,6 +50,7 @@
  *   node paris_import.js --matchs     recharge le calendrier   (0 credit)
  *   node paris_import.js --scores     les rencontres finies    (2 / sport)
  *   node paris_import.js --calibre    recale les forces Elo    (1 / sport)
+ *   node paris_import.js --reglement  l'ombre et les /scores payes (0 credit)
  *
  * Les variables d'environnement sont decrites dans EXPLOITATION.md.
  */
@@ -75,6 +76,11 @@ const paris = require('./paris');
    erreur, et sa couverture) et ses prix eu avec nos cotes Elo du meme instant.
    0 credit de plus : il relit ce que la releve a deja paye. */
 const prixObserve = require('./prix_observe');
+/* Le journal du reglement (lot 4, 10/10/2026) : l'ombre ESPN de 2 h (ce
+   qu'une passe frequente aurait regle, et quand) et le compte de chaque
+   /scores paye. Il ne decide rien ; chaque note est isolee (try) : il ne peut
+   jamais faire perdre un reglement (reglement_journal.js, EXPLOITATION 8.10). */
+const regJournal = require('./reglement_journal');
 
 const BASE = 'https://api.the-odds-api.com/v4';
 const CLE = process.env.ODDS_API_KEY || '';
@@ -638,6 +644,10 @@ function etatImport() {
                 (la porte 3 des reserves, EXPLOITATION 8.8sexies) */
              enVol: enVolCredits, parClasse: etatClasses() },
     auto: { actif: AUTO_ACTIF, plafond: AUTO_PLAFOND, delaiMin: AUTO_DELAI_MIN },
+    /* Le reglement (lot 4, 10/10/2026) : la passe ESPN frequente, l'ombre,
+       le compte des /scores payes et les portes A et B calculees
+       (EXPLOITATION 8.10). Rien n'y decide. */
+    reglement: (() => { try { return bilanReglement(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     /* Les refus du tableau d'ESPN aujourd'hui, par tableau : une panne qui ne
        se lit que dans le journal ne se voit pas (08/10/2026). */
     espnRefus: espn.refusDuJour(),
@@ -1203,6 +1213,107 @@ async function importeMatchs() {
   return habilles.length;
 }
 
+/* ---- LE COMPTE DE CHAQUE /scores PAYE (lot 4, 10/10/2026) ----
+ * La porte B se juge cle par cle sur ce que le fournisseur a REELLEMENT
+ * facture : x-requests-last, jamais une supposition. Le cout d'une reponse
+ * /scores VIDE, ou d'une erreur, n'est pas documente (la phrase « If no events
+ * are returned, the request will not count against the usage quota »
+ * n'existe que pour GET odds ; api-error-codes.html ne dit rien du cout, guide
+ * v4 relu le 09/10). Une erreur ne porte pas d'en-tete (voir `appel`) : son
+ * cout se DEDUIT de x-requests-used, seulement quand c'est PROUVABLE : l'appel
+ * /scores qui la precede dans la meme passe a lu le compteur, rien n'a ete
+ * facture entre lui et l'erreur (le compte par classe du jour n'a pas bouge),
+ * et l'appel /scores qui la suit lit le compteur avec, entre les deux,
+ * exactement deux appels et sa seule depense. Sinon : « indecidable » — un
+ * compteur lu une heure plus tot aurait absorbe les erreurs d'autres passes
+ * (essai B3 de paris_import.test.js). Un appel est « inutile » s'il
+ * a coute, n'a rien apparie, ET a ete paye pour une rencontre de plus de
+ * AUTO_DELAI_MIN + 110 min : paye pour un match en cours, il est « precoce »
+ * (c'est l'economie de PARIS_SCORES_SAUTE_ENCOURS, pas celle de la coupe). */
+function instantaneQuota() {
+  const jour = jourCourant();
+  const c = (litClasses().jours || {})[jour] || {};
+  let appels = 0, depense = 0;
+  for (const k of Object.keys(c)) { appels += Number(c[k] && c[k].appels) || 0; depense += Number(c[k] && c[k].depense) || 0; }
+  /* `vol` : les credits d'appels payants partis et pas encore comptes
+     (`enVolCredits`, socle). Lu, jamais modifie ici. */
+  return { u: null, jour, appels, depense, vol: enVolCredits };
+}
+/* Peut LEVER (journal en panne) : l'appelant l'isole, la ligne de journal
+   est ecrite avant toute note. */
+function compteScores(clef, x, suspens) {
+  const info = x.info || {};
+  const cout = info.cout === undefined ? null : info.cout;
+  const refuse = info.code === 'REFUSE';
+  if (!refuse) {
+    let ligne = `[odds] scores ${clef} : ${cout === null ? '?' : cout} credit(s), ${x.rendus} rendue(s), ` +
+                `${x.finies} finie(s), ${x.appariees} appariee(s)`;
+    if (x.appariees === 0 && cout > 0) ligne += x.vieux ? ' — INUTILE' : ` — precoce (payee pour une rencontre de moins de ${AUTO_DELAI_MIN + 110} min)`;
+    if (cout === null && info.statut !== null) ligne += ` — cout inconnu (statut ${info.statut}${info.code ? ' ' + info.code : ''})`;
+    console.log(ligne);
+  }
+  const entree = regJournal.noteAppelScores(clef, { t: x.t, cout, statut: info.statut, code: info.code,
+    rendus: x.rendus, finies: x.finies, appariees: x.appariees, vieux: x.vieux,
+    declencheurs: x.declencheurs, ageMaxMin: x.ageMaxMin });
+  /* L'appel d'avant etait sans en-tete : celui-ci dit-il ce qu'il a coute ? */
+  if (suspens) {
+    const apres = instantaneQuota();
+    let deduit = null;
+    /* `apres.vol === 0` (relecture du lot 4) : un appel payant concurrent
+       (une releve de prix) peut etre facture chez le fournisseur avant CET
+       appel — il est alors dans x-requests-used — et compte chez nous apres
+       lui : les deux appels comptes seraient bien deux, et son cout irait a
+       l'erreur. Encore en vol a cet instant : indecidable. Parti et revenu
+       entre les deux : il est compte, la condition « exactement deux » le
+       refuse deja.
+       `apres.jour === suspens.avant.jour` est inatteignable aujourd'hui (la
+       condition « exactement deux appels » couvre deja le passage de minuit,
+       le compte du jour repart de zero) : garde si un await se glisse entre
+       les lectures. */
+    if (cout !== null && info.utilise !== null && info.utilise !== undefined && suspens.avant.u !== null
+        && apres.vol === 0
+        && apres.jour === suspens.avant.jour && apres.appels - suspens.avant.appels === 2
+        && apres.depense - suspens.avant.depense === (cout > 0 ? cout : 0)) {
+      const v = Number(info.utilise) - cout - suspens.avant.u;
+      if (v >= 0 && isFinite(v)) deduit = v;
+    }
+    if (deduit !== null) console.log(`[odds] scores ${suspens.clef} : ${deduit} credit(s) deduit(s) de x-requests-used`);
+    regJournal.deduitCout(suspens.entree, deduit, deduit === null ? '' : 'x-requests-used');
+  }
+  /* Celui-ci est sans en-tete mais a recu une reponse (ou a ete coupe au
+     delai) : il attend l'appel suivant. Un refus du garde-fou ne coute rien,
+     une erreur reseau immediate non plus (la connexion n'a pas abouti). */
+  if (!refuse && cout === null && (info.statut !== null || info.code === 'DELAI') && entree) return { entree, avant: x.avant, clef };
+  return null;
+}
+/* ---- QUAND UNE RENCONTRE D'UNE CLE COUPEE PART « A LA MAIN » (relecture du lot 4) ----
+ * Coupee, la cle n'a plus de /scores pour dire « completed ». Ses rencontres
+ * ne partaient a la main qu'au mur du football (AUTO_DELAI_MIN + 110 min,
+ * 200) : la quotidienne aurait annonce sur le canal PUBLIC « resultat a
+ * saisir » un ODI ou un test encore en cours, a chaque demarrage. Elles
+ * attendent donc la duree de leur FORMAT, marge comprise : un test se joue
+ * sur cinq jours, un ODI dure ~8 h (deux manches de 50 overs et la pause),
+ * T20 et Hundred moins de 4 h, un tennis en cinq sets peut depasser 5 h. Des
+ * DECISIONS, pas des mesures : la coupe est eteinte, et ces durees se
+ * remesurent sur les heures de fin reelles avant de l'armer (porte B). Un
+ * format plus court attend plus que necessaire : c'est le prix de la coupe,
+ * jamais un gagnant paye trop tot. */
+const COUPE_ATTENTE_H = Object.freeze({ cricket_test_match: 5 * 24, cricket: 10, tennis: 6 });
+function attenteCoupeMs(clef) {
+  const k = String(clef || '');
+  const h = COUPE_ATTENTE_H[k] || (/^tennis_/.test(k) ? COUPE_ATTENTE_H.tennis : COUPE_ATTENTE_H.cricket);
+  return Math.max(h * 3600000, (AUTO_DELAI_MIN + 110) * 60000);
+}
+/* La coupe : une raison si la cle est coupee, null sinon (voir les drapeaux). */
+function clefCoupee(clef, t) {
+  if (!scoresCoupe() || !SCORES_NON_COCHEES.has(clef)) return null;
+  let b = null;
+  try { b = regJournal.bilanScores(t, SCORES_COUPE_JOURS)[clef]; } catch (e) { return null; }
+  if (!b || b.appariees > 0) return null;
+  const n = scoresCoupeN();
+  return b.inutiles >= n ? `jamais appariee sur ${b.inutiles} appel(s) paye(s) inutile(s) en ${SCORES_COUPE_JOURS} jours` : null;
+}
+
 /**
  * Les rencontres FINIES, pour le reglement. 2 credits par sport.
  *
@@ -1211,7 +1322,15 @@ async function importeMatchs() {
  * les mauvaises personnes sans que personne ne le sache. Ce qu'on rend ici est
  * une LISTE A VERIFIER, avec l'adresse exacte a appeler pour chaque match.
  */
-async function importeScores(aRegler) {
+/*
+ * `opts` (lot 4, 10/10/2026), facultatif — sans lui, rien ne change :
+ *   payant          false : la passe frequente ESPN, qui ne paie JAMAIS de
+ *                   /scores (rend ce qu'ESPN a tranche, et rien d'autre) ;
+ *   fenetreEspnMs   la fenetre de la source gratuite, jamais plus large que
+ *                   FEN_ESPN (la passe frequente demande 3 jours, pas 30).
+ */
+async function importeScores(aRegler, opts) {
+  const o = opts || {};
   paris.charge();
   const ouverts = new Set(paris.catalogue().matchs.map((m) => m.id));
 
@@ -1243,8 +1362,12 @@ async function importeScores(aRegler) {
    * Trente jours : de quoi reprendre un mois de retard, et pas de quoi
    * parcourir un catalogue entier a chaque passage. */
   const FEN_ESPN = 30 * 86400000;
+  /* La passe frequente (lot 4) lit 3 jours : au-dela de 7 journees,
+     `espn.releve` demande des MOIS (7 Mo pour un mois de MLB), toutes les 2 h.
+     Jamais plus large que FEN_ESPN. */
+  const fenEspn = Number(o.fenetreEspnMs) > 0 ? Math.min(Number(o.fenetreEspnMs), FEN_ESPN) : FEN_ESPN;
   const candidats = paris.catalogue().matchs.filter((m) =>
-    m.debut <= tGratuit && tGratuit - m.debut <= FEN_ESPN
+    m.debut <= tGratuit && tGratuit - m.debut <= fenEspn
     && (typeof aRegler !== 'function' || aRegler(m.id)));
   let gratuites = [];
   try { gratuites = await espn.finies(candidats); }
@@ -1253,6 +1376,13 @@ async function importeScores(aRegler) {
   if (gratuites.length) {
     console.log(`[espn] ${gratuites.length} rencontre(s) reglee(s) sans depenser un credit`);
   }
+  /* ---- LA PASSE FREQUENTE NE PAIE JAMAIS (lot 4, 10/10/2026) ----
+   * Elle tourne toutes les 2 h : le /scores de repli (2 credits par ligue)
+   * y couterait douze fois par jour ce que la quotidienne paie une fois. Elle
+   * rend donc ce qu'ESPN a tranche, et s'arrete la ; le repli payant reste a
+   * la quotidienne (et a chaque demarrage). reglement_cadence.test.js (b) le
+   * tient avec un cricket parie qu'ESPN ne couvre pas : 0 credit. */
+  if (o.payant === false) return gratuites.filter((f) => ouverts.has(f.id));
 
   /* On n'interroge QUE les ligues qui ont une rencontre finie a rattraper.
      Demander les scores des neuf ligues chaque jour couterait 18 credits —
@@ -1282,7 +1412,14 @@ async function importeScores(aRegler) {
    * que laisser un gagnant impaye.
    */
   const filtre = typeof aRegler === 'function' ? aRegler : null;
-  let sansEnjeu = 0;
+  let sansEnjeu = 0, sautees = 0;
+  /* L'age minimal d'une rencontre reglable (`trieReglements`) : en dessous,
+     le /scores paye pour elle est « precoce », pas « inutile » (lot 4). */
+  const mur = (AUTO_DELAI_MIN + 110) * 60000;
+  const sauteEnCours = scoresSauteEnCours();
+  /* Les rencontres qui font payer chaque ligue : le compte (lot 4) dit si
+     l'appel a ete paye pour une rencontre assez vieille pour etre reglee. */
+  const declencheurs = new Map();
   for (const m of paris.catalogue().matchs) {
     const l = m.source && m.source.ligue;
     if (!l) continue;
@@ -1294,13 +1431,46 @@ async function importeScores(aRegler) {
        ligue reste dans la liste — c'est pour ca que le test porte sur la
        rencontre et non sur la ligue. */
     if (dejaVues.has(m.id)) continue;
+    /* Commencee depuis moins de AUTO_DELAI_MIN + 110 min : le tri la
+       renverrait en « finie depuis trop peu ». PARIS_SCORES_SAUTE_ENCOURS=1
+       seulement (eteint par defaut, lot 4) : on ne la paie pas. */
+    if (sauteEnCours && t - m.debut < mur) { sautees++; continue; }
     if (!parLigue.has(l)) parLigue.set(l, m.sport);
+    if (!declencheurs.has(l)) declencheurs.set(l, []);
+    declencheurs.get(l).push(m);
   }
   if (sansEnjeu) {
     /* On le DIT. Une economie silencieuse se lit comme une panne le jour ou
        une rencontre ne remonte pas, et l'on cherche du cote du reseau. */
     console.log(`[odds] ${sansEnjeu} rencontre(s) finie(s) sans pari en attente —`
                 + ' pas de score demande pour elles');
+  }
+  if (sautees) {
+    console.log(`[odds] ${sautees} rencontre(s) commencee(s) depuis moins de ${AUTO_DELAI_MIN + 110} min —`
+                + ' pas de score paye pour elles (PARIS_SCORES_SAUTE_ENCOURS=1)');
+  }
+
+  const finis = gratuites.filter((f) => ouverts.has(f.id));
+  /* ---- LA COUPE D'UNE CLE JAMAIS APPARIEE (lot 4, ETEINTE par defaut) ----
+   * PARIS_SCORES_COUPE=1 seulement, et seulement une cle NON cochee « Scores &
+   * Results » qui n'a rien apparie sur ses PARIS_SCORES_COUPE_N derniers
+   * appels payes inutiles (30 jours glissants). Ses rencontres ne se perdent
+   * pas : elles partent dans la liste « a la main », avec leur raison, des
+   * qu'elles ont l'age d'etre reglees. */
+  for (const clef of [...parLigue.keys()]) {
+    const raison = clefCoupee(clef, t);
+    if (!raison) continue;
+    parLigue.delete(clef);
+    console.log(`[odds] scores ${clef} : ${raison} — plus demandee, a regler a la main`);
+    const attente = attenteCoupeMs(clef);
+    for (const m of declencheurs.get(clef) || []) {
+      /* pas avant la duree de son format (voir `attenteCoupeMs`) : jusque-la,
+         elle n'est nulle part, comme une rencontre que /scores ne dit pas
+         encore finie */
+      if (t - m.debut < attente) continue;
+      finis.push({ id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur, coupe: true,
+                   aMain: `scores plus demandes pour ${clef} (${raison}) : verifier que la rencontre est finie, puis regler a la main` });
+    }
   }
   if (!parLigue.size) {
     const total = paris.catalogue().matchs.length;
@@ -1310,11 +1480,14 @@ async function importeScores(aRegler) {
     /* Et l'on rend quand meme ce qu'ESPN a trouve : sortir ici les aurait
        jetees, et c'est le cas le PLUS frequent — le jour ou tout se regle
        gratuitement, il ne reste plus une seule ligue a interroger. */
-    return gratuites.filter((f) => ouverts.has(f.id));
+    return finis;
   }
   console.log(`[odds] ${parLigue.size} ligue(s) a interroger → ${parLigue.size * 2} credit(s)`);
 
-  const finis = gratuites.filter((f) => ouverts.has(f.id));
+  /* Un appel sans en-tete (erreur) dont le cout se deduira peut-etre de
+     l'appel suivant, et le compteur lu juste apres le dernier appel a en-tete
+     de CETTE passe (lot 4, voir `compteScores`). */
+  let suspens = null, lu = null;
   for (const [clef] of parLigue) {
     let sc;
     /* ---- TROIS JOURS DEMANDES, TROIS JOURS FILTRES ----
@@ -1328,9 +1501,22 @@ async function importeScores(aRegler) {
      * heures.
      * Le cout ne change pas : `daysFrom` vaut deux credits, quelle que soit sa
      * valeur. On demandait moins pour le meme prix. */
-    try { sc = await appel(`/sports/${clef}/scores`, { daysFrom: 3 }, 2, 'scores ' + clef); }
-    catch (e) { console.log('[odds] ' + e.message); continue; }
-    for (const ev of sc || []) {
+    /* `info` (socle) rend le cout lu, le statut et le code : le compte du
+       lot 4 en vit. Sans classe dite : classe 1, comme avant. */
+    const info = {};
+    const decl = declencheurs.get(clef) || [];
+    const avant = instantaneQuota();
+    /* Le compteur d'avant cet appel n'est connu que si rien n'a ete facture
+       depuis la derniere lecture de cette passe. (`lu.jour === avant.jour` :
+       inatteignable aujourd'hui — aucun await entre ces deux lectures —,
+       garde si un await s'y glisse.) */
+    avant.u = lu && lu.jour === avant.jour && lu.appels === avant.appels && lu.depense === avant.depense ? lu.u : null;
+    let rate = false, rendus = 0, finiesN = 0, appariees = 0;
+    try { sc = await appel(`/sports/${clef}/scores`, { daysFrom: 3 }, 2, 'scores ' + clef, undefined, info); }
+    catch (e) { console.log('[odds] ' + e.message); rate = true; }
+    if (!rate) rendus = Array.isArray(sc) ? sc.length : 0;
+    for (const ev of rate ? [] : sc || []) {
+      if (ev && ev.completed) finiesN++;
       if (!ev.completed || !Array.isArray(ev.scores)) continue;
       const dom = ev.scores.find((s) => s.name === ev.home_team);
       const ext = ev.scores.find((s) => s.name === ev.away_team);
@@ -1362,9 +1548,25 @@ async function importeScores(aRegler) {
         if (cible.sport === 'foot' && prolongationPossible(cible))
           f.aMain = 'score de football venu de The Odds API : il peut compter la prolongation, regler sur le score a 90 minutes';
         finis.push(f);
+        appariees++;
       }
     }
+    /* Le compte ne peut pas faire perdre ce qui vient d'etre lu : un journal
+       en panne (note qui leve) est isole ici, et la boucle continue. */
+    try {
+      suspens = compteScores(clef, { info, avant, rendus, finies: finiesN, appariees, t: Date.now(),
+        vieux: decl.some((m) => t - m.debut >= mur), declencheurs: decl.length,
+        ageMaxMin: decl.length ? Math.round(Math.max(...decl.map((m) => t - m.debut)) / 60000) : null }, suspens);
+    } catch (e) { suspens = null; console.log('[odds] compte des scores : ' + (e.message || e)); }
+    try {
+      if (info.utilise !== null && info.utilise !== undefined && isFinite(Number(info.utilise))) {
+        const s = instantaneQuota();
+        lu = { u: Number(info.utilise), jour: s.jour, appels: s.appels, depense: s.depense };
+      } else lu = null;
+    } catch (e) { lu = null; }
   }
+  /* Le dernier appel sans en-tete n'a pas de suivant : son cout reste inconnu. */
+  if (suspens) { try { regJournal.deduitCout(suspens.entree, null); } catch (e) { /* jamais bloquant */ } }
 
   if (!finis.length) { console.log('[odds] aucune rencontre finie a regler'); return finis; }
   console.log('\n[odds] a REGLER — verifiez le score avant d appeler :');
@@ -1372,7 +1574,7 @@ async function importeScores(aRegler) {
     if (f.aMain) {
       /* Le score rendu peut compter la prolongation : on ne propose PAS de
          commande qui le paierait tel quel. */
-      console.log(`  ${f.domicile} ${f.score} ${f.exterieur}  →  A LA MAIN : ${f.aMain}`);
+      console.log(`  ${f.domicile} ${f.score || '?'} ${f.exterieur}  →  A LA MAIN : ${f.aMain}`);
       console.log(`    curl -H "x-admin-key: $ADMIN_KEY" "$URL/paris/regle?match=${f.id}&score=<score a 90 minutes>"`);
       continue;
     }
@@ -1443,6 +1645,129 @@ const AUTO_PLAFOND = Number(process.env.PARIS_AUTO_PLAFOND || 5000000);
 const AUTO_DELAI_MIN = Number(process.env.PARIS_AUTO_DELAI_MIN || 90);
 /* Le coupe-circuit. `0` remet tout a la main, sans redeployer. */
 const AUTO_ACTIF = String(process.env.PARIS_AUTO || '1') !== '0';
+
+/* ==================== LE REGLEMENT : L'OMBRE ET LE COMPTE (lot 4, 10/10/2026) ====================
+ *
+ * Deux mesures, a 0 credit, qui ne changent RIEN de ce qui se regle ni de ce
+ * qui se paie tant que leurs drapeaux sont a leur defaut (EXPLOITATION 8.10).
+ *
+ * A. L'OMBRE. Une rencontre devient reglable 200 min apres son coup d'envoi
+ *    (AUTO_DELAI_MIN + 110, `trieReglements`) ; la seule passe qui regle est
+ *    la quotidienne, qui part aussi 5 min apres CHAQUE demarrage (118
+ *    redeploiements en 17 jours, EXPLOITATION 8.3). Sans redeploiement elle
+ *    attend jusqu'a 24 h (12 h en moyenne) ; une passe de 2 h la reglerait en
+ *    1 h en moyenne. Mais regler plus tot laisse moins de temps a une
+ *    correction de score. L'ombre lit donc ESPN (gratuit) toutes les 2 h, sur
+ *    TOUTES les rencontres des tableaux ESPN finies depuis moins de 36 h —
+ *    pariees ou non : 2 rencontres seulement portaient un pari le 09/10, 20 en
+ *    14 jours ne s'atteindraient pas — et note ce qu'une passe de 2 h AURAIT
+ *    regle, quand, et toute correction vue dans les 24 h suivantes (score,
+ *    statut, retour a un etat non fini, disparition d'un tableau qui a
+ *    repondu). Elle ne regle rien et ne publie rien.
+ * B. LE COMPTE. Chaque /scores paye est note par cle : credits lus
+ *    (x-requests-last), statut, code, rendues, finies, appariees. Rien ne
+ *    limite ce /scores a un appel par jour : il part a chaque demarrage (~8
+ *    fois par jour au rythme de septembre). La coupe d'une cle jamais
+ *    appariee existe mais reste ETEINTE.
+ */
+
+/* La passe ESPN frequente. « observe » (defaut) : l'ombre seule, rien n'est
+   regle ni publie, 0 credit. « regle » : la passe de 2 h regle aussi ce
+   qu'ESPN tranche (0 credit, jamais de /scores paye) — c'est la bascule A,
+   au plus tot J0 + 14, porte ecrite d'avance en EXPLOITATION 8.10. « 0 » :
+   ni ombre ni passe, l'etat d'avant ce lot. Toute autre valeur vaut
+   « observe » et se dit au demarrage : une faute de frappe ne regle rien. */
+function modeEspn() {
+  const v = String(process.env.PARIS_SCORES_ESPN || '').trim().toLowerCase();
+  return v === 'regle' || v === '0' ? v : 'observe';
+}
+function modeEspnInvalide() {
+  const v = String(process.env.PARIS_SCORES_ESPN || '').trim().toLowerCase();
+  return v && v !== 'regle' && v !== '0' && v !== 'observe' ? String(process.env.PARIS_SCORES_ESPN) : null;
+}
+function entierEnv(nom, defaut, min, max) {
+  const v = Number(process.env[nom]);
+  return String(process.env[nom] || '').trim() && Number.isInteger(v) && v >= min && v <= max ? v : defaut;
+}
+/* La cadence : 2 h, decision du proprietaire du 09/10 (3 h donnait ~1 h 30
+   d'attente moyenne au lieu d'1 h). Bornee 1 a 24 h. La charge ESPN : ~22
+   tableaux x 4 journees par passe x 12 passes = ~1 050 requetes par jour
+   (au plus 6 journees par tableau au suivi de 24 h : ~1 580),
+   contre ~7 680 deja faites par le verrou de fermeture (~80 par passe large,
+   toutes les 15 min, EXPLOITATION 8.7). Les refus se comptent dans
+   espn.refusDuJour, comme ceux du verrou. */
+const scoresEspnH = () => entierEnv('PARIS_SCORES_ESPN_H', 2, 1, 24);
+/* La fenetre de la passe frequente en mode « regle » (la quotidienne garde
+   ses 30 jours, FEN_ESPN). 4 jours au plus : `espn.releve` demande
+   [plus tot - 1 j ; plus tard + 1 j] et passe au MOIS au-dela de 7 journees
+   (scores_espn.js, JOURS_MAX) — un mois de MLB pese 7 Mo (mesure du 08/10). */
+const scoresEspnFenJ = () => entierEnv('PARIS_SCORES_ESPN_FEN_J', 3, 1, 4);
+/* La duree de suivi d'une rencontre apres sa premiere lecture reglable, pour
+   y compter les corrections. 24 h : au-dela, une correction n'est plus le
+   risque d'un reglement a 2 h plutot qu'a 24 h. Bornee 1 a 48 h (relecture
+   du lot 4 : 72 etait accepte) : une rencontre en suivi a au plus 36 h (age
+   d'entree) + OMBRE_H + 6 h (grace de `suivisEnCours`) ; `espn.releve`
+   ajoute un jour de chaque cote. A 48 h : 90 h + 2 j ≈ 5,75 jours, 7
+   journees UTC au plus, sous JOURS_MAX ; a 72 h : 7,75 jours, donc des
+   MOIS toutes les 2 h (balayage de `espn.requetes` du 10/10 : 6 journees a
+   24 h, 7 a 48 h, le mois a 72 h). */
+const ombreH = () => entierEnv('PARIS_SCORES_OMBRE_H', 24, 1, 48);
+/* L'ombre lit les rencontres commencees depuis moins de 36 h — la tolerance
+   d'appariement d'ESPN (scores_espn.releve) et la passe large du verrou —, et
+   celles encore dans leur fenetre de suivi. Une rencontre pariee vieille de 20
+   jours n'y entre pas : elle ferait demander des mois toutes les 2 h. */
+const OMBRE_FENETRE_MS = 36 * 3600000;
+
+/* B. La coupe du /scores paye d'une cle jamais appariee. « 1 » l'arme ;
+   defaut ETEINTE : on compte d'abord (porte B, au plus tot J0 + 30). */
+const scoresCoupe = () => String(process.env.PARIS_SCORES_COUPE || '').trim() === '1';
+/* L'echantillon minimal : 5 appels payes INUTILES (x-requests-last > 0, payes
+   pour une rencontre de plus de AUTO_DELAI_MIN + 110 min, 0 appariee) sur 30
+   jours glissants. Cinq : un mois de rencontres de cricket a une par semaine,
+   decision du plan du 09/10 (pas une mesure : la porte B la fait). */
+const scoresCoupeN = () => entierEnv('PARIS_SCORES_COUPE_N', 5, 1, 1000);
+const SCORES_COUPE_JOURS = 30;
+/* La coupe ne vise QUE les cles NON cochees « Scores & Results » sur la page
+   des sports de The Odds API (https://the-odds-api.com/sports-odds-data/sports-apis.html,
+   lue le 09/10/2026) : les 16 cles de cricket, et 32 tournois de tennis sur
+   47. Une cle cochee — la Liga, la NBA… — n'est JAMAIS coupee : son /scores
+   n'apparie presque jamais (ESPN tranche d'abord, puis il part pendant le
+   match a chaque demarrage) mais c'est la seule defense si ESPN tombe. Une
+   cle absente de la liste (un tournoi pas encore sur la page) n'est pas
+   coupee non plus : mieux vaut payer deux credits que laisser un gagnant. */
+const SCORES_NON_COCHEES = new Set([
+  'cricket_asia_cup', 'cricket_big_bash', 'cricket_caribbean_premier_league', 'cricket_icc_trophy',
+  'cricket_icc_world_cup', 'cricket_icc_world_cup_womens', 'cricket_international_t20', 'cricket_ipl',
+  'cricket_odi', 'cricket_psl', 'cricket_t20_blast', 'cricket_t20_world_cup', 'cricket_t20_world_cup_womens',
+  'cricket_test_match', 'cricket_the_hundred', 'cricket_the_hundred_womens',
+  'tennis_atp_aus_open_singles', 'tennis_atp_barcelona_open', 'tennis_atp_dubai', 'tennis_atp_french_open',
+  'tennis_atp_hamburg_open', 'tennis_atp_halle_open', 'tennis_atp_indian_wells', 'tennis_atp_italian_open',
+  'tennis_atp_madrid_open', 'tennis_atp_miami_open', 'tennis_atp_monte_carlo_masters', 'tennis_atp_munich',
+  'tennis_atp_paris_masters', 'tennis_atp_qatar_open', 'tennis_atp_queens_club_champ', 'tennis_atp_wimbledon',
+  'tennis_wta_aus_open_singles', 'tennis_wta_bad_homburg_open', 'tennis_wta_charleston_open', 'tennis_wta_dubai',
+  'tennis_wta_french_open', 'tennis_wta_german_open', 'tennis_wta_indian_wells', 'tennis_wta_italian_open',
+  'tennis_wta_madrid_open', 'tennis_wta_miami_open', 'tennis_wta_qatar_open', 'tennis_wta_queens_club_champ',
+  'tennis_wta_strasbourg', 'tennis_wta_stuttgart_open', 'tennis_wta_wimbledon', 'tennis_wta_wuhan_open',
+]);
+/* L'economie sure, d'abord comptee : « 1 » ne paie plus de /scores pour une
+   rencontre commencee depuis moins de AUTO_DELAI_MIN + 110 min — que
+   `trieReglements` renverrait de toute facon en « finie depuis trop peu ».
+   Defaut ETEINTE : le compte (`precoces`) dit d'abord combien elle
+   economiserait (porte en EXPLOITATION 8.10). */
+const scoresSauteEnCours = () => String(process.env.PARIS_SCORES_SAUTE_ENCOURS || '').trim() === '1';
+
+/* ---- LES PORTES, ECRITES D'AVANCE (EXPLOITATION 8.10) ----
+ * A (PARIS_SCORES_ESPN=regle) : au plus tot 14 jours d'ombre ; au moins 300
+ * rencontres suivies 24 h SANS TROU (aucune lecture a plus de 3 cadences de
+ * la precedente), 0 correction (retours et disparitions compris : 0 sur 300
+ * borne le taux sous 1 % a 95 %, regle de trois), et un gain median BAS
+ * (prochaine passe reelle moins la premiere lecture reglable, 0 si une passe
+ * reelle a pu la regler avant) d'au moins 1 h sur toutes les rencontres de
+ * l'ombre. Les rencontres pariees sont un controle, jamais un seuil.
+ * B (PARIS_SCORES_COUPE=1) : au plus tot 30 jours de compte, cle par cle,
+ * seulement les cles NON cochees. */
+const PORTE_A = Object.freeze({ joursMin: 14, suiviesMin: 300, correctionsMax: 0, gainMinH: 1 });
+const PORTE_B = Object.freeze({ joursMin: 30 });
 
 /* ======================= LE PRIX DU MARCHE (08/10/2026) =======================
  *
@@ -1774,7 +2099,10 @@ function trieReglements(finis, expositionDe, now) {
        fournisseur ne dit pas quand la rencontre s'est terminee. On y ajoute
        donc la duree d'un match, genereusement. */
     if (depuis < AUTO_DELAI_MIN + 110) {
-      mains.push(Object.assign({ raison: `finie depuis trop peu (${Math.round(depuis)} min)` }, f));
+      /* `attente` (lot 4) : ce n'est pas « a la main », c'est « pas encore ».
+         La passe frequente ne la publie pas : sinon le canal public recevrait
+         « finie depuis trop peu » toutes les 2 h. La raison ne change pas. */
+      mains.push(Object.assign({ raison: `finie depuis trop peu (${Math.round(depuis)} min)` }, f, { attente: true }));
       continue;
     }
     if (expo > AUTO_PLAFOND) {
@@ -1784,6 +2112,264 @@ function trieReglements(finis, expositionDe, now) {
     auto.push(f);
   }
   return { auto, mains };
+}
+
+/*
+ * ==================== L'OMBRE : CE QU'UNE PASSE DE 2 H AURAIT REGLE (lot 4) ====================
+ *
+ * 0 credit, et elle ne regle rien : elle LIT ESPN et NOTE (reglement_journal).
+ *
+ *  - Les candidates : les rencontres des tableaux ESPN (`espn.CHEMINS`)
+ *    commencees depuis moins de 36 h, pariees ou non ; le tennis seulement
+ *    avec un pari (son API core est lourde : un appel par tournoi) ; et celles
+ *    encore dans leur fenetre de suivi. Une rencontre sans tableau gratuit
+ *    (cricket hors T20 international) ne se lit pas : elle n'entre pas.
+ *  - Elle lit `espn.releve`, qui rend TOUS les etats, et non `espn.finies`,
+ *    qui ecarte ce qui n'est pas fini : une rencontre deja reglable qui
+ *    revient a un etat non fini (reprise, abandon) est la correction la plus
+ *    dangereuse, et `finies` la faisait disparaitre sans un mot.
+ *  - Une rencontre absente d'un tableau qui a REPONDU (toutes ses requetes en
+ *    200 lisible) est une disparition, donc une correction ; absente d'un
+ *    tableau en panne, rien ne se conclut (le trou se compte).
+ *  - « Reglable » = la meme decision que la vraie passe : `trieReglements`
+ *    (football a 90 minutes, fermee, delai, plafond). Quand la seconde source
+ *    existera (lot 9), l'ombre triera SANS son blocage : sinon le premier
+ *    instant reglable serait retarde par le verrou qu'on mesure.
+ */
+function lectureOmbre(m, s, estTennis) {
+  if (!s || !s.fini || !(s.score || (estTennis && s.resultat))) return null;
+  const f = { id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur, resultat: s.resultat, source: 'espn' };
+  if (s.score) f.score = s.score;
+  /* la regle de espn.finies : le football ne se regle seul que sur un temps
+     reglementaire declare (STATUS_FULL_TIME) */
+  if (m.sport === 'foot' && espn.FOOT_REGLEMENTAIRE.indexOf(s.statut) < 0)
+    f.aMain = `football fini en ${s.statut || 'statut inconnu'} (ESPN) : regler sur le score a 90 minutes`;
+  return f;
+}
+/* ---- L'OMBRE CEDE LA PLACE AU VERROU (relecture du lot 4) ----
+ * `verrouFrais` (server.js) lit les memes tableaux toutes les 15 min pour
+ * fermer les paris d'un match commence, et une requete refusee ne lui
+ * apprend rien : sous les refus, il s'ouvre. L'ombre ne doit donc pas
+ * ajouter sa rafale a un tableau qui refuse deja. Un tableau dont les refus
+ * du jour (`espn.refusDuJour`, ceux du verrou comme ceux de l'ombre) ont
+ * augmente depuis la passe d'ombre precedente n'est pas lu a celle-ci : ses
+ * rencontres comptent une lecture muette (le trou grandit, rien ne se
+ * conclut). Des que les refus cessent, la lecture reprend a la passe
+ * suivante. `REFUS_OMBRE` : les refus vus au debut de la derniere passe. */
+let REFUS_OMBRE = null;
+function tableauxSautes() {
+  const jour = new Date().toISOString().slice(0, 10);
+  const maintenant = espn.refusDuJour(jour) || {};
+  const vus = REFUS_OMBRE && REFUS_OMBRE.jour === jour ? REFUS_OMBRE.parTableau : {};
+  const sautes = new Set(), parTableau = {};
+  for (const [ch, x] of Object.entries(maintenant)) {
+    const n = Number(x && x.refus) || 0;
+    parTableau[ch] = n;
+    if (n > (Number(vus[ch]) || 0)) sautes.add(ch);
+  }
+  REFUS_OMBRE = { jour, parTableau };
+  return sautes;
+}
+/** Pour les essais : les refus du jour sont tenus pour vus (comme apres une passe). */
+function refusOmbreVus() { REFUS_OMBRE = null; tableauxSautes(); }
+
+async function ombreReglement(aRegler, expositionDe, now) {
+  const t = Number(now) || Date.now();
+  const oh = ombreH();
+  let sautes = new Set();
+  try { sautes = tableauxSautes(); } catch (e) { sautes = new Set(); }
+  const avecParis = (id) => { try { return typeof aRegler === 'function' && !!aRegler(id); } catch (e) { return false; } };
+  let suivis = new Set();
+  try { suivis = new Set(regJournal.suivisEnCours(t, { ombreH: oh })); } catch (e) { /* journal illisible : 36 h seules */ }
+  const cands = [];
+  for (const m of paris.catalogue().matchs) {
+    const l = m.source && m.source.ligue;
+    if (!l || !isFinite(m.debut) || m.debut > t) continue;
+    const estTennis = !!espn.tourDe(l);
+    if (!espn.CHEMINS[l] && !estTennis) continue;
+    if (suivis.has(m.id)) { cands.push(m); continue; }
+    if (t - m.debut > OMBRE_FENETRE_MS) continue;
+    if (estTennis && !avecParis(m.id)) continue;
+    cands.push(m);
+  }
+  /* Ce que chaque tableau a repondu, compte par la fonction de lecture
+     elle-meme : 200 lisible = repondu ; statut d'erreur, corps illisible,
+     abandon = en panne. */
+  const repond = new Map();
+  const marque = (k, bon) => { const r = repond.get(k) || { ok: 0, ko: 0 }; if (bon) r.ok++; else r.ko++; repond.set(k, r); };
+  const tableauDe = (u) => {
+    const x = /sports\/(.+?)\/scoreboard/.exec(String(u));
+    return x ? x[1] : (/sports\.core\.api\.espn\.com/.test(String(u)) ? 'tennis' : '?');
+  };
+  const prendre = async (u, op) => {
+    const k = tableauDe(u);
+    let rep;
+    try { rep = await fetch(u, op); } catch (e) { marque(k, false); throw e; }
+    if (!rep || !rep.ok) { marque(k, false); return rep; }
+    return { ok: rep.ok, status: rep.status, headers: rep.headers,
+             json: async () => { try { const j = await rep.json(); marque(k, true); return j; } catch (e) { marque(k, false); throw e; } } };
+  };
+  const equipes = cands.filter((m) => espn.CHEMINS[m.source.ligue] && !sautes.has(espn.CHEMINS[m.source.ligue]));
+  const tennis = cands.filter((m) => espn.tourDe(m.source.ligue));
+  let vus = new Map(), parTennis = new Map();
+  try { if (equipes.length) vus = await espn.releve(equipes, { prendre, maintenant: t }); }
+  catch (e) { console.log('[reglement] ombre : ESPN injoignable — ' + (e.message || e)); }
+  try { if (tennis.length) parTennis = await espn.releveTennis(tennis, { prendre }); }
+  catch (e) { console.log('[reglement] ombre : tennis ESPN injoignable — ' + (e.message || e)); }
+
+  const lectures = [], finis = [];
+  for (const m of cands) {
+    const l = m.source.ligue;
+    const estTennis = !!espn.tourDe(l);
+    const s = estTennis ? parTennis.get(m.id) : vus.get(m.id);
+    const r = repond.get(estTennis ? 'tennis' : espn.CHEMINS[l]);
+    const lec = { id: m.id, sport: m.sport, ligue: l, debut: m.debut, avecParis: avecParis(m.id),
+                  lu: !!s, repondu: !!r && r.ko === 0 && r.ok > 0, fini: false, score: null, resultat: null,
+                  aMain: false, statut: s ? (s.statut || s.etat || null) : null, reglable: false };
+    const f = lectureOmbre(m, s, estTennis);
+    if (f) { Object.assign(lec, { fini: true, score: f.score || null, resultat: f.resultat || null, aMain: !!f.aMain }); finis.push(f); }
+    lectures.push(lec);
+  }
+  let auto = new Set();
+  try {
+    const expo = (id) => { try { return typeof expositionDe === 'function' ? expositionDe(id) : 0; } catch (e) { return 0; } };
+    auto = new Set(trieReglements(finis, expo, t).auto.map((f) => f.id));
+  } catch (e) { console.log('[reglement] ombre : tri impossible — ' + (e.message || e)); }
+  for (const lec of lectures) lec.reglable = auto.has(lec.id);
+
+  let r = null;
+  try { r = regJournal.noteOmbre(lectures, t, { ombreH: oh, murMin: AUTO_DELAI_MIN + 110 }); } catch (e) { r = null; }
+  let enSuivi = 0;
+  try { enSuivi = regJournal.suivisEnCours(t, { ombreH: oh }).length; } catch (e) { enSuivi = 0; }
+  const rendu = { lues: lectures.length, trouvees: lectures.filter((x) => x.lu).length, finies: finis.length,
+                  reglables: auto.size, nouvelles: r ? r.nouvelles : 0, enSuivi,
+                  corrections: r ? r.corrections : [], closes: r ? r.closes : 0, note: !!r,
+                  sautes: [...sautes].filter((ch) => cands.some((m) => espn.CHEMINS[m.source.ligue] === ch)).sort() };
+  console.log(`[reglement] ombre : ${rendu.lues} rencontre(s) lue(s), ${rendu.trouvees} trouvee(s) sur ESPN, ` +
+              `${rendu.reglables} reglable(s) maintenant (${rendu.nouvelles} nouvelle(s)), ${enSuivi} en suivi ${oh} h, ` +
+              `${rendu.corrections.length} correction(s)` +
+              (rendu.sautes.length ? ` — ${rendu.sautes.length} tableau(x) non lu(s), refus ESPN depuis la passe d avant : ${rendu.sautes.join(', ')}` : '') +
+              (r ? '' : ' — JOURNAL NON ECRIT'));
+  for (const c of rendu.corrections) {
+    console.log(`[reglement] CORRECTION ${c.id} : ${c.cause} (${c.avant.etat || '?'} ${c.avant.score || ''}${c.avant.aMain ? ' a la main' : ''}` +
+                ` -> ${c.apres.etat} ${c.apres.score || ''}${c.apres.aMain ? ' a la main' : ''})`);
+  }
+  return rendu;
+}
+
+/*
+ * Le bilan du reglement, portes calculees (EXPLOITATION 8.10) : pour
+ * /paris/import, la carte « Settlement » et `--reglement`. Rien n'y decide :
+ * chaque bascule reste une variable.
+ */
+function bilanReglement(now) {
+  const t = Number(now) || Date.now();
+  const r = regJournal.resume(t, { ombreH: ombreH(), cadenceH: scoresEspnH(), fenetreJours: SCORES_COUPE_JOURS,
+                                    murMin: AUTO_DELAI_MIN + 110 });
+  const out = {
+    espn: { mode: modeEspn(), invalide: modeEspnInvalide(), heures: scoresEspnH(), fenetreJours: scoresEspnFenJ(), ombreH: ombreH() },
+    coupe: { active: scoresCoupe(), n: scoresCoupeN(), jours: SCORES_COUPE_JOURS },
+    sauteEnCours: scoresSauteEnCours(),
+    journal: r,
+  };
+  if (!r || !r.lisible) return out;
+  /* PORTE A. Une correction suffit pour conclure NON, a tout echantillon.
+     `raisons` sont des CODES (la carte les dit en anglais, la ligne de
+     commande en francais) : jours, echantillon, correction, gain. Elle ne
+     juge que les rencontres lues au mur COURANT, et ses jours partent de
+     son dernier changement (`o.jours`) : relever PARIS_AUTO_DELAI_MIN apres
+     une correction ouvre une nouvelle mesure. */
+  const o = r.ombre, g = o.gain.tous;
+  const raisons = [];
+  if (o.avecCorrection > PORTE_A.correctionsMax) raisons.push('correction');
+  if (o.jours < PORTE_A.joursMin) raisons.push('jours');
+  if (o.suiviesSansTrou < PORTE_A.suiviesMin) raisons.push('echantillon');
+  let passe = null;
+  if (o.avecCorrection > PORTE_A.correctionsMax) passe = false;
+  else if (!raisons.length) {
+    passe = g.medianeBasH !== null && g.medianeBasH >= PORTE_A.gainMinH;
+    if (!passe) raisons.push('gain');
+  }
+  out.porteA = Object.assign({}, PORTE_A, { jours: o.jours, murMin: o.murMin, autreMur: o.autreMur, suivies: o.suiviesSansTrou, corrections: o.avecCorrection,
+    gainMedianBasH: g.medianeBasH, gainN: g.n, passe, raisons });
+  /* PORTE B, cle par cle. Une cle cochee n'est jamais jugee : elle n'est
+     jamais coupee. `motif` : cochee, appariee, inutiles, gratuit,
+     indecidable, echantillon ; `verdict` : garder, couper, rien, ou null.
+     « Rien a economiser » exige des couts LUS a 0 (x-requests-last) sur au
+     moins N reponses, et aucun cout inconnu : six 422 au cout indecidable
+     etaient declarees « x-requests-last a 0 » (relecture du lot 4). Un cout
+     inconnu se dit « indecidable », et l'on attend des appels decidables
+     (EXPLOITATION 8.10). Des inutiles prouves (cout lu > 0) concluent, eux,
+     quoi qu'il en soit des autres : un cout inconnu ne peut qu'ajouter. */
+  out.porteB = {};
+  for (const [k, b] of Object.entries(r.scores.parClef || {})) {
+    const cochee = !SCORES_NON_COCHEES.has(k);
+    let verdict = null, motif = 'echantillon';
+    if (cochee) motif = 'cochee';
+    else if (b.appariees > 0) { verdict = 'garder'; motif = 'appariee'; }
+    else if (b.inutiles >= scoresCoupeN()) { motif = 'inutiles'; verdict = r.jours >= PORTE_B.joursMin ? 'couper' : null; }
+    else if (b.indecidables + b.inconnus > 0) motif = 'indecidable';
+    else if (b.payes === 0 && b.gratuits >= scoresCoupeN()) { motif = 'gratuit'; verdict = r.jours >= PORTE_B.joursMin ? 'rien' : null; }
+    out.porteB[k] = { cochee, verdict, motif, inutiles: b.inutiles, n: scoresCoupeN(), jours: r.jours, joursMin: PORTE_B.joursMin,
+                      coupee: !!clefCoupee(k, t) };
+  }
+  /* L'economie sure (PARIS_SCORES_SAUTE_ENCOURS) : au plus tot 14 jours, au
+     moins 10 appels precoces payes sur 30 jours. Une DECISION du lot 4, pas
+     une mesure : dix appels, c'est 20 credits sur 30 jours (0,1 % du forfait
+     de 20 000) — en dessous, l'economie ne vaut pas un changement du chemin
+     payant ; quatorze jours, la duree de la porte A. Le compte (`precoces`)
+     dira ce qu'elle vaut. */
+  let precoces = 0, creditsPrecoces = 0;
+  for (const b of Object.values(r.scores.parClef || {})) { precoces += b.precoces; creditsPrecoces += b.creditsPrecoces || 0; }
+  out.porteSaute = { precoces, credits: creditsPrecoces, min: 10, joursMin: 14,
+                     passe: r.jours < 14 ? null : precoces >= 10 };
+  return out;
+}
+
+/** Le bilan en lignes de texte (la commande --reglement, 0 credit). */
+function lignesReglement(b) {
+  const L = [];
+  const j = b.journal || {};
+  L.push(`[reglement] passe ESPN frequente : ${b.espn.mode}${b.espn.invalide ? ` (PARIS_SCORES_ESPN « ${b.espn.invalide} » IGNORE)` : ''}, toutes les ${b.espn.heures} h, suivi ${b.espn.ombreH} h`);
+  if (!j.lisible) { L.push(`[reglement] journal ${j.fichier || ''} illisible ou absent`); return L; }
+  L.push(`[reglement] journal depuis ${j.depuis || 'jamais'} (${j.jours} jour(s)), ${j.passes.n} passe(s) reelle(s) notee(s), ` +
+         `${j.regles.n} reglement(s) note(s) : ${j.regles.auto.espn} auto par ESPN, ${j.regles.auto.scores} auto par /scores paye, ${j.regles.main} a la main`);
+  const o = j.ombre;
+  L.push(`[reglement] ombre : ${o.suivies} rencontre(s) suivie(s) jusqu au bout (${o.suiviesSansTrou} sans trou), ${o.enCours} en cours, ${o.abandonnees} abandonnee(s), ${o.avecCorrection} corrigee(s)` +
+         (o.murMin !== null && o.murMin !== undefined ? `, mur ${o.murMin} min depuis ${o.jours} jour(s)` : '') +
+         (o.autreMur ? ` — ${o.autreMur} lue(s) a un autre mur, hors porte A` : ''));
+  for (const c of o.corrections) L.push(`  correction ${c.id} (${c.ligue}) le ${new Date(c.t).toISOString()} : ${c.cause}, ${c.avant.score || c.avant.etat} -> ${c.apres.score || c.apres.etat}`);
+  const g = o.gain.tous;
+  L.push(`[reglement] gain d une passe de ${b.espn.heures} h : ${g.n} rencontre(s) jugee(s), ${g.enAttente} sans passe reelle apres` +
+         (g.n ? ` — mediane basse ${g.medianeBasH} h (p90 ${g.p90BasH} h), haute ${g.medianeHautH} h (p90 ${g.p90HautH} h)` : ''));
+  for (const [s, x] of Object.entries(o.gain.parSport)) if (x.n) L.push(`  ${s} : ${x.n} rencontre(s), mediane basse ${x.medianeBasH} h, p90 ${x.p90BasH} h`);
+  L.push(`[reglement] controle (rencontres pariees) : auto ${o.controle.auto.n}${o.controle.auto.n ? `, mediane ${o.controle.auto.medianeH} h` : ''} ; main ${o.controle.main.n}${o.controle.main.n ? `, mediane ${o.controle.main.medianeH} h` : ''}`);
+  if (b.porteA) {
+    const pa = b.porteA;
+    const dits = { correction: `${pa.corrections} rencontre(s) corrigee(s) apres leur premiere lecture reglable`,
+                   jours: `${pa.jours} jour(s) d ombre sur ${pa.joursMin}`,
+                   echantillon: `${pa.suivies} rencontre(s) suivie(s) sans trou sur ${pa.suiviesMin}`,
+                   gain: `gain median bas ${pa.gainMedianBasH === null ? '?' : pa.gainMedianBasH} h sous ${pa.gainMinH} h` };
+    L.push(`[reglement] PORTE A : ${pa.passe === true ? 'PASSEE' : pa.passe === false ? 'FERMEE' : 'pas encore jugeable'}` +
+           (pa.raisons.length ? ' — ' + pa.raisons.map((x) => dits[x] || x).join(' ; ') : ''));
+  }
+  L.push(`[reglement] /scores payes, ${j.scores.fenetreJours} jours glissants (coupe ${b.coupe.active ? 'ARMEE' : 'eteinte'}, ${b.coupe.n} inutiles) :`);
+  const pc = j.scores.parClef || {};
+  if (!Object.keys(pc).length) L.push('  aucun');
+  for (const [k, x] of Object.entries(pc).sort()) {
+    const p = (b.porteB || {})[k] || {};
+    L.push(`  ${k}${p.cochee === false ? ' (non cochee)' : ''} : ${x.appels} appel(s), ${x.credits} credit(s), ${x.appariees} appariee(s), ` +
+           `${(j.scores.regleesParClef || {})[k] || 0} reglee(s) par ce chemin, ${x.inutiles} inutile(s), ` +
+           `${x.precoces} precoce(s), ${x.indecidables + x.inconnus} au cout inconnu, ${x.refuses} refuse(s)` +
+           (p.verdict ? ` — ${({ garder: 'A GARDER', couper: 'A COUPER', rien: 'RIEN A ECONOMISER' })[p.verdict]}` : '') +
+           (p.coupee ? ' — COUPEE' : '') + (p.motif ? ` (${({ cochee: 'cochee : jamais coupee', appariee: 'au moins une appariee',
+             inutiles: `${p.inutiles} inutile(s) sur ${p.n}` + (p.verdict ? '' : `, ${p.jours} jour(s) de compte sur ${p.joursMin}`),
+             gratuit: 'x-requests-last a 0', indecidable: 'cout indecidable', echantillon: `${p.inutiles} inutile(s) sur ${p.n}` })[p.motif] || p.motif})` : ''));
+  }
+  const pm = j.scores.parMois || {};
+  for (const [k, x] of Object.entries(pm).sort()) L.push(`  ${k.replace('|', ' ')} : ${x.appels} appel(s), ${x.credits} credit(s), ${x.appariees} appariee(s), ${x.inutiles} inutile(s)`);
+  if (b.porteSaute) L.push(`[reglement] PARIS_SCORES_SAUTE_ENCOURS ${b.sauteEnCours ? 'ARME' : 'eteint'} : ${b.porteSaute.precoces} appel(s) precoce(s), ${b.porteSaute.credits} credit(s) sur ${j.scores.fenetreJours} jours`);
+  return L;
 }
 
 
@@ -1965,12 +2551,26 @@ function delaiAvantEtalonnage(maintenant) {
   return Math.max(H, SEMAINE - ((maintenant || Date.now()) - t));
 }
 
-function planifie(signale, aRegler) {
+/* `expositionDe` (lot 4, facultatif) : l'engagement d'une rencontre, pour que
+   l'ombre trie avec le meme plafond que la vraie passe. */
+function planifie(signale, aRegler, expositionDe) {
   if (!CLE) {
     console.log('[odds] ODDS_API_KEY absente : le calendrier reste celui du depot');
     return null;
   }
   const sur = (quoi, f) => f().catch((e) => console.error('[odds] ' + quoi + ' : ' + (e.message || e)));
+  /* ---- UNE SEULE RELEVE DE SCORES A LA FOIS (lot 4, 10/10/2026) ----
+   * La quotidienne et la frequente (2 h) passent par cette file, comme les
+   * prix par `filePrix` : deux passes en parallele liraient les memes
+   * rencontres avant que l'une les ait reglees, et la seconde ferait refuser
+   * « already settled » sur le canal public. La file avance meme si une
+   * passe echoue. */
+  let fileScores = Promise.resolve();
+  const enFile = (f) => {
+    const p = fileScores.then(f, f);
+    fileScores = p.catch(() => {});
+    return p;
+  };
 
   const rafraichit = () => sur('matchs', async () => {
     await importeMatchs();
@@ -1981,14 +2581,33 @@ function planifie(signale, aRegler) {
     console.log('[odds] calendrier recharge en memoire');
   });
 
-  const releve = () => sur('scores', async () => {
+  const releve = () => enFile(() => sur('scores', async () => {
     /* La ligne `[obs]` du jour, par sport (lot 3) : ce que le carnet
        d'observation mesure, avant les scores — une releve de scores qui leve
        ne doit pas la taire. Jamais bloquante. */
     try { for (const x of prixObserve.lignes()) console.log(x); } catch (e) { console.log('[obs] bilan illisible : ' + (e.message || e)); }
+    /* L'heure de cette passe REELLE, sur le volume : le gain de l'ombre se
+       mesure contre elle (lot 4). Jamais bloquant. */
+    try { regJournal.notePasse(Date.now()); } catch (e) { /* jamais bloquant */ }
     const finis = await importeScores(aRegler);
-    if (finis.length && typeof signale === 'function') signale(finis);
-  });
+    if (finis.length && typeof signale === 'function') signale(finis, { passe: 'quotidienne' });
+  }));
+
+  /* ---- LA PASSE ESPN FREQUENTE (lot 4, 10/10/2026) ----
+   * Toutes les PARIS_SCORES_ESPN_H heures (2), 0 credit. « observe » (defaut) :
+   * l'ombre SEULE — rien n'est remis a `signale`, donc rien n'est regle ni
+   * publie. « regle » (bascule A, porte en EXPLOITATION 8.10) : en plus, ce
+   * qu'ESPN tranche sur 3 jours est remis a `signale` ({ passe: 'frequente' }),
+   * sans jamais payer de /scores. « 0 » : rien. Le mode se relit a chaque
+   * passe. */
+  const frequente = () => enFile(() => sur('scores frequents', async () => {
+    const mode = modeEspn();
+    if (mode === '0') return;
+    await ombreReglement(aRegler, expositionDe, Date.now());
+    if (mode !== 'regle') return;
+    const finis = await importeScores(aRegler, { payant: false, fenetreEspnMs: scoresEspnFenJ() * 86400000 });
+    if (finis.length && typeof signale === 'function') signale(finis, { passe: 'frequente' });
+  }));
 
   /* On laisse le serveur finir de demarrer avant de sortir sur le reseau :
      un import qui echoue ne doit pas se confondre avec un demarrage rate. */
@@ -2065,6 +2684,10 @@ function planifie(signale, aRegler) {
     setTimeout(() => minuteries.push(setInterval(avantMatch, 10 * 60000)), 5 * 60000),
     setTimeout(releve, 5 * 60000),
     setInterval(releve, 24 * H),
+    /* La passe ESPN frequente (lot 4) : 20 min apres le demarrage — decalee
+       des 5 min de la quotidienne —, puis toutes les PARIS_SCORES_ESPN_H
+       heures. Elle passe dans `fileScores` : jamais en meme temps qu'elle. */
+    setTimeout(() => { frequente(); minuteries.push(setInterval(frequente, scoresEspnH() * H)); }, 20 * 60000),
     /* Le premier etalonnage attend ce qui reste des sept jours depuis le
        dernier (voir `delaiAvantEtalonnage`), et c'est LUI qui pose la
        cadence hebdomadaire : un intervalle compte depuis le demarrage aurait
@@ -2076,13 +2699,24 @@ function planifie(signale, aRegler) {
     }, premier),
   ];
   console.log(`[odds] alimentation automatique : rencontres toutes les 12 h (0 credit), ` +
-              `scores une fois par jour, etalonnage une fois par semaine ` +
+              `scores payes une fois par jour et a chaque demarrage, etalonnage une fois par semaine ` +
               `(le prochain dans ${Math.round(premier / H)} h). ` +
               `${etatQuota().reste} credit(s), ` +
               `part du jour ${partDuJour(etatQuota().reste)} jusqu au ${fin()}`);
+  /* La cadence et le mode REELS du reglement (lot 4) : la seule ligne qui dit,
+     apres un changement de variable, si la passe de 2 h regle ou observe. */
+  {
+    const mode = modeEspn(), inv = modeEspnInvalide();
+    console.log('[reglement] scores : ' + (mode === '0' ? 'passe ESPN frequente COUPEE (PARIS_SCORES_ESPN=0)'
+      : `ESPN toutes les ${scoresEspnH()} h (${mode === 'regle' ? 'REGLE, 0 credit, fenetre ' + scoresEspnFenJ() + ' j' : 'observe : ombre seule, rien n est regle ni publie'})`)
+      + (inv ? ` — PARIS_SCORES_ESPN « ${inv} » IGNORE` : '')
+      + ', repli payant /scores une fois par jour et a chaque demarrage'
+      + `, coupe des cles jamais appariees ${scoresCoupe() ? 'ARMEE (' + scoresCoupeN() + ' appels inutiles)' : 'eteinte'}`
+      + `, rencontres en cours ${scoresSauteEnCours() ? 'SAUTEES' : 'payees comme avant'}`);
+  }
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, etalonne, prix, avantMatch, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, frequente, etalonne, prix, avantMatch, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
@@ -2096,9 +2730,13 @@ if (require.main === module) {
                      puis le calendrier qui en descend (0 credit). */
                   '--prix': async () => { await rafraichitPrix(clefsALaMain(), 'a la main'); await importeMatchs(); },
                   '--sports': () => listeSports(a.find((x) => !x.startsWith('--'))),
+                  /* Le journal du reglement (lot 4) : l'ombre, le gain, les
+                     /scores payes, les portes A et B. 0 credit, aucun appel
+                     reseau : il lit DATA_DIR/reglement_journal.json. */
+                  '--reglement': async () => { for (const x of lignesReglement(bilanReglement())) console.log(x); },
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
-    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix');
+    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix | --reglement');
     process.exit(2);
   }
   suite().then(() => process.exit(0))
@@ -2115,4 +2753,7 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    partDuJour, joursRestants, autorise, identifiant, etatQuota,
                    /* le socle (10/10/2026) : le seul chemin d'un credit, ses classes, son delai */
                    appel, RESERVES_CLASSE, DELAI_APPEL_MS, projectionMois, PROJECTION_SEUIL, PROJECTION_JOURS_MIN,
-                   etatClasses, codeDuCorps };
+                   etatClasses, codeDuCorps,
+                   /* le reglement (lot 4, 10/10/2026) : l'ombre, le compte, les portes */
+                   ombreReglement, bilanReglement, lignesReglement, clefCoupee, modeEspn, scoresEspnH, scoresEspnFenJ, ombreH,
+                   SCORES_NON_COCHEES, PORTE_A, PORTE_B, OMBRE_FENETRE_MS, attenteCoupeMs, COUPE_ATTENTE_H, refusOmbreVus };

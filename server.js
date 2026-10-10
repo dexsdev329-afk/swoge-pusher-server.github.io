@@ -2326,6 +2326,12 @@ const alerteSolde = require('./alerte_solde').configure({
   notifyPrive: (t) => tg.notifyPrive(t),
   dossier: cfg.DATA_DIR,
 });
+/* Le journal du reglement (lot 4, 10/10/2026) : l'heure de chaque vrai
+   reglement (auto ou main), les annonces « a la main » des dernieres 24 h,
+   l'ombre ESPN et les /scores payes — sur le volume, a cote de l'etat des
+   alertes. Il ne decide rien ; chaque note est isolee (EXPLOITATION 8.10). */
+const reglementJournal = require('./reglement_journal');
+reglementJournal.charge(cfg.DATA_DIR);
 studioChat.COMPTEUR.note = noteCompteur;
 /* Les dependances des images : la page (route /studio/media) et l'API des agents. */
 const depsMedia = () => ({
@@ -6753,6 +6759,17 @@ const server = http.createServer(async (req, res) => {
         : game.rembourseMatch(q.match);
       persist();
       if (path === '/paris/regle') notifyBetsSettled(r);
+      /* L'heure du reglement A LA MAIN, pour mesurer aussi ce delai-la (lot
+         4). Dans son propre try : le paiement est fait, une note ratee ne doit
+         pas rendre une erreur au proprietaire. */
+      if (path === '/paris/regle') {
+        try {
+          const mr = paris.match(q.match);
+          reglementJournal.noteRegle(q.match, Date.now(), q.score || q.resultat, 'main',
+            { source: 'main', ligue: mr && mr.source ? mr.source.ligue : null });
+        }
+        catch (e) { console.log('[reglement] journal : reglement non note —', e.message); }
+      }
       /* `avant` porte le RESULTAT CHOISI, pas un solde : c'est la seule chose
          qui puisse etre fausse dans ce geste, et la seule qu'on voudra relire
          quand un joueur contestera. */
@@ -10848,7 +10865,11 @@ server.listen(cfg.PORT, () => {
      jouer : sinon il n'est atteignable qu'apres une vraie minuterie et un
      vrai appel reseau, c'est-a-dire jamais en test. C'est le SEUL chemin par
      lequel le serveur paie tout seul — il doit pouvoir etre exerce. */
-  const reglementAuto = (finis) => {
+  /* `opts.passe` (lot 4, 10/10/2026) : 'quotidienne' (la releve payante, a
+     chaque demarrage et toutes les 24 h) ou 'frequente' (la passe ESPN de
+     2 h, seulement si PARIS_SCORES_ESPN=regle). Sans opts : comme avant. */
+  const reglementAuto = (finis, opts) => {
+    const frequente = !!(opts && opts.passe === 'frequente');
     /* Le tri est fait par le module d'import, qui ne connait pas le moteur —
        il ne peut donc pas payer tout seul. Le paiement se fait ICI, par le
        meme appel que la route d'admin. */
@@ -10870,6 +10891,15 @@ server.listen(cfg.PORT, () => {
          * en reglement manuel, en silence, dans la liste des rates. */
         const r = game.regleMatch(f.id, f.score || f.resultat);
         faits.push({ f, r });
+        /* L'heure du vrai reglement, pour l'ombre (lot 4) : dans SON try,
+           APRES faits.push — un volume plein ne doit jamais envoyer une
+           rencontre payee dans « rates » (un ⚠️ trompeur) ni sauter persist(). */
+        try {
+          const mr = paris.match(f.id);
+          reglementJournal.noteRegle(f.id, Date.now(), f.score || f.resultat, 'auto',
+            { source: f.source === 'espn' ? 'espn' : 'scores', ligue: mr && mr.source ? mr.source.ligue : null });
+        }
+        catch (e) { console.log('[reglement] journal : reglement non note —', e.message); }
         notifyBetsSettled(r);
         console.log('[paris] auto', JSON.stringify({ match: f.id, score: f.score, ...r }));
       } catch (e) {
@@ -10888,8 +10918,27 @@ server.listen(cfg.PORT, () => {
              ` · ${r.gagnants} payé(s), ${fmtExact(r.paye)} $SWOGE`);
     }
     /* Ce qui n'a PAS ete regle doit ressortir aussi visiblement que le
-       reste, avec sa raison : sinon on croit que tout est fait. */
+       reste, avec sa raison : sinon on croit que tout est fait.
+       ---- LE CANAL PUBLIC NE SE REPETE PAS TOUTES LES 2 H (lot 4) ----
+       TG_CHAT_ID est PUBLIC. En passe frequente, on ne publie que les
+       reglements faits et les rencontres « a la main » NOUVELLES : jamais
+       « finie depuis trop peu » (`attente` : elle se reglera seule), et
+       jamais une rencontre deja annoncee dans les 24 h (AET/PEN, fermee…,
+       l'heure de l'annonce est gardee sur le volume). La quotidienne publie
+       tout, comme avant, et note ses annonces. paris_auto.test.js compte les
+       ENVOIS (le carnet de telegram.js tronque le texte a 90 caracteres). */
+    const tAnnonce = Date.now();
+    const annoncees = [];
+    let publiees = 0;
     for (const f of mains) {
+      if (frequente) {
+        if (f.attente) continue;
+        let deja = false;
+        try { deja = reglementJournal.annonceRecente(f.id, tAnnonce); } catch (e) { deja = false; }
+        if (deja) continue;
+      }
+      if (!f.attente) annoncees.push(f.id);
+      publiees++;
       /* Un score marque « a la main » peut compter la prolongation : on ne
          l'annonce PAS comme un resultat a payer (08/10/2026). Et pour une
          rencontre fermee par l'import, combien de tickets ont ete poses
@@ -10899,19 +10948,34 @@ server.listen(cfg.PORT, () => {
         && (p.jambes || [{ match: p.match }]).some((j) => j.match === f.id)).length : 0;
       l.push(`⏸️ ${escHtml(f.domicile)} <b>${escHtml(f.score)}</b> ${escHtml(f.exterieur)}` +
              ` · <code>${escHtml(f.id)}</code>` +
-             (f.aMain ? ` → <b>score à 90' à saisir</b>` : ` → <b>${escHtml(f.resultat)}</b>`) +
+             (f.aMain ? (f.score ? ` → <b>score à 90' à saisir</b>` : ` → <b>résultat à saisir</b>`) : ` → <b>${escHtml(f.resultat)}</b>`) +
              ` · <i>${escHtml(f.raison)}</i>` +
              (tard ? ` · ⚠️ ${tard} ticket(s) posé(s) après l'heure réelle` : ''));
     }
+    /* Les echecs aussi (relecture du lot 4) : un echec qui dure (« already
+       settled », une lettre refusee) serait sinon republie toutes les 2 h.
+       Meme regle que les rencontres a la main : la passe frequente ne redit
+       pas un meme echec (rencontre et message) annonce dans les 24 h ; la
+       quotidienne le redit, comme avant, et le note. */
     for (const { f, erreur } of rates) {
+      const cle = 'echec|' + f.id + '|' + String(erreur).slice(0, 80);
+      if (frequente) {
+        let deja = false;
+        try { deja = reglementJournal.annonceRecente(cle, tAnnonce); } catch (e) { deja = false; }
+        if (deja) continue;
+      }
+      annoncees.push(cle);
       l.push(`⚠️ <code>${escHtml(f.id)}</code> · ${escHtml(erreur)}`);
     }
     if (!l.length) return;
+    /* L'heure de chaque annonce « a la main », sur le volume (lot 4). Jamais
+       bloquant : au pire, la passe frequente repostera. */
+    try { reglementJournal.noteAnnonces(annoncees, tAnnonce); } catch (e) { /* jamais bloquant */ }
 
     const tete = faits.length
       ? `⚽ <b>${faits.length} rencontre(s) réglée(s) automatiquement</b>`
-      : `⚽ <b>${mains.length} rencontre(s) à régler à la main</b>`;
-    const pied = mains.length
+      : `⚽ <b>${publiees} rencontre(s) à régler à la main</b>`;
+    const pied = publiees
       ? `\n\nPour celles en attente : <code>/paris/regle?match=…&amp;resultat=…</code>`
       : '';
     tg.notify(tete + '\n\n' + l.slice(0, 14).join('\n') +
@@ -10929,8 +10993,11 @@ server.listen(cfg.PORT, () => {
    * ici », qu'il n'y ait jamais eu de pari ou qu'ils soient tous tranches.
    * C'est exactement la question que l'import a besoin de poser, et le
    * module ne connait pas le moteur — d'ou ce rappel. */
+  /* Le troisieme rappel (lot 4) : l'engagement lui-meme, pour que l'ombre
+     ESPN trie avec le meme plafond que la vraie passe. */
   calendrierAuto = parisImport.planifie(reglementAuto,
-                                        (id) => game.engagementMatch(id) > 0);
+                                        (id) => game.engagementMatch(id) > 0,
+                                        (id) => game.engagementMatch(id));
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */

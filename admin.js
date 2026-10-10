@@ -2067,6 +2067,7 @@ function impRend(e){
      'Tennis keys are per tournament — they disappear when the tournament ends.</span></div>';
   l+=jpRend(e.journalPrix);
   l+=obsRend(e.observation, e.eloEngagement);
+  l+=reglRend(e.reglement);
   l+='<div id="misesBody"></div>';
   $("#impBody").innerHTML='<div class="impg">'+cartes+'</div>'+l;
 }
@@ -2105,6 +2106,49 @@ function obsRend(o, pe){
     s+=' &middot; '+g+((P.raisons||[]).length?' &mdash; '+P.raisons.map(esc).join('; '):'');
   });
   return s+'<br><span class="muted2" style="padding:0;text-align:left;display:inline">Gate P1&ndash;P5 written in advance (EXPLOITATION 8.8nonies). Tennis cannot be switched: no real-time lock.</span></div>';
+}
+/* ---- LE REGLEMENT : L'OMBRE ESPN ET LES /scores PAYES (lot 4, 10/10/2026) ----
+ * Ce que /paris/import rend dans « reglement » (paris_import.bilanReglement).
+ * La carte MONTRE, elle ne decide rien : chaque bascule reste une variable.
+ * Le nombre d'abord : sous 300 rencontres suivies, ni correction ni gain ne
+ * concluent (« not enough games yet (n/300) »), sauf une correction, qui ferme
+ * la porte A a tout echantillon. Des comptes : ent(), jamais fmt(). Anglais. */
+var REGL_B={garder:'keep',couper:'cut',rien:'nothing to save'};
+function reglRend(r){
+  if(!r) return '';
+  if(r.erreur) return '<div class="impl impwarn">Settlement: '+esc(r.erreur)+'</div>';
+  var e=r.espn||{}, j=r.journal||{}, s='';
+  var mode=e.mode==='regle'?'<b class="impok">settling</b> (0 credits, '+ent(e.fenetreJours)+'-day window)'
+          :e.mode==='0'?'<b class="impwarn">OFF</b> (PARIS_SCORES_ESPN=0)'
+          :'<b>shadow only</b> &mdash; nothing is settled or posted';
+  s+='<div class="impl"><b>Settlement</b> &mdash; ESPN every '+ent(e.heures)+' h: '+mode+
+     (e.invalide?' <span class="impwarn">(PARIS_SCORES_ESPN &ldquo;'+esc(e.invalide)+'&rdquo; ignored)</span>':'');
+  if(!j.lisible) return s+'<br><span class="impwarn">Settlement journal unreadable &mdash; nothing is recorded.</span></div>';
+  var o=j.ombre||{}, pa=r.porteA||{}, g=(o.gain||{}).tous||{}, min=pa.suiviesMin||300;
+  s+='<br>Shadow: <b>'+ent(o.suiviesSansTrou)+'</b> game(s) followed '+ent(e.ombreH)+' h without a gap, '+ent(o.enCours)+' in progress';
+  if(o.avecCorrection) s+=' &middot; <b class="impbad">'+ent(o.avecCorrection)+' game(s) corrected after a settleable read</b>';
+  if((o.suiviesSansTrou||0)<min) s+=' &mdash; not enough games yet ('+ent(o.suiviesSansTrou)+'/'+ent(min)+')';
+  else s+=' &middot; median gain '+(g.medianeBasH==null?'&mdash;':esc(g.medianeBasH)+' h')+' over '+ent(g.n)+' game(s) (p90 '+(g.p90BasH==null?'&mdash;':esc(g.p90BasH)+' h')+')';
+  var dits={correction:'a correction was seen',jours:ent(pa.jours)+' of '+ent(pa.joursMin)+' days',
+            echantillon:ent(pa.suivies)+' of '+ent(min)+' games',gain:'median gain under '+ent(pa.gainMinH)+' h'};
+  var ga=pa.passe===true?'<b class="impok">gate A passed</b>':pa.passe===false?'<b class="impwarn">gate A closed</b>':'<span class="bmut">gate A not reached</span>';
+  s+=' &middot; '+ga+((pa.raisons||[]).length?' &mdash; '+pa.raisons.map(function(x){ return esc(dits[x]||x); }).join('; '):'');
+  var pc=(j.scores||{}).parClef||{}, ks=Object.keys(pc).sort(), pb=r.porteB||{}, c=r.coupe||{};
+  s+='<br>Paid /scores, last '+ent((j.scores||{}).fenetreJours||30)+' days (cut '+(c.active?'<b class="impwarn">ARMED</b>':'off')+'):';
+  if(!ks.length) s+=' none';
+  ks.forEach(function(k){
+    var x=pc[k]||{}, p=pb[k]||{};
+    s+='<br><code>'+esc(k)+'</code>'+(p.cochee===false?' (no scores on the provider page)':'')+': paid '+ent(x.credits)+' credit(s) on '+ent(x.appels)+' call(s), matched '+ent(x.appariees)+
+       ', settled this way '+ent(((j.scores||{}).regleesParClef||{})[k])+
+       ', useless '+ent(x.inutiles)+', early '+ent(x.precoces)+((x.indecidables||0)+(x.inconnus||0)?', unknown cost '+ent((x.indecidables||0)+(x.inconnus||0)):'')+
+       (x.refuses?', refused '+ent(x.refuses):'');
+    if(p.coupee) s+=' &middot; <b class="impwarn">cut</b>';
+    else if(p.verdict) s+=' &middot; gate B: <b>'+esc(REGL_B[p.verdict]||p.verdict)+'</b>';
+    else if(p.cochee===false) s+=' &middot; <span class="bmut">gate B not reached ('+ent(p.inutiles)+'/'+ent(p.n)+' useless, '+ent(p.jours)+'/'+ent(p.joursMin)+' days)</span>';
+  });
+  var ps=r.porteSaute||{};
+  s+='<br>In-progress games '+(r.sauteEnCours?'<b class="impwarn">skipped</b>':'still paid')+': '+ent(ps.precoces)+' early call(s), '+ent(ps.credits)+' credit(s)';
+  return s+'<br><span class="muted2" style="padding:0;text-align:left;display:inline">Gates written in advance (EXPLOITATION 8.10). Nothing here changes what is settled.</span></div>';
 }
 /* ---- LA MISE PAR SPORT (lot 3, 10/10/2026) ----
  * GET /paris/mises (30 jours), par jeton puis par sport : ce que chaque sport

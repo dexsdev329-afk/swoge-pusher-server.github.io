@@ -35,6 +35,15 @@ const WebSocket = require('ws');
 const { ethers } = require('ethers');
 const paris = require('./paris');
 const { Game } = require('./game');
+/* Les rappels que le serveur passe a `planifie` (relecture du lot 4) : le
+   troisieme est l'ENGAGEMENT lui-meme, pour que l'ombre trie avec le meme
+   plafond que la vraie passe. Enregistres avant que le serveur ne demarre. */
+const ARGS_PLANIFIE = [];
+{
+  const pi = require('./paris_import');
+  const vrai = pi.planifie;
+  pi.planifie = (...x) => { ARGS_PLANIFIE.push(x); return vrai(...x); };
+}
 require('./server');
 
 let n = 0;
@@ -103,6 +112,14 @@ function calendrierDEssai() {
          dise, et l essai aurait accuse la mauvaise cause. */
       { id: 'auto-marche', sport: 'foot', competition: 'Essai', pays: 'X',
         domicile: 'Marche-A', exterieur: 'Marche-B', debut: DEMAIN,
+        cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
+      /* Lot 4 (10/10/2026) : la sienne aussi, pour le journal du reglement
+         en panne — un volume plein ne doit jamais faire perdre un paiement. */
+      { id: 'auto-journal', sport: 'foot', competition: 'Essai', pays: 'X',
+        domicile: 'Journal-A', exterieur: 'Journal-B', debut: DEMAIN,
+        cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
+      { id: 'auto-route', sport: 'foot', competition: 'Essai', pays: 'X',
+        domicile: 'Route-A', exterieur: 'Route-B', debut: DEMAIN,
         cotes: { 1: 2.10, N: 3.30, 2: 3.40 } },
     ],
   };
@@ -254,6 +271,134 @@ function calendrierDEssai() {
     eq(j.score, '2-1', 'la route garde le score qu on lui donne');
     await dors(300);
     ok(await solde(a) > avant3, 'le paiement a la main arrive bien');
+  }
+
+  // ---- 3 bis. LE CANAL PUBLIC EN PASSE FREQUENTE, ET LE JOURNAL (lot 4, 10/10/2026)
+  /*
+   * TG_CHAT_ID est PUBLIC. La passe ESPN de 2 h (PARIS_SCORES_ESPN=regle)
+   * repasse toutes les rencontres pariees non reglees : sans filtre, elle
+   * publierait « finie depuis trop peu » et chaque AET toutes les 2 h. On
+   * COMPTE les envois (envoyes + refuses du carnet) : chercher « trop peu »
+   * dans le carnet ne prouverait rien, il tronque le texte a 90 caracteres
+   * (telegram.js). Ici TG n'est pas configure : chaque notify est un refus
+   * compte, donc un envoi tente.
+   */
+  {
+    const tgm = require('./telegram');
+    const rj = require('./reglement_journal');
+    const envois = () => { const j = tgm.journal(); return j.envoyes + j.refuses; };
+    /* « trop peu » : la rencontre d'auto-petit, a son heure de demain */
+    let e0 = envois();
+    regle([fini(petit, petit.issues[0])], { passe: 'frequente' });
+    await dors(150);
+    eq(envois(), e0, 'passe frequente, rencontre finie depuis trop peu : AUCUN envoi sur le canal public');
+    e0 = envois();
+    regle([fini(petit, petit.issues[0])]);
+    await dors(150);
+    eq(envois(), e0 + 1, 'la meme sans passe (quotidienne) : la ligne ⏸️ part comme avant');
+    e0 = envois();
+    regle([fini(petit, petit.issues[0])], { passe: 'quotidienne' });
+    await dors(150);
+    eq(envois(), e0 + 1, 'et avec passe quotidienne aussi');
+    /* AET : a la main, annoncee UNE fois en 24 h par la passe frequente */
+    const aet = Object.assign(fini(petit, 'N', '2-2'), { aMain: 'football fini en STATUS_FINAL_AET (ESPN) : regler sur le score a 90 minutes' });
+    e0 = envois();
+    regle([aet], { passe: 'frequente' });
+    await dors(150);
+    eq(envois(), e0 + 1, 'passe frequente, AET jamais annoncee : un message');
+    regle([aet], { passe: 'frequente' });
+    await dors(150);
+    eq(envois(), e0 + 1, 'une seconde passe frequente sur la meme AET : AUCUN message de plus');
+    ok(rj.annonceRecente(petit.id, Date.now()), 'l annonce est gardee dans le journal du volume');
+    regle([aet]);
+    await dors(150);
+    eq(envois(), e0 + 2, 'la quotidienne, elle, la republie comme avant');
+
+    /* Les ECHECS aussi (relecture du lot 4) : un echec qui dure serait sinon
+       republie toutes les 2 h. « already settled » sur auto-petit a deja ete
+       annonce par la quotidienne de la section 2 : la passe frequente ne le
+       redit pas. Un echec NOUVEAU (une lettre inconnue) part une fois. */
+    const mP = paris.match(petit.id), vraiP = mP.debut;
+    mP.debut = Date.now() - 6 * 3600000;
+    try {
+      e0 = envois();
+      regle([fini(petit, petit.issues[0])], { passe: 'frequente' });
+      await dors(150);
+      eq(envois(), e0, 'passe frequente, « already settled » deja annonce par la quotidienne dans les 24 h : AUCUN envoi');
+      regle([fini(petit, 'Z', 'abc')], { passe: 'frequente' });
+      await dors(150);
+      eq(envois(), e0 + 1, 'un echec nouveau (resultat illisible) : un message');
+      regle([fini(petit, 'Z', 'abc')], { passe: 'frequente' });
+      await dors(150);
+      eq(envois(), e0 + 1, 'le meme echec a la passe frequente suivante : AUCUN message de plus');
+      regle([fini(petit, 'Z', 'abc')]);
+      await dors(150);
+      eq(envois(), e0 + 2, 'la quotidienne le redit, comme avant');
+    } finally { mP.debut = vraiP; }
+
+    /* L'heure du vrai reglement, auto (section 2) et main (section 3). */
+    const b = rj.brut();
+    ok(b && b.regles[petit.id] && b.regles[petit.id].via === 'auto' && b.regles[petit.id].t > 0 && b.regles[petit.id].source === 'scores',
+       'apres un reglement automatique reussi, le journal porte son heure, via auto, et son chemin (une rencontre sans source ESPN : le /scores paye) : ' + JSON.stringify(b && b.regles[petit.id]));
+    ok(b.regles[gros.id] && b.regles[gros.id].via === 'main' && b.regles[gros.id].score === '2-1' && b.regles[gros.id].source === 'main',
+       'apres /paris/regle, via main et le score : ' + JSON.stringify(b.regles[gros.id]));
+    ok(require('fs').existsSync(require('path').join(process.env.DATA_DIR, 'reglement_journal.json')),
+       'sur le volume (DATA_DIR/reglement_journal.json)');
+
+    /* Le journal en panne ne fait JAMAIS perdre un paiement : noteRegle leve,
+       la rencontre est payee, et elle n'est pas comptee « ratee ». */
+    const cible = paris.match('auto-journal');
+    a.ws.send(JSON.stringify({ type: 'parie', match: cible.id, choix: cible.issues[0], mise: 500 }));
+    await dors(300);
+    const m = paris.match(cible.id), vraiDebut = m.debut;
+    m.debut = Date.now() - 6 * 3600000;
+    const vraiNote = rj.noteRegle;
+    rj.noteRegle = () => { throw new Error('volume plein (essai)'); };
+    const dits = [], vraiLog = console.log;
+    console.log = (...x) => { dits.push(x.join(' ')); vraiLog(...x); };
+    const avantJ = await solde(a);
+    try { regle([fini(cible, cible.issues[0])]); } finally { rj.noteRegle = vraiNote; console.log = vraiLog; }
+    await dors(400);
+    m.debut = vraiDebut;
+    ok(await solde(a) > avantJ, 'journal en panne : la rencontre est quand meme payee');
+    ok(!dits.some((x) => /auto REFUSE/.test(x)), 'et elle n est PAS dans les ratees (aucun « auto REFUSE ») : ' + dits.filter((x) => /REFUSE|journal/.test(x)).join(' | ').slice(0, 160));
+    ok(dits.some((x) => /reglement non note/.test(x)), 'la panne du journal se dit');
+
+    /* Les annonces en panne : la passe frequente publie quand meme (au pire
+       elle repostera), sans lever. */
+    const vA = rj.annonceRecente, vN = rj.noteAnnonces;
+    rj.annonceRecente = () => { throw new Error('panne (essai)'); };
+    rj.noteAnnonces = () => { throw new Error('panne (essai)'); };
+    let leve = null;
+    e0 = envois();
+    try { regle([aet], { passe: 'frequente' }); } catch (er) { leve = er; } finally { rj.annonceRecente = vA; rj.noteAnnonces = vN; }
+    await dors(150);
+    ok(!leve && envois() === e0 + 1, 'journal des annonces en panne : le message part, rien ne leve');
+
+    /* La route a la main, journal en panne : le reglement est fait et dit. */
+    const cr = paris.match('auto-route');
+    a.ws.send(JSON.stringify({ type: 'parie', match: cr.id, choix: cr.issues[0], mise: 500 }));
+    await dors(300);
+    /* le troisieme rappel de `planifie` : un NOMBRE, l'engagement de la
+       rencontre (pas le booleen du deuxieme) */
+    const ap = ARGS_PLANIFIE[0] || [];
+    const engage = typeof ap[2] === 'function' ? ap[2](cr.id) : undefined;
+    ok(ARGS_PLANIFIE.length === 1 && typeof engage === 'number' && engage > 0 && ap[1](cr.id) === true,
+       'planifie recoit l engagement (un nombre > 0) en troisieme rappel, pour que l ombre trie avec le plafond : ' + JSON.stringify(engage));
+    const avantR = await solde(a);
+    rj.noteRegle = () => { throw new Error('volume plein (essai)'); };
+    let jr;
+    try {
+      const rep = await fetch(`http://127.0.0.1:${process.env.PORT}/paris/regle`, {
+        method: 'POST',
+        headers: { 'x-admin-key': process.env.ADMIN_KEY, 'content-type': 'application/json' },
+        body: JSON.stringify({ match: cr.id, score: '1-0', motif: 'essai journal en panne' }),
+      });
+      jr = await rep.json();
+    } finally { rj.noteRegle = vraiNote; }
+    ok(jr && !jr.error && jr.score === '1-0', '/paris/regle, journal en panne : la reponse est le reglement, sans erreur — ' + JSON.stringify(jr).slice(0, 80));
+    await dors(300);
+    ok(await solde(a) > avantR, 'et le gagnant est paye');
   }
 
   // ---- 4. le coupe-circuit

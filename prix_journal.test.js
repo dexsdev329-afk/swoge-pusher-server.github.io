@@ -998,9 +998,15 @@ async function principal() {
     const dObs = page.indexOf('var OBS_NOMS='), fObs = page.indexOf('\n}\n', page.indexOf('function obsRend('));
     ok(dObs > 0 && fObs > dObs, 'la page porte obsRend (lot 3)');
     vm.runInContext(page.slice(dObs, fObs + 2), bac);
+    /* Lot 4 (10/10/2026) : et la carte du reglement (reglRend), pour la meme
+       raison — la carte se rend avec tout ce qu'elle appelle. */
+    const dReg = page.indexOf('var REGL_B='), fReg = page.indexOf('\n}\n', page.indexOf('function reglRend('));
+    ok(dReg > 0 && fReg > dReg, 'la page porte reglRend (lot 4)');
+    vm.runInContext(page.slice(dReg, fReg + 2), bac);
     bac.impRend(JSON.parse(JSON.stringify(imp.etatImport())));
     ok(/Price-age journal \(0 credits, read-only\)/.test(rendu), 'impRend(etatImport()) affiche la ligne du journal dans la carte du calendrier');
     ok(/Market watch \(not sold\)/.test(rendu) && /PARIS_ELO_ENGAGEMENT_MAX\): not set/.test(rendu), 'et l observation du lot 3, avec le plafond Elo vide');
+    ok(/<b>Settlement<\/b> &mdash; ESPN every 2 h: <b>shadow only<\/b>/.test(rendu), 'et la carte du reglement du lot 4 (ombre seule par defaut)');
     const blocs = [...page.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
     ok(blocs.every((b) => { try { new Function(b); return true; } catch (er) { return false; } }), 'le script de la page compile');
   }

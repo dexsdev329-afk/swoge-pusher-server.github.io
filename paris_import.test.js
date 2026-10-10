@@ -453,6 +453,198 @@ const cotes = require('./cotes');
     eq(finis[0].id, 'epl-fini-chevet', 'avec l identifiant du catalogue, pas celui du fournisseur');
   }
 
+  // ==== 2 bis. LE COMPTE DE CHAQUE /scores PAYE, ET LA COUPE ETEINTE (lot 4, 10/10/2026)
+  /*
+   * La porte B (EXPLOITATION 8.10) se juge cle par cle sur ce que le
+   * fournisseur a REELLEMENT facture (x-requests-last), jamais sur une
+   * supposition : le cout d'un /scores vide ou en erreur n'est pas documente.
+   * Une erreur ne porte pas d'en-tete : son cout est null (JAMAIS 0, l'intention
+   * du commentaire d'`appel`), puis deduit de x-requests-used a l'appel
+   * suivant si rien d'autre n'a ete facture entre les deux, sinon
+   * « indecidable ». La coupe ne vise que les cles NON cochees « Scores &
+   * Results », et reste ETEINTE par defaut.
+   */
+  {
+    const rj = require('./reglement_journal');
+    const H1 = 3600000;
+    /* Les credits de cette section ne sont pas ceux des suivantes : le
+       compteur du banc est remis tel quel a la fin (sinon la part du jour,
+       21, est mangee et le § 9 voit ses /scores refuses). */
+    const QUOTA = path.join(BAC, 'odds_quota.json'), CLASSES = path.join(BAC, 'odds_classes.json');
+    const lit = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null);
+    const quotaAvant = lit(QUOTA), classesAvant = lit(CLASSES);
+    /* et elle part d'une journee vierge : ses ~20 credits ne doivent pas
+       dependre de ce que les sections d'avant ont deja depense */
+    if (quotaAvant) fs.writeFileSync(QUOTA, JSON.stringify(Object.assign(JSON.parse(quotaAvant), { depenseDuJour: 0 }), null, 2) + '\n');
+    const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    if (!cat.sports.some((s) => s.cle === 'cricket')) cat.sports.push({ cle: 'cricket', nom: 'Cricket', actif: true });
+    const crick = (id, ligue, debut, ev) => ({ id, sport: 'cricket', competition: 'Essai', pays: '', domicile: 'India ' + id, exterieur: 'Australia ' + id,
+      debut: new Date(debut).toISOString(), cotes: { 1: 1.8, 2: 1.95 }, source: { fournisseur: 'the-odds-api', ligue, evenement: ev || id } });
+    /* ipl-x, hun-x, puis odi-x : les ligues s'interrogent dans l'ordre du
+       calendrier, et la deduction (B3) lit l'appel QUI PRECEDE l'erreur et
+       celui QUI LA SUIT */
+    cat.matchs.push(crick('ipl-x', 'cricket_ipl', HIER), crick('hun-x', 'cricket_the_hundred', HIER), crick('odi-x', 'cricket_odi', HIER),
+                    crick('odi-jeune', 'cricket_odi', Date.now() - 1 * H1),
+                    /* un ODI commence il y a 11 h : surement fini (un ODI dure ~8 h) */
+                    crick('odi-fin', 'cricket_odi', Date.now() - 11 * H1));
+    fs.writeFileSync(CAT, JSON.stringify(cat, null, 1));
+    const lignesDe = async (f) => { const lu = [], vrai = console.log; console.log = (...x) => { lu.push(x.join(' ')); }; try { await f(); } finally { console.log = vrai; } return lu; };
+    const entrees = (clef) => rj.brut().scores.filter((e) => e.clef === clef);
+
+    /* B1 : cricket_odi rend [] avec x-requests-last = 2 */
+    appels.length = 0;
+    let dits = await lignesDe(() => imp.importeScores((id) => id === 'odi-x'));
+    eq(appels.filter((a) => a.quoi === 'scores').map((a) => a.ligue).join(','), 'cricket_odi', 'un seul /scores, pour la cle du pari');
+    let b = rj.bilanScores(Date.now(), 30).cricket_odi;
+    ok(b && b.appels === 1 && b.credits === 2 && b.appariees === 0 && b.inutiles === 1,
+       'le journal compte : 1 appel, 2 credits lus, 0 appariee, 1 inutile — ' + JSON.stringify(b && { appels: b.appels, credits: b.credits, appariees: b.appariees, inutiles: b.inutiles }));
+    ok(dits.some((x) => /^\[odds\] scores cricket_odi : 2 credit\(s\), 0 rendue\(s\), 0 finie\(s\), 0 appariee\(s\) — INUTILE$/.test(x)),
+       'la ligne de journal dit INUTILE : ' + (dits.find((x) => /scores cricket_odi :/.test(x)) || 'rien'));
+
+    /* B2 : une 422 sans en-tete, UNKNOWN_SPORT dans le corps, seule */
+    const vraiFetch = global.fetch;
+    /* le compteur du fournisseur continue celui du banc : il ne recule jamais */
+    let utilise = Number(imp.etatQuota().utilise) || 0;
+    const factureSans = new Set(['cricket_the_hundred']);
+    let intrus = false;
+    global.fetch = async (url) => {
+      const u = new URL(String(url));
+      if (/espn\.com$/.test(u.hostname)) return vraiFetch(url);
+      const ligue = (u.pathname.match(/\/sports\/([^/]+)\//) || [])[1];
+      if (ligue === 'intrus') {                      // un autre appel paye, facture sans en-tete
+        utilise += 1;
+        return { ok: false, status: 500, headers: { get: () => null }, text: async () => 'erreur', json: async () => ({}) };
+      }
+      appels.push({ ligue, quoi: 'scores', cout: 2 });
+      utilise += 2;                                  // le fournisseur facture, en-tete ou pas
+      if (factureSans.has(ligue) && intrus) {
+        /* pendant la 422, un AUTRE appel paye part (une releve de prix en
+           parallele) et revient sans en-tete : la deduction ne doit plus rien
+           conclure */
+        intrus = false;
+        try { await imp.appel('/sports/intrus/odds', { regions: 'eu' }, 1, 'intrus (essai)', undefined, {}); } catch (er) { /* attendu */ }
+      }
+      if (factureSans.has(ligue)) {
+        return { ok: false, status: 422, headers: { get: () => null },
+                 text: async () => '{"message":"Unknown sport","error_code":"UNKNOWN_SPORT"}', json: async () => ({}) };
+      }
+      return { ok: true, status: 200, headers: { get: (k) => ({ 'x-requests-remaining': String(20000 - utilise), 'x-requests-used': String(utilise), 'x-requests-last': '2' }[k.toLowerCase()] || null) },
+               json: async () => [], text: async () => '[]' };
+    };
+    try {
+      await lignesDe(() => imp.importeScores((id) => id === 'hun-x'));
+      const e = entrees('cricket_the_hundred').pop();
+      ok(e && e.cout === null, 'une erreur sans en-tete : credits null, JAMAIS 0 — ' + JSON.stringify(e && e.cout));
+      eq(e && e.statut, 422, 'statut 422');
+      eq(e && e.code, 'UNKNOWN_SPORT', 'code UNKNOWN_SPORT, lu dans le corps');
+      ok(e && e.indecidable === true, 'seule, sans appel suivant : « indecidable »');
+      /* le journal en panne a ce moment-la ne fait pas lever la releve */
+      const vraiDeduit = rj.deduitCout;
+      rj.deduitCout = () => { throw new Error('volume plein (essai)'); };
+      let leve = null;
+      try { await lignesDe(() => imp.importeScores((id) => id === 'hun-x')); } catch (er) { leve = er; } finally { rj.deduitCout = vraiDeduit; }
+      ok(!leve, 'deduitCout qui leve sur la derniere erreur de la passe : importeScores ne leve pas');
+      b = rj.bilanScores(Date.now(), 30).cricket_the_hundred;
+      ok(b && b.credits === 0 && b.indecidables === 1 && b.inutiles === 0, 'et elle ne compte ni comme credit ni comme inutile');
+
+      /* B3 : la meme 422, ENTRE deux /scores qui portent leurs en-tetes. La
+         422 de B2 a ete facturee sans le dire : le compteur lu avant B2
+         (au debut de B3, un appel PLUS TARD) l'aurait absorbee — d'ou la
+         lecture de l'appel QUI PRECEDE dans la meme passe. */
+      const avant = utilise;
+      dits = await lignesDe(() => imp.importeScores((id) => id === 'ipl-x' || id === 'hun-x' || id === 'odi-x'));
+      eq(appels.slice(-3).map((a) => a.ligue).join(','), 'cricket_ipl,cricket_the_hundred,cricket_odi', 'trois /scores, dans l ordre du calendrier');
+      const e2 = entrees('cricket_the_hundred').pop();
+      eq(e2 && e2.coutDeduit, 2, `son cout est deduit de x-requests-used (${avant} -> ${utilise}) : 2, pas 4 (la 422 de B2 n est pas absorbee)`);
+      ok(dits.some((x) => /scores cricket_the_hundred : 2 credit\(s\) deduit\(s\) de x-requests-used/.test(x)), 'et la deduction se dit');
+      b = rj.bilanScores(Date.now(), 30).cricket_the_hundred;
+      ok(b.credits === 2 && b.deduits === 1 && b.inutiles === 1 && b.indecidables === 1, 'deduit, il compte : 2 credits, 1 inutile ; celle de B2 reste indecidable');
+      /* sans appel a en-tete AVANT elle dans la passe : indecidable, jamais devine */
+      dits = await lignesDe(() => imp.importeScores((id) => id === 'hun-x' || id === 'odi-x'));
+      const e3 = entrees('cricket_the_hundred').pop();
+      ok(e3 && e3.indecidable === true && e3.coutDeduit === undefined, 'la 422 en tete de passe, meme suivie d un appel a en-tete : indecidable');
+      /* un autre appel paye, sans en-tete, entre l'erreur et l'appel suivant :
+         x-requests-used compte les deux, la deduction ne conclut pas */
+      intrus = true;
+      await lignesDe(() => imp.importeScores((id) => id === 'ipl-x' || id === 'hun-x' || id === 'odi-x'));
+      ok(!intrus, 'l appel intrus est bien parti pendant la 422');
+      const e4 = entrees('cricket_the_hundred').pop();
+      ok(e4 && e4.indecidable === true && e4.coutDeduit === undefined,
+         'un autre appel facture entre la 422 et l appel suivant : indecidable, jamais 3 credits attribues a la 422 — ' + JSON.stringify(e4 && { d: e4.coutDeduit, i: e4.indecidable }));
+    } finally { global.fetch = vraiFetch; }
+
+    /* B4 : la coupe, ETEINTE par defaut */
+    const T = Date.now();
+    const deja = rj.bilanScores(T, 30).cricket_odi.inutiles;
+    for (let i = 0; i < 4; i++) rj.noteAppelScores('cricket_odi', { t: T - (i + 1) * 86400000, cout: 2, statut: 200, vieux: true, declencheurs: 1 });
+    const inut = rj.bilanScores(T, 30).cricket_odi.inutiles;
+    ok(inut === deja + 4 && inut >= 5, `${inut} appels payes inutiles sur 30 jours pour cricket_odi (${deja} de B1 a B3, 4 de plus sur les jours d avant)`);
+    appels.length = 0;
+    await lignesDe(() => imp.importeScores((id) => id === 'odi-x'));
+    eq(appels.filter((a) => a.ligue === 'cricket_odi').length, 1, 'PARIS_SCORES_COUPE non posee : l appel part quand meme (on compte, on ne coupe pas)');
+    process.env.PARIS_SCORES_COUPE = '1';
+    try {
+      appels.length = 0;
+      let finisC;
+      dits = await lignesDe(async () => { finisC = await imp.importeScores((id) => id === 'odi-x' || id === 'odi-fin'); });
+      eq(appels.filter((a) => a.ligue === 'cricket_odi').length, 0, 'PARIS_SCORES_COUPE=1 et au moins 5 inutiles sur 30 jours : PLUS aucun /scores pour cricket_odi');
+      /* Relecture du lot 4 : ses rencontres partent « a la main » quand leur
+         FORMAT est surement fini (ODI : 10 h), jamais au mur des 200 min du
+         football — sinon un ODI en cours serait annonce « resultat a
+         saisir » sur le canal public. */
+      const f = finisC.find((x) => x.id === 'odi-fin');
+      ok(f && f.coupe && /scores plus demandes pour cricket_odi .*verifier que la rencontre est finie/.test(f.aMain || ''),
+         'et sa rencontre de 11 h part « a la main », avec sa raison : ' + (f && f.aMain));
+      ok(!finisC.some((x) => x.id === 'odi-x'), 'celle de 6 h (un ODI dure ~8 h) n est encore nulle part : ' + finisC.map((x) => x.id).join(','));
+      ok(dits.some((x) => /scores cricket_odi : jamais appariee sur \d+ appel\(s\) paye\(s\) inutile\(s\) en 30 jours — plus demandee, a regler a la main/.test(x)), 'la coupe se dit');
+      const r = imp.trieReglements([f], () => 0, Date.now());
+      ok(!r.auto.length && r.mains.length === 1, 'le tri la garde a la main');
+      /* une cle COCHEE n'est jamais coupee */
+      for (let i = 0; i < 6; i++) rj.noteAppelScores('soccer_france_ligue_one', { t: T - i * 3600000, cout: 2, statut: 200, vieux: true, declencheurs: 1 });
+      eq(imp.clefCoupee('soccer_france_ligue_one', Date.now()), null, 'une cle cochee « Scores & Results » (Ligue 1), six inutiles : JAMAIS coupee');
+      /* une cle qui a apparie une fois n'est jamais coupee */
+      for (let i = 0; i < 6; i++) rj.noteAppelScores('cricket_ipl', { t: T - i * 3600000, cout: 2, statut: 200, vieux: true, declencheurs: 1 });
+      ok(imp.clefCoupee('cricket_ipl', Date.now()) !== null, 'cricket_ipl, six inutiles : coupee');
+      rj.noteAppelScores('cricket_ipl', { t: T, cout: 2, statut: 200, appariees: 1, vieux: true, declencheurs: 1 });
+      eq(imp.clefCoupee('cricket_ipl', Date.now()), null, 'une seule appariee sur 30 jours : jamais coupee');
+      /* un appel paye pour un match EN COURS est precoce, pas inutile */
+      for (let i = 0; i < 6; i++) rj.noteAppelScores('cricket_big_bash', { t: T - i * 3600000, cout: 2, statut: 200, vieux: false, declencheurs: 1 });
+      eq(imp.clefCoupee('cricket_big_bash', Date.now()), null, 'six appels precoces (match en cours) : pas une raison de couper');
+      /* plus de 30 jours : hors fenetre */
+      for (let i = 0; i < 6; i++) rj.noteAppelScores('cricket_psl', { t: T - (31 + i) * 86400000, cout: 2, statut: 200, vieux: true, declencheurs: 1 });
+      eq(imp.clefCoupee('cricket_psl', Date.now()), null, 'six inutiles d il y a plus de 30 jours : hors fenetre glissante');
+      /* gratuits (x-requests-last a 0) : rien a economiser, rien a couper */
+      for (let i = 0; i < 6; i++) rj.noteAppelScores('cricket_asia_cup', { t: T - i * 3600000, cout: 0, statut: 200, vieux: true, declencheurs: 1 });
+      eq(imp.clefCoupee('cricket_asia_cup', Date.now()), null, 'six reponses a 0 credit : rien a couper');
+      const pB = imp.bilanReglement(Date.now()).porteB;
+      ok(pB.cricket_asia_cup && pB.cricket_asia_cup.motif === 'gratuit' && pB.cricket_asia_cup.verdict === null, 'porte B : « rien a economiser » attend ses 30 jours (motif gratuit)');
+      ok(pB.soccer_france_ligue_one && pB.soccer_france_ligue_one.cochee && pB.soccer_france_ligue_one.verdict === null, 'porte B : une cle cochee n est jamais jugee');
+      ok(pB.cricket_odi && pB.cricket_odi.coupee === true && pB.cricket_odi.verdict === null, 'porte B : cricket_odi coupee par la variable, verdict attendu a 30 jours');
+    } finally { delete process.env.PARIS_SCORES_COUPE; }
+
+    /* B5 : un pari sur un match commence il y a 1 h — PARIS_SCORES_SAUTE_ENCOURS */
+    appels.length = 0;
+    dits = await lignesDe(() => imp.importeScores((id) => id === 'odi-jeune'));
+    eq(appels.filter((a) => a.ligue === 'cricket_odi').length, 1, 'drapeau eteint : le /scores part pour un match commence il y a 1 h (comme avant)');
+    ok(dits.some((x) => /scores cricket_odi : 2 credit\(s\).* — precoce/.test(x)), 'et il est compte « precoce », pas inutile');
+    process.env.PARIS_SCORES_SAUTE_ENCOURS = '1';
+    try {
+      appels.length = 0;
+      dits = await lignesDe(() => imp.importeScores((id) => id === 'odi-jeune'));
+      eq(appels.length, 0, 'PARIS_SCORES_SAUTE_ENCOURS=1 : plus de /scores paye pour lui');
+      ok(dits.some((x) => /1 rencontre\(s\) commencee\(s\) depuis moins de 200 min — pas de score paye/.test(x)), 'et ca se dit');
+      appels.length = 0;
+      await lignesDe(() => imp.importeScores((id) => id === 'odi-x'));
+      eq(appels.filter((a) => a.ligue === 'cricket_odi').length, 1, 'un match fini depuis 6 h, lui, est toujours paye');
+    } finally { delete process.env.PARIS_SCORES_SAUTE_ENCOURS; }
+    /* remis : le calendrier sans les rencontres de cette section */
+    const cat2 = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    cat2.matchs = cat2.matchs.filter((m) => !['ipl-x', 'odi-x', 'hun-x', 'odi-jeune', 'odi-fin'].includes(m.id));
+    fs.writeFileSync(CAT, JSON.stringify(cat2, null, 1));
+    paris.charge(CAT);
+    for (const [f, v] of [[QUOTA, quotaAvant], [CLASSES, classesAvant]]) { if (v === null) { try { fs.unlinkSync(f); } catch (e) {} } else fs.writeFileSync(f, v); }
+  }
+
   // ==== 3. l'etalonnage coute 1 par ligue, et un seul marche / une seule region
   {
     appels.length = 0;
@@ -527,6 +719,9 @@ const cotes = require('./cotes');
     eq(r.auto.length, 0, 'une rencontre finie depuis une heure n est pas reglee');
     eq(r.mains.length, 1, 'elle attend');
     ok(/trop peu/.test(r.mains[0].raison), 'et la raison le dit : ' + r.mains[0].raison);
+    /* lot 4 : « pas encore », pas « a la main » — la passe frequente ne la
+       publie pas sur le canal public (paris_auto.test.js compte les envois) */
+    eq(r.mains[0].attente, true, 'et elle est marquee « en attente » (attente: true)');
 
     r = imp.trieReglements([fini], sansExpo, T + 5 * 3600000);
     eq(r.auto.length, 1, 'cinq heures apres le coup d envoi, elle passe');
