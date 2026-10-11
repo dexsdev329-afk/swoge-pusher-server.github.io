@@ -255,6 +255,38 @@ console.log('\n-- qui recoit quel score --');
       { prendre: commeLeVrai([avecStatut(evId('h', 'Boston Bruins', 'Toronto Maple Leafs', '3', '2', '2026-10-10T23:00Z', 'post', true), 'STATUS_FINAL_OT')]) });
     ok(nhl[0] && !nhl[0].aMain, 'la NHL n est pas concernee : son vainqueur se regle prolongation comprise, comme tous les livres');
 
+    // ================== 10bis. LES HUIT COUPES (lot 6, 11/10/2026)
+    /* Les huit chemins, chacun HTTP 200 le 11/10/2026 depuis ce depot (mois
+     * 202610 et 202611). Et la regle des 90 minutes vaut pour une coupe : la
+     * rencontre ci-dessous est REELLE, Copa del Rey du 04/10/2026, 0-0 en
+     * STATUS_FINAL_PEN (tableau ESPN relu le 11/10, champs reduits). */
+    console.log('\n-- les huit coupes --');
+    const CHEMINS_COUPES = { soccer_uefa_europa_league: 'soccer/uefa.europa', soccer_uefa_europa_conference_league: 'soccer/uefa.europa.conf',
+      soccer_fa_cup: 'soccer/eng.fa', soccer_england_efl_cup: 'soccer/eng.league_cup', soccer_germany_dfb_pokal: 'soccer/ger.dfb_pokal',
+      soccer_spain_copa_del_rey: 'soccer/esp.copa_del_rey', soccer_italy_coppa_italia: 'soccer/ita.coppa_italia',
+      soccer_france_coupe_de_france: 'soccer/fra.coupe_de_france' };
+    for (const [k, v] of Object.entries(CHEMINS_COUPES)) eq(e.CHEMINS[k], v, 'le tableau ESPN de ' + k + ' : ' + v);
+    eq(Object.keys(CHEMINS_COUPES).length, 8, 'huit coupes, ni plus ni moins');
+    const tir = [avecStatut(evId('401918761', 'Tavernes de la Valldigna', 'Maracena', '0', '0', '2026-10-04T16:00Z', 'post', true), 'STATUS_FINAL_PEN')];
+    const cdr = await e.finies([nous('Tavernes de la Valldigna', 'Maracena', '2026-10-04T16:00Z', 'tav', 'foot', 'soccer_spain_copa_del_rey')],
+                               { prendre: commeLeVrai(tir) });
+    ok(cdr.length === 1 && /STATUS_FINAL_PEN/.test(cdr[0].aMain || ''), 'une coupe aux tirs au but part a la main, le football reste regle a 90 minutes : ' + ((cdr[0] && cdr[0].aMain) || 'rien'));
+    /* Un VAINQUEUR a 90 minutes (1-0 en STATUS_FULL_TIME) : le score est celui
+     * des 90 minutes, il se lit. CONSTAT DATE, NON TENU ICI (relecture du
+     * 11/10/2026) : ESPN rend aussi un NUL en STATUS_FULL_TIME sur un tour a
+     * elimination directe (SD Noja 1-1 Ribadesella, Copa del Rey du
+     * 04/10/2026, EXPLOITATION 8.11) — un tel match ne finit pas sur un nul,
+     * le statut des tours amateurs n'est pas sur. Rien n'est vendu dans ce
+     * lot ; le lot 10 doit envoyer a la main un nul en STATUS_FULL_TIME d'un
+     * tour a elimination directe (pas la phase de ligue des coupes
+     * europeennes, ni une manche aller) avant de vendre une coupe nationale.
+     * Aucun essai ne fige le comportement actuel sur ce nul. */
+    const ftCoupe = [avecStatut(evId('401918757', 'Sporting de Alcazar', 'CP Talayuela', '1', '0', '2026-10-04T15:30Z', 'post', true), 'STATUS_FULL_TIME')];
+    const cdr2 = await e.finies([nous('Sporting de Alcazar', 'CP Talayuela', '2026-10-04T15:30Z', 'spa', 'foot', 'soccer_spain_copa_del_rey')],
+                                { prendre: commeLeVrai(ftCoupe) });
+    ok(cdr2.length === 1 && !cdr2[0].aMain && cdr2[0].score === '1-0', 'une coupe gagnee a 90 minutes (1-0, STATUS_FULL_TIME) donne son score : aucune prolongation n a pu le changer');
+    ok(!Object.keys(e.ALIAS).some((k) => /maracena|tavernes|alcazar|talayuela|copenhagen|kobenhavn/.test(k)), 'aucun alias de coupe ecrit d avance (releves sur l inventaire, jamais devines)');
+
     // ================== 11. UNE SERIE : LE MATCH LE PLUS PROCHE, PAS LE PREMIER
     /* MLB en octobre : les memes equipes jouent trois jours de suite. Le
      * match 1 est a 24 h du match 2, dans la tolerance de 36 h. On prenait le

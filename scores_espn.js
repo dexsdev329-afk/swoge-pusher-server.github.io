@@ -73,6 +73,25 @@ const CHEMINS = {
   soccer_mexico_ligamx: 'soccer/mex.1',
   icehockey_nhl: 'hockey/nhl',
   baseball_mlb: 'baseball/mlb',
+  /* ---- LES HUIT COUPES (lot 6, 11/10/2026) ----
+   * Chacune a repondu HTTP 200 depuis ce depot le 11/10/2026 (mois 202610 et
+   * 202611, `dates=AAAAMM&limit=1000`), deja verifiees le 09/10 par le plan.
+   * Lues le 11/10 : Europa League 15, 22/10, 05 et 26/11 (18 rencontres
+   * chacune), Conference League aux memes dates (18 chacune), Carabao Cup
+   * 27-29/10 (8), DFB-Pokal 27-28/10 (16), Copa del Rey 03-04/10 (7 en
+   * STATUS_FULL_TIME, 1 en STATUS_FINAL_PEN) et 11/10 (2) ; FA Cup, Coppa
+   * Italia et Coupe de France : rien en octobre ni en novembre. Aucune
+   * rencontre de coupe n'est au catalogue dans ce lot : ces chemins ne
+   * servent qu'a l'appariement de l'inventaire (coupes.apparieEspn), qui
+   * passe par `releve` — le MEME code que le reglement. */
+  soccer_uefa_europa_league: 'soccer/uefa.europa',
+  soccer_uefa_europa_conference_league: 'soccer/uefa.europa.conf',
+  soccer_fa_cup: 'soccer/eng.fa',
+  soccer_england_efl_cup: 'soccer/eng.league_cup',
+  soccer_germany_dfb_pokal: 'soccer/ger.dfb_pokal',
+  soccer_spain_copa_del_rey: 'soccer/esp.copa_del_rey',
+  soccer_italy_coppa_italia: 'soccer/ita.coppa_italia',
+  soccer_france_coupe_de_france: 'soccer/fra.coupe_de_france',
 };
 
 /* ---- LES ECARTS, ECRITS (quatorze au depart, puis ceux de chaque ligue ajoutee) ----
@@ -158,6 +177,17 @@ const ALIAS = {
   'tigres': 'tigres uanl',
   'pumas': 'pumas unam',
   'santos laguna': 'santos',
+  /* ---- LES COUPES (lot 6) : RELEVES SUR coupes_inventaire.json, JAMAIS DEVINES ----
+   * Aucune ligne au 11/10/2026. Les noms The Odds API d'une coupe ne se lisent
+   * qu'avec la cle (/events), que seul le serveur porte : l'inventaire
+   * ($DATA_DIR/coupes_inventaire.json, `/paris/import` -> coupes, ou
+   * `node paris_import.js --coupes`) ecrit chaque rencontre NON appariee avec
+   * les noms qu'ESPN donne le meme jour. Une ligne s'ajoute ici, avec sa date
+   * de releve, seulement quand les deux noms sont, a l'oeil, la meme equipe
+   * le meme jour — comme les ligues du 18/09. Jamais par ressemblance : voir
+   * l'en-tete (« Inter Milan » -> « AC Milan »). Une rencontre non appariee
+   * part a /scores (2 credits par ligue) puis a la main ; la porte A
+   * d'EXPLOITATION 8.11 (>= 95 % appariees) attend ces lignes. */
 };
 
 /* Les mots qui ne distinguent aucune equipe de sa voisine. « Deportivo » n'y

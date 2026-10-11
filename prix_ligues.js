@@ -42,10 +42,36 @@ function lue(nom, defaut) {
   return s;
 }
 
-/** Ce qui se VEND au prix du marche. Ne pas modifier l'ensemble rendu. */
-function ligues() { return lue('PARIS_PRIX_LIGUES', LIGUES_DEFAUT); }
-/** Ce qu'on RELEVE sans le vendre (`PARIS_PRIX_OBSERVE`). */
-function observees() { return lue('PARIS_PRIX_OBSERVE', []); }
+/* ---- LES COUPES N'ENTRENT PAS PAR LES DEUX LISTES DES CHAMPIONNATS (lot 6, 11/10/2026) ----
+ * Une cle de coupe (COUPES, plus bas) posee dans PARIS_PRIX_LIGUES ou
+ * PARIS_PRIX_OBSERVE en est RETIREE, et c'est dit au demarrage
+ * (`clesIgnorees`) : une coupe ne passe que par ses deux variables a elle,
+ * PARIS_COUPES (la vente, lot 10) et PARIS_COUPES_OBSERVE (l'inventaire et
+ * l'observation). Vendue comme un championnat, une coupe prendrait les six
+ * marches derives du modele de buts — jamais mesure sur des coupes — et sa
+ * releve passerait en priorite. Sans cle de coupe dans la liste (la
+ * production du 09/10 : les 17 championnats, EXPLOITATION 8.8quinquies),
+ * l'ensemble rendu est le MEME objet qu'avant ce lot : rien ne change. */
+const DERIVE = new WeakMap();   /* l'ensemble lu -> le meme, prive des coupes (garde tant que la valeur ne change pas) */
+function sansCoupes(nom, defaut) {
+  const brut = lue(nom, defaut);
+  let s = DERIVE.get(brut);
+  if (!s) {
+    s = [...brut].some(estCoupe) ? new Set([...brut].filter((x) => !estCoupe(x))) : brut;
+    DERIVE.set(brut, s);
+  }
+  return s;
+}
+/** Ce qui se VEND au prix du marche. Ne pas modifier l'ensemble rendu.
+    Lot 6 : PARIS_PRIX_LIGUES prive des coupes, plus les coupes VENDUES
+    (`coupes()`, toujours vide dans ce lot : la vente est le lot 10). */
+function ligues() {
+  const s = sansCoupes('PARIS_PRIX_LIGUES', LIGUES_DEFAUT);
+  const v = coupes();
+  return v.size ? new Set([...s, ...v]) : s;
+}
+/** Ce qu'on RELEVE sans le vendre (`PARIS_PRIX_OBSERVE`), prive des coupes. */
+function observees() { return sansCoupes('PARIS_PRIX_OBSERVE', []); }
 
 /* ---- LE JOKER DU TENNIS (deux issues, lot 3, 10/10/2026) ----
  * Les cles du tennis sont par TOURNOI et tournent chaque semaine (le joker
@@ -179,6 +205,117 @@ function totauxAgeMaxH() {
 }
 function totauxAgeMaxMs() { return totauxAgeMaxH() * 3600000; }
 
+/* ============ LES COUPES (lot 6 de la cle 20K, 11/10/2026) ============
+ *
+ * Huit cles, liste FERMEE : les deux coupes europeennes sous la Ligue des
+ * champions et les six coupes nationales des pays dont on vend deja le
+ * championnat. Les huit existent chez The Odds API et y sont cochees
+ * « scores » (https://the-odds-api.com/sports-odds-data/sports-apis.html, lu
+ * le 09/10/2026) ; leurs tableaux ESPN repondent tous (8 x HTTP 200 le
+ * 11/10/2026, scores_espn.CHEMINS). Une autre cle n'est jamais une coupe ici :
+ * posee dans PARIS_COUPES* elle est ignoree et dite (`clesIgnorees`).
+ *
+ * Trois variables, VIDES ou a zero par defaut — un deploiement ne releve
+ * rien, ne paie rien et ne change rien de ce qui est vendu :
+ *   PARIS_COUPES_OBSERVE    les coupes INVENTORIEES : /events (gratuit) et
+ *                           appariement ESPN (gratuit). Aucune rencontre de
+ *                           coupe n'entre au catalogue ;
+ *   PARIS_COUPES_OBSERVE_H  0 (defaut) = inventaire seul, 0 credit ; N > 0 =
+ *                           releve PAYANTE des coupes observees (classe 3,
+ *                           jamais prioritaire) quand une rencontre commence
+ *                           dans les N h, plus la releve forcee T-45/T-20
+ *                           (classe 2). 48 est la valeur du plan ;
+ *   PARIS_COUPES            la VENTE, construite au lot 10 seulement, apres
+ *                           la porte d'EXPLOITATION 8.11. Dans ce lot elle est
+ *                           LUE pour etre dite, et ignoree : `coupes()` est
+ *                           toujours vide (VENTE_COUPES_CONSTRUITE). Sans les
+ *                           gardes du lot 10 (1-N-2 et double chance seuls,
+ *                           jamais l'Elo, appariement ESPN exige, plafond
+ *                           propre), vendre une coupe offrirait les six
+ *                           marches du modele de buts sur un prix jamais
+ *                           observe. */
+const COUPES = Object.freeze(['soccer_uefa_europa_league', 'soccer_uefa_europa_conference_league',
+  'soccer_fa_cup', 'soccer_england_efl_cup', 'soccer_germany_dfb_pokal', 'soccer_spain_copa_del_rey',
+  'soccer_italy_coppa_italia', 'soccer_france_coupe_de_france']);
+const COUPES_EUROPEENNES = Object.freeze(['soccer_uefa_europa_league', 'soccer_uefa_europa_conference_league']);
+const ENS_COUPES = new Set(COUPES);
+/** Cette cle est-elle une des huit coupes ? */
+function estCoupe(cle) { return ENS_COUPES.has(String(cle || '')); }
+/** Les deux marches qu'une coupe vendra au lot 10 (1-N-2 et double chance). */
+const MARCHES_COUPE = Object.freeze(['1n2', 'dc']);
+/* La vente des coupes n'est PAS construite dans ce lot. Passer ce drapeau a
+   vrai sans le code du lot 10 vendrait les coupes comme des championnats :
+   coupes.test.js le tient (§5). */
+const VENTE_COUPES_CONSTRUITE = false;
+const VIDE = new Set();
+/** Les coupes demandees a la VENTE (PARIS_COUPES), dans la liste fermee. */
+function coupesDemandees() { return new Set([...lue('PARIS_COUPES', [])].filter(estCoupe)); }
+/** Les coupes VENDUES. Toujours vide dans ce lot (la vente est le lot 10). */
+function coupes() {
+  if (!VENTE_COUPES_CONSTRUITE) { VIDE.clear(); return VIDE; }
+  return coupesDemandees();
+}
+/** Les coupes OBSERVEES (inventaire, puis releve si la fenetre est ouverte) :
+    PARIS_COUPES_OBSERVE dans la liste fermee, privee des coupes vendues. */
+function coupesObservees() {
+  const v = coupes();
+  return new Set([...lue('PARIS_COUPES_OBSERVE', [])].filter((k) => estCoupe(k) && !v.has(k)));
+}
+/* ---- LA FENETRE DE LA RELEVE PAYANTE D'UNE COUPE OBSERVEE ----
+ * PARIS_COUPES_OBSERVE_H, en heures. 0 par defaut : l'inventaire seul, 0
+ * credit. Le reglage ECHOUE FERME, comme PARIS_TOTAUX_AGE_MAX_H : absente,
+ * vide, illisible, nulle ou negative, la variable vaut 0 (aucune releve),
+ * jamais une fenetre ouverte par defaut. Bornee a 168 h (l'horizon de 7 jours
+ * de l'import). 48 h : la fenetre du plan du 09/10 — la simulation de la
+ * saison 2025-26 sur les coups d'envoi ESPN (8 coupes, releve de 2 h
+ * seulement a moins de 48 h, plus l'avant-match) donne 3 078 credits, 142 a
+ * 473 par mois, contre 8 294 a l'horizon de 7 jours. */
+const COUPES_OBSERVE_H_MAX = 168;
+function observeCoupesH() {
+  const brut = process.env.PARIS_COUPES_OBSERVE_H;
+  if (brut === undefined || String(brut).trim() === '') return 0;
+  const h = Number(brut);
+  if (!isFinite(h) || !(h > 0)) return 0;
+  return Math.min(h, COUPES_OBSERVE_H_MAX);
+}
+function observeCoupesMs() { return observeCoupesH() * 3600000; }
+/** Ce qui est ecrit et ne sera jamais pris comme coupe, avec la raison. Dit
+    au demarrage (paris_import.planifie). */
+function clesIgnorees() {
+  const out = [];
+  for (const nom of ['PARIS_PRIX_LIGUES', 'PARIS_PRIX_OBSERVE']) {
+    for (const e of lue(nom, nom === 'PARIS_PRIX_LIGUES' ? LIGUES_DEFAUT : [])) {
+      if (estCoupe(e)) out.push(nom + ' ' + e + ' (une coupe ne passe que par PARIS_COUPES_OBSERVE / PARIS_COUPES)');
+    }
+  }
+  for (const nom of ['PARIS_COUPES', 'PARIS_COUPES_OBSERVE']) {
+    for (const e of lue(nom, [])) {
+      if (!estCoupe(e)) out.push(nom + ' ' + e + ' (hors des huit coupes : ' + COUPES.join(', ') + ')');
+      else if (nom === 'PARIS_COUPES' && !VENTE_COUPES_CONSTRUITE) out.push(nom + ' ' + e + ' (vente des coupes pas construite : lot 10, apres la porte d EXPLOITATION 8.11 — rien n est vendu)');
+    }
+  }
+  return out;
+}
+
+/* ---- LA PROLONGATION POSSIBLE, PAR CLE (deplacee de paris_import, lot 6) ----
+ * Ou le score final peut compter la prolongation ou les tirs au but : la
+ * Ligue des champions et les coupes europeennes (barrages et elimination
+ * directe), les series MLS (meme cle que la saison reguliere), et toute
+ * coupe. Une liste, pas une devinette : une cle inconnue qui ressemble a une
+ * coupe compte comme une coupe. Les huit COUPES y sont toutes : UEL et UECL
+ * par la liste, les six nationales par l'expression (`_fa_`, `cup`, `pokal`,
+ * `copa`, `coppa`, `coupe`). Ici parce que paris.js (la page, lot 10) devra
+ * la lire, et qu'il ne requiert que ce module. */
+const PROLONGATION_LIGUES = new Set(['soccer_uefa_champs_league', 'soccer_uefa_europa_league',
+  'soccer_uefa_europa_conference_league', 'soccer_usa_mls']);
+function prolongationPossibleLigue(cle) {
+  const l = String(cle || '');
+  return PROLONGATION_LIGUES.has(l) || /cup|copa|coupe|pokal|coppa|trophy|playoff|knockout|_fa_|super_?cup/i.test(l);
+}
+
 module.exports = { LIGUES_DEFAUT, decoupe, ligues, observees, JOKER_PERMIS, couvre, vendue, observee, refusee, refusees, venteImpossible, SANS_VERROU_REEL,
                    TOTAUX_PERMIS, totauxLigues, totauxObservees, totalVendu, totalObserve, totauxARelever, totauxRefusees,
-                   TOTAUX_AGE_MAX_H, totauxAgeMaxH, totauxAgeMaxMs };
+                   TOTAUX_AGE_MAX_H, totauxAgeMaxH, totauxAgeMaxMs,
+                   /* les coupes (lot 6, 11/10/2026) : la liste fermee, l'observation, la vente (vide), la prolongation */
+                   COUPES, COUPES_EUROPEENNES, estCoupe, MARCHES_COUPE, VENTE_COUPES_CONSTRUITE, coupesDemandees, coupes, coupesObservees,
+                   COUPES_OBSERVE_H_MAX, observeCoupesH, observeCoupesMs, clesIgnorees, PROLONGATION_LIGUES, prolongationPossibleLigue };

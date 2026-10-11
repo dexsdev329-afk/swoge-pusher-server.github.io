@@ -51,6 +51,7 @@
  *   node paris_import.js --scores     les rencontres finies    (2 / sport)
  *   node paris_import.js --calibre    recale les forces Elo    (1 / sport)
  *   node paris_import.js --reglement  l'ombre et les /scores payes (0 credit)
+ *   node paris_import.js --coupes     inventaire des 8 coupes, appariement ESPN (0 credit)
  *
  * Les variables d'environnement sont decrites dans EXPLOITATION.md.
  */
@@ -86,6 +87,13 @@ const regJournal = require('./reglement_journal');
    aucun releve, aucun credit, rien de vendu ne change (totaux_marche.js,
    EXPLOITATION 8.8decies). */
 const totauxMarche = require('./totaux_marche');
+/* Les coupes (lot 6, 11/10/2026) : INVENTAIRE (0 credit) et observation a
+   48 h, rien de vendu. PARIS_COUPES_OBSERVE, PARIS_COUPES_OBSERVE_H et
+   PARIS_COUPES vides par defaut : aucun appel, aucune minuterie, rien ne
+   change (coupes.js, EXPLOITATION 8.11). Le suivi d'avant-match s'abonne au
+   crochet `apresNote`, apres l'ecriture du carnet. */
+const coupes = require('./coupes');
+coupes.branche();
 
 const BASE = 'https://api.the-odds-api.com/v4';
 const CLE = process.env.ODDS_API_KEY || '';
@@ -213,10 +221,26 @@ const LIGUES = (process.env.ODDS_API_LIGUES || LIGUES_DEFAUT.join(','))
  * vider le tennis pour un 502 passager. */
 const JOKER_TTL = 12 * 3600000;
 let jokerCache = { t: 0, cles: null };
+/* ---- LES COUPES SUIVIES (lot 6, 11/10/2026) ----
+ * Apres les ligues ecrites et les jokers, chaque coupe vendue (toujours
+ * aucune dans ce lot) ou observee (PARIS_COUPES_OBSERVE) absente de la liste :
+ * son /events est gratuit et nourrit l'inventaire. LIGUES_DEFAUT et
+ * ODDS_API_LIGUES ne changent pas : sans la variable, aucune coupe n'est
+ * demandee (coupes.test.js §1, et essais/reference octet pour octet). */
+function avecCoupes(liste) {
+  const deja = new Set(liste.map((l) => l.clef));
+  const out = liste.slice();
+  for (const clef of [...prixLigues.coupes(), ...prixLigues.coupesObservees()]) {
+    if (deja.has(clef)) continue;
+    deja.add(clef);
+    out.push({ sport: 'foot', clef });
+  }
+  return out;
+}
 async function liguesEnService() {
   const fixes = LIGUES.filter((l) => l.clef !== '*');
   const jokers = LIGUES.filter((l) => l.clef === '*');
-  if (!jokers.length) return fixes;
+  if (!jokers.length) return avecCoupes(fixes);
   if (!jokerCache.cles || Date.now() - jokerCache.t > JOKER_TTL) {
     try {
       const tous = await appel('/sports', { all: 'true' }, 0, 'sports');
@@ -224,7 +248,7 @@ async function liguesEnService() {
     } catch (e) {
       console.error('[odds] liste des sports injoignable — '
         + (jokerCache.cles ? 'on garde la derniere lue' : 'les jokers attendront') + ' : ' + e.message);
-      if (!jokerCache.cles) return fixes;
+      if (!jokerCache.cles) return avecCoupes(fixes);
     }
   }
   const deja = new Set(fixes.map((l) => l.clef));
@@ -236,7 +260,7 @@ async function liguesEnService() {
       out.push({ sport: j.sport, clef: s.key });
     }
   }
-  return out;
+  return avecCoupes(out);
 }
 
 /*
@@ -279,6 +303,14 @@ const PAYS_LIGUE = {
      passe avant la ligue. */
   icehockey_nhl: 'US', baseball_mlb: 'US',
   cricket_t20_blast: 'GB', cricket_the_hundred: 'GB',
+  /* Les coupes nationales (lot 6) : leurs clubs sont du pays, sauf exceptions
+     qui passent par `paris_pays.json` (lu AVANT la ligue) — le FC Andorra en
+     Copa del Rey (deja en Segunda), les clubs gallois en FA Cup et en EFL Cup
+     (mineur du sceptique). Pas d'entree pour l'Europa League ni la
+     Conference League, qui melangent les pays : l'inventaire liste leurs noms
+     sans drapeau. */
+  soccer_fa_cup: 'GB', soccer_england_efl_cup: 'GB', soccer_germany_dfb_pokal: 'DE',
+  soccer_spain_copa_del_rey: 'ES', soccer_italy_coppa_italia: 'IT', soccer_france_coupe_de_france: 'FR',
 };
 /* Le nom du pays, pour le champ `pays` de la rencontre. */
 const NOM_PAYS = {
@@ -679,6 +711,12 @@ function etatImport() {
        (porte 2) par championnat, ecrites d'avance (EXPLOITATION 8.8decies).
        Rien n'y decide : la bascule reste une variable (PARIS_TOTAUX_LIGUES). */
     totaux: (() => { try { return etatTotaux(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
+    /* Les coupes (lot 6, 11/10/2026) : ce qui est observe, l'inventaire
+       (non appariees avec les noms ESPN du meme jour, noms sans drapeau,
+       doublons), E, C, A par coupe et la porte ecrite d'avance (EXPLOITATION
+       8.11 ; D se mesure hors serveur). Rien n'y decide, rien n'est vendu. */
+    coupes: (() => { try { let matchs = []; try { matchs = paris.catalogue().matchs; } catch (e) { /* catalogue illisible */ }
+      return coupes.etat(Date.now(), { paysDe, matchs }); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     dernier: litDernier(),
   };
 }
@@ -889,6 +927,10 @@ const NOMS_COMPET = {
   soccer_belgium_first_div: 'Pro League', soccer_turkey_super_league: 'Süper Lig',
   soccer_usa_mls: 'MLS', soccer_mexico_ligamx: 'Liga MX',
   soccer_uefa_champs_league: 'Champions League',
+  /* les coupes (lot 6) : texte montre aux joueurs, en anglais — aucune n'est au catalogue avant le lot 10 */
+  soccer_uefa_europa_league: 'Europa League', soccer_uefa_europa_conference_league: 'Conference League',
+  soccer_fa_cup: 'FA Cup', soccer_england_efl_cup: 'EFL Cup', soccer_germany_dfb_pokal: 'DFB-Pokal',
+  soccer_spain_copa_del_rey: 'Copa del Rey', soccer_italy_coppa_italia: 'Coppa Italia', soccer_france_coupe_de_france: 'Coupe de France',
   basketball_nba: 'NBA', americanfootball_nfl: 'NFL', icehockey_nhl: 'NHL', baseball_mlb: 'MLB',
   cricket_the_hundred: 'The Hundred', cricket_international_t20: 'International T20',
   cricket_t20_blast: 'T20 Blast', cricket_odi: 'One Day Internationals',
@@ -933,6 +975,20 @@ async function importeMatchs() {
     for (const ev of evs || []) {
       const tv = Date.parse(ev.commence_time);
       if (ev && ev.id && isFinite(tv)) { parEvenement.set(String(ev.id), tv); liguesVues.add(l.clef); }
+    }
+    /* ---- UNE COUPE NON VENDUE N'ENTRE JAMAIS AU CATALOGUE (lot 6, 11/10/2026) ----
+     * Ses rencontres vont a l'inventaire (coupes_inventaire.json, 0 credit),
+     * jamais dans `matchs` : ni cote a l'Elo, ni page, ni pari. Le compte de
+     * la ligue le dit (`observees`). Une coupe VENDUE (lot 10, aucune dans ce
+     * lot) suivrait le chemin des championnats. */
+    if (prixLigues.estCoupe(l.clef)) {
+      let inv = { n: 0, aVenir7j: 0 };
+      try { inv = coupes.noteInventaire(l.clef, evs, Date.now()); } catch (e) { console.log('[odds] coupe ' + l.clef + ' : inventaire non ecrit — ' + (e.message || e)); }
+      if (!prixLigues.coupes().has(l.clef)) {
+        parLigueCompte[l.clef] = { vues: (evs || []).length, retenues: 0, observees: inv.n };
+        console.log(`[odds] ${l.clef} : coupe observee, ${inv.n} rencontre(s) a l inventaire (${inv.aVenir7j} a 7 j), 0 au catalogue`);
+        continue;
+      }
     }
     for (const ev of evs || []) {
       const t = Date.parse(ev.commence_time);
@@ -1161,6 +1217,16 @@ async function importeMatchs() {
                 suspenduRaison: 'trop desequilibre au prix du marche' });
             }
           }
+          /* ---- UNE COUPE NON VENDUE DEJA AU CATALOGUE EST SUSPENDUE (lot 6) ----
+           * L'import n'en fait plus entrer aucune (plus haut), mais une
+           * rencontre de coupe ecrite avant (a la main, ou par une
+           * ODDS_API_LIGUES qui listait une coupe) serait retarifee a l'Elo et
+           * resterait ouverte. Elle reste au catalogue avec ses paris,
+           * reglable, mais SUSPENDUE. Aucune en production (ODDS_API_LIGUES
+           * non posee, EXPLOITATION 8.1). */
+          const lg = m.source && m.source.ligue;
+          if (prixLigues.estCoupe(lg) && !prixLigues.coupes().has(lg))
+            g = Object.assign({}, g, { prixMarche: undefined, suspendu: true, suspenduRaison: 'coupe non vendue (observation seulement)' });
         }
         habilles.push(g); repris++;
       }
@@ -1843,11 +1909,41 @@ function avecPrix(m, now) {
  * avant ce lot. */
 const SANS_SPORT_DIT = new Set();
 let filePrix = Promise.resolve();
-function rafraichitPrix(clefs, pourquoi, ageMin) {
+/* ---- UNE COUPE OBSERVEE (lot 6, 11/10/2026) ----
+ * Releve h2h a 1 credit, notee au carnet (le crochet `apresNote` en tire le
+ * suivi d'avant-match et le journal), JAMAIS prioritaire : classe 3 pour la
+ * releve periodique, classe 2 pour la releve forcee T-45/T-20 (`opts.classe`).
+ * Elle ne compte pas parmi les cles vendues (le calendrier ne se refait pas
+ * pour elle) et n'entre ni dans l'ecart a l'Elo ni dans le carnet des deux
+ * issues (aucune de ses rencontres n'est au catalogue). Garde en profondeur :
+ * une coupe qui n'est pas observee AVEC une fenetre ouverte
+ * (PARIS_COUPES_OBSERVE_H > 0) n'est jamais payee, quel que soit l'appelant
+ * (`--prix`, une liste faite a la main) — dit une fois par processus. */
+const COUPE_REFUSEE_DITE = new Set();
+async function releveCoupe(clef, pourquoi, opts) {
+  if (!prixLigues.coupesObservees().has(clef) || !(prixLigues.observeCoupesMs() > 0)) {
+    if (!COUPE_REFUSEE_DITE.has(clef)) {
+      COUPE_REFUSEE_DITE.add(clef);
+      console.log(`[odds] prix ${clef} : coupe ` + (prixLigues.coupesObservees().has(clef) ? 'observee sans fenetre payante (PARIS_COUPES_OBSERVE_H=0 : inventaire seul)'
+        : 'ni observee ni vendue') + ' — jamais relevee, 0 credit');
+    }
+    return;
+  }
+  const classe = opts && opts.classe === 2 ? 2 : 3;
+  try {
+    const evs = await appel(`/sports/${clef}/odds`, { regions: REGION, markets: MARCHE, oddsFormat: 'decimal' },
+                            1, 'prix ' + clef, undefined, { classe });
+    const c = prixMarche.note(evs, clef, undefined, { quoi: pourquoi, sport: 'foot' });
+    console.log(`[odds] prix du marche ${clef} (observation coupe, ${pourquoi}, classe ${classe}) : ${JSON.stringify(c)}`);
+  } catch (e) { console.log('[odds] prix ' + clef + ' (observation coupe) : ' + (e.message || e)); }
+}
+function rafraichitPrix(clefs, pourquoi, ageMin, opts) {
   const tour = filePrix.then(async () => {
     let vendues = 0;
     for (const clef of clefs) {
       if (Date.now() - prixMarche.derniere(clef) < (ageMin || 0)) continue;
+      /* une coupe non vendue : son propre chemin, jamais prioritaire (lot 6) */
+      if (prixLigues.estCoupe(clef) && !prixLigues.coupes().has(clef)) { await releveCoupe(clef, pourquoi, opts); continue; }
       /* `vendue` et non plus `ligues().has` : le joker du tennis (lot 3) */
       const vendue = prixMarche.vendue(clef);
       const sport = sportDeLaCle(clef);
@@ -2021,6 +2117,20 @@ function etatPrix(now) {
   } catch (e) { /* catalogue illisible : les dates suffisent */ }
   return out;
 }
+/* ---- LES COUPES OBSERVEES, SEULEMENT DANS LEUR FENETRE (lot 6, 11/10/2026) ----
+ * Aucune rencontre de coupe n'est au catalogue : `liguesAvecRencontre` ne les
+ * voit jamais. Elles viennent de l'inventaire (`coupes.aVenir`), seulement si
+ * PARIS_COUPES_OBSERVE_H > 0 et qu'une rencontre de la derniere reponse
+ * /events commence dans les N h ; a la cadence des championnats VENDUS
+ * (releveMs, PARIS_PRIX_RELEVE_H), et APRES eux dans la liste : la file les
+ * paie en dernier, en classe 3. Fenetre a 0 (defaut) : rien, 0 credit. */
+function coupesPerimees(now) {
+  const t = now || Date.now();
+  const f = prixLigues.observeCoupesMs();
+  if (!(f > 0)) return [];
+  const dans = coupes.aVenir(t, f);
+  return [...prixLigues.coupesObservees()].filter((c) => dans.has(c) && t - prixMarche.derniere(c) >= prixMarche.releveMs());
+}
 /* ---- QUI EST PERIME, CLE PAR CLE (lot 3, 10/10/2026) ----
  * Une cle VENDUE suit `releveMs` (PARIS_PRIX_RELEVE_H) ; une cle OBSERVEE
  * suit `observeMs` (PARIS_PRIX_OBSERVE_H, 12 h par defaut) : `cadenceDe`.
@@ -2028,7 +2138,9 @@ function etatPrix(now) {
  * rencontre a venir ne coute jamais un credit. */
 function prixPerimes(now) {
   const t = now || Date.now(), avec = liguesAvecRencontre(t);
-  return [...prixMarche.aRelever(avec)].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= prixMarche.cadenceDe(c));
+  const out = [...prixMarche.aRelever(avec)].filter((c) => avec.has(c) && t - prixMarche.derniere(c) >= prixMarche.cadenceDe(c));
+  for (const c of coupesPerimees(t)) if (!out.includes(c)) out.push(c);
+  return out;
 }
 /* Les cles de `--prix` (a la main) : les cles ecrites, plus celles du
    calendrier que couvre un joker (lot 3). Nommee pour qu'un essai la tienne :
@@ -2055,6 +2167,21 @@ function prixAvantMatch(aDesParis, now) {
   }
   return [...out];
 }
+/* ---- LA RELEVE FORCEE DES COUPES, T-45 / T-20 (lot 6, 11/10/2026) ----
+ * Bloquant du sceptique (09/10) : avec une releve toutes les 2 h, le dernier
+ * prix d'avant le coup d'envoi tombe au hasard entre T-2 h et T ; une fois
+ * sur deux il precede l'annonce des equipes (vers T-60), et la releve
+ * d'avant-match (age >= PRIX_AVANT_MS = 2 h) ne part presque jamais. Pour une
+ * coupe OBSERVEE, la releve est donc FORCEE entre T-45 et T-20 si le dernier
+ * releve est anterieur a T-60 (`coupes.forcees`) — elle remplace la regle de
+ * l'age de 2 h. Classe 2 (mesure datee, reserve de 80), apres l'avant-match
+ * et les demandes de ce qui est vendu, une cause par coupe (son age minimal :
+ * un releve posterieur a T-60 l'annule). ~1 credit par creneau de coups
+ * d'envoi (plan corrige : au plus 100 par mois). Rien si la fenetre payante
+ * est fermee (defaut). */
+function coupesAvantMatch(now) {
+  return coupes.forcees(now).map((x) => ({ quoi: 'coupe T-45', clefs: [x.cle], ageMin: x.ageMin, classe: 2 }));
+}
 /* ---- LE TIC DE 10 MIN, CAUSE PAR CAUSE (lot 1, 10/10/2026) ----
  * Il relevait `[...new Set(prixAvantMatch(...).concat(paris.prixDemandes()))]`
  * sous une seule cause, « avant le coup d envoi » : le journal ne pouvait pas
@@ -2070,7 +2197,8 @@ function prixAvantMatch(aDesParis, now) {
 function causesAvantMatch(aDesParis, now) {
   const avant = prixAvantMatch(aDesParis, now);
   const demande = paris.prixDemandes().filter((c) => !avant.includes(c));
-  return [{ quoi: 'avant', clefs: avant }, { quoi: 'demande', clefs: demande }].filter((x) => x.clefs.length);
+  return [{ quoi: 'avant', clefs: avant }, { quoi: 'demande', clefs: demande }].filter((x) => x.clefs.length)
+    .concat(coupesAvantMatch(now));
 }
 
 /* ============ LE PLUS/MOINS 2,5 AU PRIX DES TOTAUX DU MARCHE (lot 5, 10/10/2026) ============
@@ -2436,11 +2564,11 @@ function etatTotaux(now) {
    (barrages et elimination directe), les series MLS (meme cle que la saison
    reguliere), et toute coupe. Une liste, pas une devinette : une cle inconnue
    qui ressemble a une coupe compte comme une coupe. */
-const PROLONGATION_LIGUES = new Set(['soccer_uefa_champs_league', 'soccer_uefa_europa_league',
-  'soccer_uefa_europa_conference_league', 'soccer_usa_mls']);
+/* La liste et l'expression vivent dans prix_ligues.js depuis le lot 6
+   (paris.js devra la lire au lot 10, et il ne requiert que ce module) : les
+   memes, deplacees, pas recopiees. */
 function prolongationPossible(m) {
-  const l = String((m && m.source && m.source.ligue) || '');
-  return PROLONGATION_LIGUES.has(l) || /cup|copa|coupe|pokal|coppa|trophy|playoff|knockout|_fa_|super_?cup/i.test(l);
+  return prixLigues.prolongationPossibleLigue((m && m.source && m.source.ligue) || '');
 }
 
 /**
@@ -2759,7 +2887,14 @@ function lignesReglement(b) {
  * bookmaker sur un seul match ferait sauter nos forces a chaque releve.
  */
 async function calibre(ligueDemandee) {
-  const enService = await liguesEnService();
+  /* ---- UNE COUPE NE S'ETALONNE PAS (lot 6, 11/10/2026) ----
+   * Les coupes observees sont dans `liguesEnService` (leur /events est
+   * gratuit) : sans ce saut, l'etalonnage paierait 1 credit par coupe et par
+   * semaine, et deplacerait l'Elo des clubs de championnat sur des matchs
+   * joues avec des equipes remaniees (rotation de coupe). Une coupe ne se
+   * vendra qu'au prix du marche (lot 10) : l'Elo n'a rien a en apprendre. */
+  if (ligueDemandee && prixLigues.estCoupe(ligueDemandee)) throw new Error('[odds] ' + ligueDemandee + ' : une coupe ne s etalonne pas — prix du marche seulement');
+  const enService = (await liguesEnService()).filter((l) => !prixLigues.estCoupe(l.clef));
   const cibles = ligueDemandee ? enService.filter((l) => l.clef === ligueDemandee) : enService;
   if (!cibles.length) throw new Error('[odds] ligue inconnue : ' + ligueDemandee);
   let bouges = 0;
@@ -2906,6 +3041,9 @@ function montreQuota() {
  */
 const H = 3600000;
 const SEMAINE = 7 * 24 * H;
+/* La premiere passe d'appariement ESPN des coupes (lot 6) : apres l'import du
+   demarrage (30 s) et hors des tics des prix (5 + 10k min). */
+const COUPES_ESPN_PREMIER_MS = 3 * 60000;
 
 /* ---- LE PREMIER ETALONNAGE NE SE PAIE PAS A CHAQUE DEMARRAGE ----
  *
@@ -2962,6 +3100,9 @@ function planifie(signale, aRegler, expositionDe) {
        d'observation mesure, avant les scores — une releve de scores qui leve
        ne doit pas la taire. Jamais bloquante. */
     try { for (const x of prixObserve.lignes()) console.log(x); } catch (e) { console.log('[obs] bilan illisible : ' + (e.message || e)); }
+    /* La ligne `[odds] porte coupe` du jour, par coupe suivie (lot 6) : E, C,
+       A et la date au plus tot, D se lisant hors serveur. Jamais bloquante. */
+    try { for (const x of coupes.lignesPorte()) console.log(x); } catch (e) { console.log('[odds] porte coupe illisible : ' + (e.message || e)); }
     /* L'heure de cette passe REELLE, sur le volume : le gain de l'ombre se
        mesure contre elle (lot 4). Jamais bloquant. */
     try { regJournal.notePasse(Date.now()); } catch (e) { /* jamais bloquant */ }
@@ -3011,7 +3152,8 @@ function planifie(signale, aRegler, expositionDe) {
      entrent dans `filePrix` au meme instant (rien ne s'intercale), et le
      calendrier ne se refait qu'UNE fois, comme avant, si un vendu a bouge. */
   const avantMatch = () => sur('prix', async () => {
-    const tours = causesAvantMatch(aRegler).map((x) => rafraichitPrix(x.clefs, x.quoi, PRIX_DEMANDE_MS));
+    const tours = causesAvantMatch(aRegler).map((x) => rafraichitPrix(x.clefs, x.quoi, x.ageMin === undefined ? PRIX_DEMANDE_MS : x.ageMin,
+                                                                       x.classe === undefined ? undefined : { classe: x.classe }));
     const vendues = (await Promise.all(tours)).reduce((a, b) => a + b, 0);
     if (vendues) await rafraichit();
   });
@@ -3053,6 +3195,13 @@ function planifie(signale, aRegler, expositionDe) {
     try { console.log(prixJournal.ligneDemarrage()); } catch (e) { /* jamais bloquant */ }
     /* Les totaux du marche (lot 5) : toujours dit, meme vide. */
     try { console.log(ligneTotaux()); } catch (e) { /* jamais bloquant */ }
+    /* Les coupes (lot 6) : toujours dit, meme vide — la seule ligne qui dit,
+       apres un changement de variable, ce qui est observe et ce qui coute. */
+    try {
+      console.log(coupes.ligneDemarrage());
+      const ign = prixLigues.clesIgnorees();
+      if (ign.length) console.log('[odds] coupes IGNORE(S) : ' + ign.join(' ; '));
+    } catch (e) { /* jamais bloquant */ }
   }
   const premier = delaiAvantEtalonnage();
   const minuteries = [
@@ -3089,6 +3238,23 @@ function planifie(signale, aRegler, expositionDe) {
       minuteries.push(setInterval(etalonne, SEMAINE));
     }, premier),
   ];
+  /* ---- L'APPARIEMENT ESPN DES COUPES, SUR SA PROPRE MINUTERIE (lot 6) ----
+   * 0 credit. Toutes les 12 h, la premiere 3 min apres le demarrage — APRES
+   * l'import du demarrage (30 s) qui a ecrit l'inventaire et le catalogue.
+   * Jamais dans l'import : environ deux requetes ESPN par coupe (8 s au plus
+   * chacune) ne doivent ni retarder ni faire echouer l'ecriture du catalogue,
+   * et l'import repart apres chaque releve d'un championnat vendu, soit
+   * toutes les ~2 h (relecture du sceptique, 09/10). AUCUNE minuterie quand
+   * aucune coupe n'est suivie (le defaut), relu au demarrage. */
+  const apparie = () => sur('coupes espn', async () => {
+    await coupes.apparieEspn();
+    let matchs = [];
+    try { matchs = paris.catalogue().matchs; } catch (e) { /* catalogue illisible */ }
+    for (const x of coupes.lignesInventaire(Date.now(), { matchs })) console.log(x);
+  });
+  if (coupes.suivies().size) {
+    minuteries.push(setTimeout(() => { apparie(); minuteries.push(setInterval(apparie, 12 * H)); }, COUPES_ESPN_PREMIER_MS));
+  }
   /* Les totaux (lot 5) : AUCUNE minuterie quand les deux listes sont vides
      (le defaut) — un deploiement ne fait rien de plus. Elles passent dans la
      MEME file que les prix (`filePrix`) : un tic des totaux qui tombe en meme
@@ -3126,7 +3292,7 @@ function planifie(signale, aRegler, expositionDe) {
   }
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, frequente, etalonne, prix, avantMatch, totaux, clotureTotaux, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, frequente, etalonne, prix, avantMatch, totaux, clotureTotaux, apparie, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
@@ -3154,9 +3320,28 @@ if (require.main === module) {
                     if (!prixLigues.totauxARelever().has(l)) throw new Error(`--totaux ${l} : absente de PARIS_TOTAUX_OBSERVE et de PARIS_TOTAUX_LIGUES — aucun appel`);
                     await rafraichitTotaux([l], 'a la main'); await importeMatchs();
                   },
+                  /* Les coupes (lot 6) : `--coupes` lit le /events des HUIT
+                     coupes (0 credit, PARIS_COUPES_OBSERVE ou non), les note a
+                     l'inventaire, les apparie a ESPN (0 credit) et imprime les
+                     non appariees avec les noms ESPN du meme jour — de quoi
+                     RELEVER les ALIAS. Aucun /odds, aucun catalogue ecrit. */
+                  '--coupes': async () => {
+                    for (const cle of prixLigues.COUPES) {
+                      try {
+                        const evs = await appel(`/sports/${cle}/events`, {}, 0, 'events ' + cle);
+                        const r = coupes.noteInventaire(cle, evs, Date.now());
+                        console.log(`[odds] ${cle} : ${r.n} rencontre(s), ${r.aVenir7j} a 7 j — 0 credit`);
+                      } catch (e) { console.log(`[odds] ${cle} : ${String(e.message || e).slice(0, 120)}`); }
+                    }
+                    const r = await coupes.apparieEspn({ cles: prixLigues.COUPES });
+                    for (const [cle, x] of Object.entries(r)) {
+                      console.log(`\n${cle} : ${x.appariees}/${x.lues} appariee(s) a ESPN${x.panne ? ' — ' + x.panne : ''}`);
+                      for (const n of x.nonAppariees) console.log(`  NON APPARIEE  ${n.debut.slice(0, 16)}  ${n.affiche}\n      ESPN le meme jour : ${n.espnMemeJour.join(' | ') || 'rien'}`);
+                    }
+                  },
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
-    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix | --reglement | --totaux [ligue]');
+    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix | --reglement | --totaux [ligue] | --coupes');
     process.exit(2);
   }
   suite().then(() => process.exit(0))
@@ -3180,4 +3365,6 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    /* les totaux du marche (lot 5, 10/10/2026) : observation, cloture, porte de vente */
                    avecButs, totauxAReleve, totauxCloture, rafraichitTotaux, mesureCloture, etatTotaux, ecartTotaux, ligneTotaux, totauxInconnues,
                    TOTAUX_AVANT_MS, TOTAUX_ECART_MS, TOTAUX_ESSAIS_MAX, TOTAUX_PLAFOND_MOIS, TOTAUX_CLOTURE_ECART_MS, CLOTURE_AVANT,
-                   TOTAUX_TIC_PREMIER_MS, CLOTURE_TIC_DECALAGE_MS, sansButs };
+                   TOTAUX_TIC_PREMIER_MS, CLOTURE_TIC_DECALAGE_MS, sansButs,
+                   /* les coupes (lot 6, 11/10/2026) : inventaire, observation a 48 h, releve forcee, rien de vendu */
+                   coupesPerimees, coupesAvantMatch, NOMS_COMPET, NOM_COMPET, COUPES_ESPN_PREMIER_MS };

@@ -12,6 +12,9 @@
  *     --ages 0,1,3,6,12,13,36   les tranches d'age, en heures (voir « tranches »)
  *     --paris FICHIER   les paris (defaut : paris.json du dossier, ecrit par --telecharge)
  *     --json            la mesure entiere en JSON
+ *     --coupes          la derive des coupes (porte D, EXPLOITATION 8.11) et la
+ *                       porte complete avec E, C, A de etat.json (lot 6)
+ *     --instantanes DIR ou garder l'instantane (defaut : _releves/prix_age/)
  *
  * ADMIN_KEY est lue dans le shell du proprietaire, envoyee dans l'en-tete
  * x-admin-key, jamais affichee ni ecrite. Chaque mesure garde un instantane
@@ -122,6 +125,9 @@ const cotes = require(path.join(RACINE, 'cotes'));
 const paris = require(path.join(RACINE, 'paris'));
 const pj = require(path.join(RACINE, 'prix_journal'));
 const { LIGUES_DEFAUT } = require(path.join(RACINE, 'prix_ligues'));
+/* lot 6 : la liste fermee des coupes, et la porte du serveur (la MEME fonction) */
+const prixLigues = require(path.join(RACINE, 'prix_ligues'));
+const coupesM = require(path.join(RACINE, 'coupes'));
 
 const MIN = 60000, H = 3600000, JOUR = 86400000;
 const Z95 = 1.959964, Z80 = 0.841621;
@@ -719,6 +725,165 @@ function rapport(r, P, extra) {
   return L.join('\n');
 }
 
+// --------------------------------------------------------------- la derive des coupes
+
+/* ---- LA DERIVE DES COUPES : LA PORTE D (lot 6, 11/10/2026, EXPLOITATION 8.11) ----
+ * La question : un prix de coupe, vendu a 10 % de marge au releve k, devient-il
+ * battable au releve suivant j plus souvent que celui des championnats qu'on
+ * vend deja ? Calculee ICI, sur le journal des releves (lot 1), et non dans
+ * `prix_marche.note` (bloquant du sceptique : le chemin d'ecriture des 17
+ * championnats vendus, et un historique qu'une lecture ratee effacait).
+ *
+ * Les paires : deux releves SUCCESSIFS d'une meme rencontre (meme identifiant
+ * d'evenement du fournisseur), k puis j, tous deux avant le coup d'envoi
+ * (debut > t_j), a 3 h au plus d'ecart (paris.FRAIS_MS : au-dela, la vente
+ * refuse deja le prix pres du coup d'envoi), avec une reference aux deux, la
+ * MEME (plan corrige : un passage betfair -> mediane fait un saut artificiel,
+ * plus frequent sur les marches minces) ; k dont le carnet a ete ecrit (ko).
+ * L'orientation ne se lit pas dans le journal (ni domicile ni exterieur) :
+ * l'identifiant d'evenement en tient lieu.
+ * La cotation : `cotesVendues(k)`, la meme que le chemin vendu (1-N-2 et
+ * double chance sur q). La double chance n'est pas comptee quand une de ses
+ * issues depasse 0,93 a k (decision du plan corrige : DC non vendue si
+ * p1X > 0,93 ; le coussin n'y est que de 1,1 point). Une issue est battable
+ * si cote(k) x p(j) > 1.
+ * Les tranches, sur le delai debut - t_j : moins de 3 h, 3-48 h, plus de 48 h
+ * (rapportee) ; et « apres T-60 » (t_j >= debut - 60 min, la releve forcee),
+ * comptee a part, en plus de « moins de 3 h ».
+ * Le compte : PAR RENCONTRE — une rencontre est battable dans une tranche et
+ * un marche si UNE de ses paires y a une issue battable. Date par le jour
+ * (UTC) du coup d'envoi : la reference des championnats ne porte que sur les
+ * MEMES jours que la coupe (coupes en semaine, championnats le week-end).
+ * Les favoris (p1 ou p2 >= 0,75 a k) : compteur a part, rapporte. */
+const TRANCHES_COUPE = ['moins3h', 'de3a48h', 'plus48h', 'apresT60'];
+const DC_PLAFOND = 0.93, FAVORI = 0.75;
+function tranchesDuDelai(d) {
+  const out = [d < paris.PRES_MS ? 'moins3h' : d < 48 * H ? 'de3a48h' : 'plus48h'];
+  if (d <= 60 * MIN) out.push('apresT60');
+  return out;
+}
+/** La derive, par ligue (coupes et championnats de football vendus), tranche,
+ *  marche et jour : { cellules: { ligue: { tranche: { marche: { jour: { n, k } } } } },
+ *  favoris (meme forme, rencontres a favori seulement), paires, exclus }. */
+function deriveCoupes(lignes) {
+  const evs = new Map();
+  const exclus = { autres: 0, enJeu: 0, ecartTrop: 0, sansReference: 0, refChange: 0, ko: 0, invendables: 0 };
+  for (const x of lignes || []) {
+    if (!x || x.v !== 1 || x.m !== 'h2h' || !Number.isFinite(x.t) || !Array.isArray(x.e)) continue;
+    const coupe = prixLigues.estCoupe(x.l);
+    /* la reference : les championnats de football VENDUS (lignes sans o) */
+    if (!coupe && (x.o || !/^soccer_/.test(String(x.l)))) { exclus.autres += x.e.length; continue; }
+    if (x.s !== undefined && x.s !== 'foot') { exclus.autres += x.e.length; continue; }
+    for (const e of x.e) {
+      const k = x.l + '|' + e[0];
+      let a = evs.get(k);
+      if (!a) evs.set(k, a = { l: x.l, obs: [] });
+      a.obs.push({ t: x.t, ko: !!x.ko, debut: Number(e[1]) || 0, ref: e[2], pv: e[2] === 'x' ? null : e[3] || null });
+    }
+  }
+  const cellules = {}, favoris = {};
+  const cel = (racine, l, tr, mk, j) => {
+    const a = racine[l] || (racine[l] = {}), b = a[tr] || (a[tr] = {}), c = b[mk] || (b[mk] = {});
+    return c[j] || (c[j] = { n: 0, k: 0 });
+  };
+  let paires = 0;
+  const cache = new Map();
+  const cotesDe = (p) => { const k = p.join(','); if (!cache.has(k)) cache.set(k, cotesVendues(p)); return cache.get(k); };
+  for (const [, a] of evs) {
+    a.obs.sort((x, y) => x.t - y.t);
+    const acc = {};   // tranche|marche -> battable ?
+    let favori = false, debut = 0;
+    for (let i = 1; i < a.obs.length; i++) {
+      const K = a.obs[i - 1], J = a.obs[i];
+      if (!(J.debut > J.t)) { exclus.enJeu++; continue; }
+      if (!(J.t > K.t) || J.t - K.t > paris.FRAIS_MS) { exclus.ecartTrop++; continue; }
+      if (!K.pv || !J.pv) { exclus.sansReference++; continue; }
+      if (K.ref !== J.ref) { exclus.refChange++; continue; }
+      if (K.ko) { exclus.ko++; continue; }
+      const ck0 = cotesDe(K.pv);
+      if (!ck0) { exclus.invendables++; continue; }
+      const q = K.pv.map(Number);
+      const ck = Object.assign({}, ck0);
+      if (Math.max(q[0] + q[1], q[0] + q[2], q[1] + q[2]) > DC_PLAFOND) ck.dc = null;
+      const r = juge(ck, J.pv);
+      paires++;
+      debut = J.debut;
+      if (Math.max(q[0], q[2]) >= FAVORI) favori = true;
+      for (const tr of tranchesDuDelai(J.debut - J.t)) {
+        for (const mk of ['1n2', 'dc']) {
+          if (!r[mk]) continue;
+          const c = tr + '|' + mk;
+          acc[c] = acc[c] || r[mk].b > 0;
+        }
+      }
+    }
+    if (!debut) continue;
+    const j = jourDe(debut);
+    for (const [c, b] of Object.entries(acc)) {
+      const [tr, mk] = c.split('|');
+      const x = cel(cellules, a.l, tr, mk, j); x.n++; if (b) x.k++;
+      if (favori) { const y = cel(favoris, a.l, tr, mk, j); y.n++; if (b) y.k++; }
+    }
+  }
+  return { cellules, favoris, paires, exclus };
+}
+/** La derive d'un ensemble de ligues, tranche et marche, avec la reference des
+ *  championnats sur les MEMES jours : { tranche: { marche: { n, k, nRef, kRef, jours } } }. */
+function deriveDe(r, ligues, racine) {
+  const R = racine || r.cellules;
+  const champs = Object.keys(r.cellules).filter((l) => !prixLigues.estCoupe(l));
+  const out = {};
+  for (const tr of TRANCHES_COUPE) {
+    out[tr] = {};
+    for (const mk of ['1n2', 'dc']) {
+      const x = { n: 0, k: 0, nRef: 0, kRef: 0, jours: [] };
+      const jours = new Set();
+      for (const l of ligues) for (const [j, c] of Object.entries(((R[l] || {})[tr] || {})[mk] || {})) { x.n += c.n; x.k += c.k; if (c.n) jours.add(j); }
+      for (const l of champs) for (const j of jours) { const c = (((r.cellules[l] || {})[tr] || {})[mk] || {})[j]; if (c) { x.nRef += c.n; x.kRef += c.k; } }
+      x.jours = [...jours].sort();
+      out[tr][mk] = x;
+    }
+  }
+  return out;
+}
+/** Les verdicts complets des coupes : E, C, A de l'etat du serveur (fige par
+ *  --telecharge dans etat.json), D du journal, avec la porte du serveur
+ *  (`coupes.porte`, la MEME fonction). */
+function portesCoupes(r, etatCoupes, now) {
+  const out = {};
+  const par = (etatCoupes && etatCoupes.parCoupe) || {};
+  const cles = new Set([...Object.keys(r.cellules).filter((l) => prixLigues.estCoupe(l)), ...Object.keys(par)]);
+  for (const cle of cles) {
+    const m = (par[cle] && par[cle].mesure) || { E: 0, C: 0, A: 0 };
+    out[cle] = { derive: deriveDe(r, [cle]), favoris: deriveDe(r, [cle], r.favoris), porte: coupesM.porte(cle, m, deriveDe(r, [cle]), now), mesureLue: !!par[cle] };
+  }
+  return out;
+}
+function rapportCoupes(r, P, etatCoupes) {
+  const L = [];
+  const dit = (x) => (x.n ? `${x.k}/${x.n} ${pct(x.k / x.n, 1)} (haut ${pct(coupesM.wilsonHaut(x.k, x.n), 1)})` : '—') + ` · champ. memes jours ${x.nRef ? x.kRef + '/' + x.nRef + ' ' + pct(x.kRef / x.nRef, 1) : '—'}`;
+  L.push(`DERIVE DES COUPES (porte D, EXPLOITATION 8.11) · ${r.paires} paire(s) jugee(s) · exclus : ${Object.entries(r.exclus).map(([k, v]) => k + ' ' + v).join(' · ')}`);
+  L.push(`  par RENCONTRE (au moins une issue battable), borne haute de Wilson a 95 % sous ${pct(coupesM.PORTE.dHaut, 0)} et part <= championnats des memes jours + 1 point ; `
+    + `sans aucune battable, il faut ${coupesM.N_MIN_D} rencontres par tranche et par marche`);
+  if (!etatCoupes) L.push('  (etat.json sans coupes : E, C, A non lus — lancer --telecharge ; la porte les tient pour nuls)');
+  for (const fam of ['europeennes', 'nationales']) {
+    const ls = prixLigues.COUPES.filter((c) => coupesM.famille(c) === fam);
+    const d = deriveDe(r, ls);
+    L.push(`  famille ${fam} (repere) : moins3h 1n2 ${dit(d.moins3h['1n2'])} | apresT60 1n2 ${dit(d.apresT60['1n2'])}`);
+  }
+  for (const [cle, x] of Object.entries(P)) {
+    L.push('');
+    L.push(`  ${cle} : ${x.porte.verdict.toUpperCase()}${x.porte.pourquoi.length ? ' — ' + x.porte.pourquoi.join(' ; ') : ''}`);
+    for (const tr of TRANCHES_COUPE) for (const mk of ['1n2', 'dc']) {
+      const c = x.porte.criteres.D.cellules && x.porte.criteres.D.cellules[tr + '|' + mk];
+      L.push(`     ${(tr + ' ' + mk).padEnd(14)} ${dit(x.derive[tr][mk])}${c ? ' → ' + c.etat : tr === 'plus48h' ? ' (rapporte)' : ''}`);
+    }
+    const f = x.favoris.moins3h;
+    L.push(`     favoris >= 75 % (rapporte) : moins3h 1n2 ${dit(f['1n2'])} | dc ${dit(f.dc)}`);
+  }
+  return L.join('\n');
+}
+
 // --------------------------------------------------------------- le telechargement
 
 /* Fige les jours COMPLETS (avant aujourd'hui UTC) absents du dossier, plus
@@ -739,7 +904,9 @@ async function telecharge(o) {
   const etat = await (await lit('/paris/import')).json();
   const jp = etat.journalPrix || {};
   fs.writeFileSync(path.join(dir, 'etat.json'), JSON.stringify({ lu: new Date().toISOString(), journalPrix: jp,
-    projection: (etat.quota && etat.quota.projection) || null }) + '\n');
+    projection: (etat.quota && etat.quota.projection) || null,
+    /* lot 6 : E, C, A des coupes, pour la porte complete de --coupes */
+    coupes: etat.coupes && !etat.coupes.erreur ? etat.coupes : null }) + '\n');
   const fait = { jours: [], deja: 0, aujourdhui: 0 };
   for (const j of jp.jours || []) {
     if (!pj.jourValide(j.jour)) continue;
@@ -769,6 +936,11 @@ async function principal(argv) {
   const args = argv.slice(2);
   const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : d; };
   const DIR = path.resolve(opt('dossier', path.join(RACINE, '_releves', 'prix_journal')));
+  /* Ou garder l'instantane de la mesure : _releves/prix_age/ par defaut (hors
+     depot). Un essai passe son dossier temporaire (relecture du 11/10/2026 :
+     chaque passage de coupes.test.js laissait un instantane de banc parmi
+     ceux du proprietaire). */
+  const INST = path.resolve(opt('instantanes', path.join(RACINE, '_releves', 'prix_age')));
   if (args.includes('--telecharge')) {
     const cle = process.env.ADMIN_KEY;
     if (!cle) { console.error('ADMIN_KEY absente du shell : rien telecharge'); return 2; }
@@ -780,6 +952,18 @@ async function principal(argv) {
   const ages = opt('ages', null);
   const lu = await pj.lisJournal({ dossier: DIR });
   if (!lu.lignes.length) { console.log('aucune ligne de journal dans ' + DIR + (args.includes('--telecharge') ? '' : ' (lancer --telecharge)')); return 0; }
+  if (args.includes('--coupes')) {
+    let etatC = null;
+    try { etatC = JSON.parse(fs.readFileSync(path.join(DIR, 'etat.json'), 'utf8')).coupes || null; } catch (e) { /* pas d'etat fige */ }
+    const rc = deriveCoupes(lu.lignes);
+    const PC = portesCoupes(rc, etatC, Date.now());
+    const sortieC = { quand: new Date().toISOString(), dossier: DIR, derive: rc, portes: PC };
+    fs.mkdirSync(INST, { recursive: true });
+    fs.writeFileSync(path.join(INST, 'coupes-' + sortieC.quand.replace(/[:.]/g, '-') + '.json'), JSON.stringify(sortieC));
+    if (args.includes('--json')) console.log(JSON.stringify(sortieC, null, 1));
+    else console.log(rapportCoupes(rc, PC, etatC));
+    return 0;
+  }
   const r = mesure(lu.lignes, { ages: ages ? ages.split(',').map(Number) : undefined });
   let etat = null;
   try { etat = JSON.parse(fs.readFileSync(path.join(DIR, 'etat.json'), 'utf8')); } catch (e) { /* pas d'etat fige */ }
@@ -787,8 +971,8 @@ async function principal(argv) {
   let ms = null;
   try { ms = mises(JSON.parse(fs.readFileSync(opt('paris', path.join(DIR, 'paris.json')), 'utf8'))); } catch (e) { /* pas de paris figes */ }
   const sortie = { quand: new Date().toISOString(), dossier: DIR, illisibles: lu.illisibles, fichiers: lu.fichiers, mesure: r, portes: P, mises: ms };
-  fs.mkdirSync(path.join(RACINE, '_releves', 'prix_age'), { recursive: true });
-  fs.writeFileSync(path.join(RACINE, '_releves', 'prix_age', sortie.quand.replace(/[:.]/g, '-') + '.json'), JSON.stringify(sortie));
+  fs.mkdirSync(INST, { recursive: true });
+  fs.writeFileSync(path.join(INST, sortie.quand.replace(/[:.]/g, '-') + '.json'), JSON.stringify(sortie));
   if (args.includes('--json')) console.log(JSON.stringify(sortie, null, 1));
   else {
     console.log(`${lu.fichiers.length} fichier(s), ${lu.illisibles} ligne(s) illisible(s)`);
@@ -803,4 +987,6 @@ if (require.main === module) {
 
 module.exports = { PORTE, AGES_DEFAUT, DELAIS, AFFICHE_MIN, MISES_MIN, Z95, Z80, ALPHA_HAUT, groupeDe, cotesVendues, juge, tranchesAge, regimeDe, serie, completeur,
                    mesure, gammaP, borneHautePoisson, stats, cleDe, dates, verdictG2, verdictG1, construction, moyenneTemps, accorde, portes,
-                   retraits, cadence, mises, rapport, telecharge, principal };
+                   retraits, cadence, mises, rapport, telecharge, principal,
+                   /* lot 6 : la derive des coupes (porte D) */
+                   TRANCHES_COUPE, DC_PLAFOND, FAVORI, tranchesDuDelai, deriveCoupes, deriveDe, portesCoupes, rapportCoupes };
