@@ -49,6 +49,7 @@
 const fs = require('fs');
 const path = require('path');
 const paris = require('./paris');
+const prixLigues = require('./prix_ligues');
 
 /* La force de depart d'une equipe inconnue. Toutes les equipes inconnues se
    valent donc — c'est exact, en un sens : on n'en sait rien. */
@@ -602,6 +603,25 @@ function cotesDe(sport, domicile, exterieur, margeVoulue) {
   return t.cotes;
 }
 
+/* ---- LE TOTAL DU MARCHE QUE L'IMPORT A POSE (lot 5, 10/10/2026) ----
+ * `m.butsMarche` = { total, t, ref, ligne } (paris_import.avecButs, pour une
+ * cle de PARIS_TOTAUX_LIGUES seulement : vide par defaut, il n'existe
+ * jamais). Il ne sert que s'il a au plus PARIS_TOTAUX_AGE_MAX_H (48 h, voir
+ * prix_ligues.totauxAgeMaxH) : au-dela, la grille retombe sur le total du
+ * championnat, exactement comme avant — jamais un total plus vieux que ceux
+ * que le banc a mesures, et un catalogue relu du volume (habilleCatalogue)
+ * ne ressert pas un total perime. Une rencontre COMMENCEE ne bouge plus : le
+ * retour anticipe d'`habille` passe avant. */
+function butsDe(m, now) {
+  const b = m && m.butsMarche;
+  if (!b || typeof b !== 'object' || !(Number(b.total) > 0)) return null;
+  const t = Date.parse(b.t);
+  /* PARIS_TOTAUX_AGE_MAX_H=0 : aucun total servi (le reglage echoue ferme) */
+  const age = prixLigues.totauxAgeMaxMs();
+  if (!isFinite(t) || !(age > 0) || !((Number(now) || Date.now()) - t <= age)) return null;
+  return { total: Number(b.total) };
+}
+
 /**
  * Completer un match. Une cote DEJA PRESENTE n'est jamais remplacee : si
  * quelqu'un a pris la peine d'en relever une chez un bookmaker, elle vaut
@@ -641,10 +661,13 @@ function habille(m, margeVoulue, now) {
    * et se refont a chaque nouveau prix tant que la rencontre n'a pas commence.
    * `cotesGenerees` reste vrai : ce n'est pas un lot recopie tel quel, et si
    * le prix disparait (championnat retire de la liste), l'Elo reprend. */
+  /* `extra` recoit de `derives` si le total du marche des totaux a SERVI
+     (`servi`, `grille`) : voir `avecTotalServi`. */
+  const extra = butsDe(m, t);
   if (m.prixMarche && m.prixMarche.p && !commence) {
-    const mm = marchesDuMarche(m.sport, m.prixMarche.p, margeVoulue, m.source && m.source.ligue);
+    const mm = marchesDuMarche(m.sport, m.prixMarche.p, margeVoulue, m.source && m.source.ligue, extra);
     if (!mm) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — trop desequilibre au prix du marche`);
-    const sortie = Object.assign({}, m, { marches: mm, cotesGenerees: true });
+    const sortie = avecTotalServi(Object.assign({}, m, { marches: mm, cotesGenerees: true }), extra);
     delete sortie.cotes;
     return sortie;
   }
@@ -668,7 +691,7 @@ function habille(m, margeVoulue, now) {
     if (refus) throw new Error(`cotes : ${m.domicile} v ${m.exterieur} — ${refus}`);
   }
   const marches = marchesDe(m.sport, m.domicile, m.exterieur, margeVoulue,
-                            garde ? lot : null, m.source && m.source.ligue);
+                            garde ? lot : null, m.source && m.source.ligue, extra);
   /* ---- ET SEULEMENT ALORS, ON GARDE CE QUI ETAIT DEJA ECRIT ----
    * Un marche deja la n'est pas remplace, pour la meme raison que le 1-N-2 :
    * s'il a ete releve, il vaut mieux que le notre.
@@ -700,6 +723,26 @@ function habille(m, margeVoulue, now) {
     cotesGenerees: garde ? !!m.cotesGenerees : true,
   });
   delete sortie.cotes;
+  /* sous `garde`, les marches deja ecrits recouvrent les neufs : le total du
+     marche n'est pas dit servi */
+  return avecTotalServi(sortie, garde ? null : extra);
+}
+
+/* ---- LE CHAMP D'AUDIT `butsMarche` NE DIT QUE CE QUI A FAIT LE PRIX ----
+ * (relecture du 10/10/2026) Pose par l'import (paris_import.avecButs), il
+ * etait recopie au catalogue meme quand le total du marche n'avait PAS servi :
+ * la garde de coherence avait rendu la rencontre au chemin d'avant, ou l'age
+ * l'avait ecarte (`butsDe`). Le jour d'une contestation, il aurait affirme un
+ * total qui n'avait pas fait le prix. Il reste donc seulement si `derives` dit
+ * l'avoir pris (`extra.servi`), avec le total REELLEMENT mis dans la grille
+ * (`grille`, apres la borne TOTAL_DU_MARCHE) ; sinon il est retire. Sans
+ * `butsMarche` en entree (le defaut : PARIS_TOTAUX_LIGUES vide), rien ne
+ * change. */
+function avecTotalServi(sortie, extra) {
+  if (!sortie.butsMarche) return sortie;
+  if (extra && extra.servi && nombre(extra.grille)) {
+    sortie.butsMarche = Object.assign({}, sortie.butsMarche, { grille: Math.round(extra.grille * 1e4) / 1e4 });
+  } else delete sortie.butsMarche;
   return sortie;
 }
 
@@ -1130,6 +1173,82 @@ function ajusteRho(p1, pN, p2, total, bornes, bornesTotal, options) {
   return rend(lh, la, rb, T, sens);
 }
 
+/* ================ LE TOTAL PRIS AU MARCHE DES TOTAUX (lot 5, 10/10/2026) ================
+ *
+ * EN OBSERVATION : rien de ce qui est vendu ne change tant que
+ * PARIS_TOTAUX_LIGUES est vide (le defaut) — `contexte.totalMarche` n'est
+ * jamais pose par l'import (paris_import.avecButs).
+ *
+ * ---- L'IDENTITE QUI REND LA CHOSE EXACTE ----
+ * Dans la grille, Dixon-Coles retire d = e^-T lh la rho au total 0 (case
+ * 0-0), ajoute 2d au total 1 (1-0 et 0-1) et retire d au total 2 (1-1) : il
+ * ne deplace de la masse qu'entre les totaux 0, 1 et 2, et n'en cree pas. Donc
+ * P(plus de 2,5) = 1 - P(0) - P(1) - P(2) ne depend que de T = lh + la :
+ * c'est celle d'une Poisson de moyenne T, quels que soient la part du
+ * domicile et rho (`plusDeLigne`), a la troncature a BUTS_MAX buts pres (la
+ * grille est renormalisee sur 13 x 13 cases ; ecart mesure par
+ * cotes_totaux.test.js). Un prix du plus/moins 2,5 donne T, sans
+ * toucher au 1-N-2 ; la part reproduit le 1-N-2 vendu et rho rend le nul
+ * (`ajusteRho`, `cede: false` : CEDER le total rouvrirait l'ecart au
+ * plus/moins du marche, qui est tout le gain).
+ *
+ * ---- LA MESURE (banc commun du modele de buts, football-data, TEST
+ * 2023/24-2026/27, 15 986 rencontres, ou25 a 22 %, prototype D2_match_rho40) ----
+ *   plus/moins 2,5 battable contre la cloture : 3 232 -> 42 issues sur 31 972
+ *     (10,1 -> 0,13 +-0,04 %) au chemin de production d'alors ; au chemin du
+ *     marche des quatorze championnats (la production depuis 8.8quinquies),
+ *     porte 0 du 10/10/2026 rejouee avec CE code : 408 -> 44 sur 31 972 (1,28
+ *     -> 0,14 +-0,04 %) avec la garde de coherence, 42 sans ; log-loss du
+ *     score exact -0,0042 +-0,0017 (apparie) ;
+ *   |ecart| grille / 1-N-2 vendu : 0,00 point en moyenne, 15,45 au plus (une
+ *     rencontre de Super Lig, 0,2 % des rencontres a plus d'un point en T1) —
+ *     d'ou la GARDE de coherence ci-dessous.
+ * La plage de rho se choisissait sur l'APPRENTISSAGE (2018/19-2022/23, 25 420
+ * rencontres) : [-0,25 ; +0,05] laissait 3,5 % des rencontres a plus d'un point
+ * du 1-N-2 vendu, [-0,40 ; +0,15] 0,4 %. Le total du marche est borne a
+ * [1,5 ; 5,0] : aucun P(plus de 2,5) d'ouverture Pinnacle hors de [0,191 ;
+ * 0,875] sur 12 259 rencontres (bornes_T.js, relecture du 09/10), la borne ne
+ * mord jamais sur le banc.
+ * La porte 0 (EXPLOITATION 8.8decies) rejoue CE code contre la copie 8.8ter
+ * avant toute vente. */
+const RHO_DU_MARCHE = [-0.40, 0.15];
+const TOTAL_DU_MARCHE = [1.5, 5.0];
+/* ---- LA GARDE DE COHERENCE PAR RENCONTRE ----
+ * A cede:false, rho a sa borne ne rend pas toujours le nul vendu : la part
+ * est alors refaite sur le RAPPORT p1/(p1+p2), et la grille s'ecarte du
+ * 1-N-2 vendu d'au plus |ecartNul| sur chaque issue (le rapport est exact,
+ * donc |dp1| et |dp2| sont sous |dN|). Le handicap, le score et le btts
+ * descendent de cette grille alors que le 1-N-2 et la dc suivent le marche :
+ * sur une rencontre a 15,45 points (prototype, Super Lig), le « 1 » du
+ * handicap etait cote sur un P1 faux de plus de 10 points, ce que 15 % de
+ * marge ne couvre pas. Au-dela d'UN point (la borne |coh| max de la porte 0),
+ * la rencontre reprend TOUT le chemin d'avant (le total du championnat, qui
+ * cede au marche) et `COMPTE.totalMarcheEcarte` le dit. */
+const ECART_NUL_GARDE = 0.01;
+
+/** P(total > ligne) d'une Poisson de moyenne T, `ligne` en x,5. */
+function plusDeLigne(T, ligne) {
+  const k = Math.floor(Number(ligne));
+  let p = Math.exp(-T), s = p;
+  for (let i = 1; i <= k; i++) { p = p * T / i; s += p; }
+  return 1 - s;
+}
+
+/** Le total T de la Poisson qui donne P(plus de `ligne`) = pPlus (sans
+ *  marge), ou null : `ligne` doit etre en x,5 (un remboursement partiel ne se
+ *  retire pas comme une marge), pPlus dans ]0,02 ; 0,98[. */
+function totalDuMarche(pPlus, ligne) {
+  const L = ligne === undefined ? 2.5 : Number(ligne);
+  const q = Number(pPlus);
+  if (!(q > 0.02 && q < 0.98) || !isFinite(L) || L < 0 || Math.abs(L - Math.floor(L) - 0.5) > 1e-9) return null;
+  let bas = 0.2, haut = 9;
+  for (let t = 0; t < 50; t++) {
+    const T = (bas + haut) / 2;
+    if (plusDeLigne(T, L) < q) bas = T; else haut = T;
+  }
+  return (bas + haut) / 2;
+}
+
 /**
  * LES PROBABILITES DE CHAQUE MARCHE, toutes lues dans la meme grille.
  *
@@ -1247,7 +1366,15 @@ function probasImplicites(cotes, iss, couverture) {
  * grille : il est deja calcule, deja eprouve, et le recalculer autrement le
  * ferait diverger de lui-meme au troisieme chiffre. Les autres en descendent.
  */
-function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase, ligue) {
+/* `extra` (lot 5, facultatif) : { total } du marche des totaux (`butsDe`),
+   et y recoit `servi` / `grille` / `ecarte` (voir `derives`). La grille sait
+   le prendre sur un 1-N-2 releve (le prototype D y a mesure 0,2 % d'issues
+   plus/moins battables), mais ce chemin est INERTE en production : la porte
+   de vente (paris_import.avecButs) exige un prix h2h du marche servi pour la
+   garde du 1-N-2 qui a bouge, donc un championnat revenu a l'Elo ne recoit
+   jamais de total (ecart (2) d'EXPLOITATION 8.8decies, a trancher par le
+   proprietaire avant toute bascule). */
+function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase, ligue, extra) {
   const iss1 = paris.issues(sport);
   /* ---- LE 1-N-2 RELEVE PREND LE PAS SUR LE NOTRE ----
    * `cotesBase` est le lot qui sera AFFICHE quand il vient d'un bookmaker.
@@ -1285,7 +1412,8 @@ function marchesDe(sport, domicile, exterieur, margeVoulue, cotesBase, ligue) {
   const p = releve || probabilites(sport, domicile, exterieur);
   /* `chemin` : un lot releve est un prix de bookmaker (aussi tranche que le
      marche), le notre sort de l'Elo (moins tranche : voir `totalDe`) */
-  return derives(sport, p, margeVoulue, sortie, undefined, { ligue, chemin: releve ? 'marche' : 'elo' });
+  return derives(sport, p, margeVoulue, sortie, undefined,
+                 { ligue, chemin: releve ? 'marche' : 'elo', totalMarche: extra ? extra.total : undefined, retour: extra || null });
 }
 
 /* ================== LA TABLE DES TOTAUX PAR CHAMPIONNAT ==================
@@ -1323,7 +1451,18 @@ let BUTS = null;
 /* Ce que le modele a fait depuis le demarrage : la regle se juge en direct
    (etatImport().buts), pas seulement sur le banc. */
 const COMPTE = { depuis: new Date().toISOString(), elo: 0, marche: 0, ligueInconnue: 0, sansTable: 0,
-                 nulManque: 0, ecartNulMax: 0, totalCede: 0 };
+                 nulManque: 0, ecartNulMax: 0, totalCede: 0,
+                 /* lot 5 (10/10/2026) : grilles posees sur le total du marche
+                    des totaux, et rencontres rendues au chemin d'avant par la
+                    garde de coherence (ECART_NUL_GARDE) */
+                 totalMarche: 0, totalMarcheEcarte: 0 };
+/* ---- L'OMBRE A SES PROPRES COMPTEURS (lot 5, 10/10/2026) ----
+ * La mesure de cloture des totaux calcule ce qu'on VENDRAIT au total du
+ * marche (`contexte.ombre`) : par `derives`, comme la vente. Comptee dans
+ * COMPTE, elle ferait croire, dans etatImport().buts, que le total du marche
+ * est vendu alors que rien ne l'est. Elle compte donc ici, a part. */
+const COMPTE_OMBRE = { elo: 0, marche: 0, ligueInconnue: 0, sansTable: 0, nulManque: 0, ecartNulMax: 0, totalCede: 0,
+                       totalMarche: 0, totalMarcheEcarte: 0 };
 /* Un NOMBRE, pas une valeur que Number() rend finie : Number(null) vaut 0 et
    passait, et une table aux champs nuls se vendait (relecture du 09/10). */
 const nombre = (x) => typeof x === 'number' && isFinite(x);
@@ -1358,12 +1497,14 @@ function etatButs(now) {
     championnats: t.ligues ? Object.keys(t.ligues).length : 0,
     /* des APPELS : une rencontre compte a chaque import qui la retarife */
     depuisDemarrage: Object.assign({}, COMPTE),
+    /* la mesure de cloture des totaux (rien de vendu), a part */
+    ombre: Object.assign({}, COMPTE_OMBRE),
   };
 }
 /** Le total de buts attendu d'une rencontre de `ligue` (cle The Odds API),
  *  ou null sans table (`ajusteButs` reprend).
  *  `chemin` : 'elo' (1-N-2 de notre Elo) ou 'marche' (1-N-2 d'un bookmaker). */
-function totalDe(ligue, p, chemin) {
+function totalDe(ligue, p, chemin, compte) {
   /* le retour arriere, sans commit : PARIS_BUTS_LIGUE=0 remet ajusteButs partout */
   if (process.env.PARIS_BUTS_LIGUE === '0') return null;
   const t = BUTS || chargeButs();
@@ -1379,7 +1520,7 @@ function totalDe(ligue, p, chemin) {
   const connue = t.ligues[ligue];
   const L = connue || t.global;
   if (!L || !nombre(L.a)) return null;
-  if (!connue) COMPTE.ligueInconnue++;
+  if (!connue) (compte || COMPTE).ligueInconnue++;
   /* ---- LE NIVEAU DU CHAMPIONNAT, ET UN GROS FAVORI FAIT PLUS DE BUTS ----
    * Le nul de l'Elo ne connait que l'ecart de force (NUL_MAX, NUL_PENTE) : il
    * n'apprend rien sur les buts. a = le niveau du championnat, d2 = (p1 - p2)^2
@@ -1412,7 +1553,10 @@ function totalDe(ligue, p, chemin) {
 /* Les marches qui descendent d'un 1-N-2 donne en probabilites : `marchesDe`
    (l'Elo, ou un lot releve) et `marchesDuMarche` (le prix du marche) passent
    par le MEME calcul, pour qu'ils ne divergent jamais.
-   `contexte` : { ligue, chemin } — sans championnat connu, `ajusteButs`. */
+   `contexte` : { ligue, chemin, totalMarche, ombre, retour } — sans championnat
+   connu ni total du marche, `ajusteButs`. `totalMarche` (lot 5) : le total
+   des totaux du marche, seulement pour une cle vendue (PARIS_TOTAUX_LIGUES) ;
+   `ombre` : un calcul de mesure, compte a part (COMPTE_OMBRE). */
 function derives(sport, p, margeVoulue, sortie, marges, contexte) {
   const dispo = paris.marchesDuSport(sport).filter((k) => k !== paris.MARCHE_BASE);
   if (!dispo.length) return sortie;
@@ -1443,19 +1587,48 @@ function derives(sport, p, margeVoulue, sortie, marges, contexte) {
    * log-loss du score -0,0219. Rien n'est concluant championnat par
    * championnat sur le 1-0 (IC de 12 a 19 points). */
   const ch = (contexte && contexte.chemin === 'marche') ? 'marche' : 'elo';
-  const T = (contexte && contexte.ligue) ? totalDe(contexte.ligue, p, ch) : null;
-  let lh, la, rho;
+  /* l'ombre (mesure de cloture des totaux) compte a part : voir COMPTE_OMBRE */
+  const K = (contexte && contexte.ombre) ? COMPTE_OMBRE : COMPTE;
+  let lh, la, rho, T = null;
+  /* ---- LE TOTAL DU MARCHE DES TOTAUX, QUAND L'IMPORT L'A POSE (lot 5) ----
+   * `contexte.totalMarche` : T de la Poisson du plus/moins de reference
+   * (totaux_marche.js), pose par paris_import.avecButs pour une cle de
+   * PARIS_TOTAUX_LIGUES seulement. rho rend le nul dans RHO_DU_MARCHE, le total
+   * ne cede pas. Si la grille reste a plus d'ECART_NUL_GARDE du nul vendu, la
+   * rencontre reprend le chemin d'avant pour TOUS les marches derives (voir
+   * ECART_NUL_GARDE). */
+  /* `contexte.retour` (facultatif) : on y dit si le total a servi — `servi`,
+     `grille` (le total mis dans la grille, apres TOTAL_DU_MARCHE) — ou s'il a
+     ete ecarte par la garde (`ecarte`) : le champ d'audit du catalogue et la
+     mesure de cloture le lisent (cotes.avecTotalServi). */
+  const retour = contexte && contexte.retour && typeof contexte.retour === 'object' ? contexte.retour : null;
+  if (contexte && nombre(contexte.totalMarche) && contexte.totalMarche > 0) {
+    const s = ajusteRho(p[1], p.N, p[2], contexte.totalMarche, RHO_DU_MARCHE, TOTAL_DU_MARCHE, { cede: false });
+    if (s.nulAtteint || Math.abs(s.ecartNul) <= ECART_NUL_GARDE) {
+      ({ lh, la, rho } = s);
+      T = s.total;
+      K.totalMarche++;
+      if (!s.nulAtteint) { K.nulManque++; K.ecartNulMax = Math.max(K.ecartNulMax, Math.abs(s.ecartNul)); }
+      if (retour) { retour.servi = true; retour.grille = s.total; }
+    } else {
+      K.totalMarcheEcarte++;
+      if (retour) { retour.servi = false; retour.ecarte = true; retour.ecartNul = s.ecartNul; }
+    }
+  }
   if (T === null) {
-    ({ lh, la } = ajusteButs(p[1], p.N, p[2]));
-    rho = RHO;
-    if (contexte && contexte.ligue) COMPTE.sansTable++;
-  } else {
-    /* au marche le total cede pour rendre le nul, a l'Elo non : voir RHO_BORNES */
-    const s = ajusteRho(p[1], p.N, p[2], T, undefined, undefined, { cede: ch === 'marche' });
-    ({ lh, la, rho } = s);
-    COMPTE[ch]++;
-    if (s.cede) COMPTE.totalCede++;
-    if (!s.nulAtteint) { COMPTE.nulManque++; COMPTE.ecartNulMax = Math.max(COMPTE.ecartNulMax, Math.abs(s.ecartNul)); }
+    T = (contexte && contexte.ligue) ? totalDe(contexte.ligue, p, ch, K) : null;
+    if (T === null) {
+      ({ lh, la } = ajusteButs(p[1], p.N, p[2]));
+      rho = RHO;
+      if (contexte && contexte.ligue) K.sansTable++;
+    } else {
+      /* au marche le total cede pour rendre le nul, a l'Elo non : voir RHO_BORNES */
+      const s = ajusteRho(p[1], p.N, p[2], T, undefined, undefined, { cede: ch === 'marche' });
+      ({ lh, la, rho } = s);
+      K[ch]++;
+      if (s.cede) K.totalCede++;
+      if (!s.nulAtteint) { K.nulManque++; K.ecartNulMax = Math.max(K.ecartNulMax, Math.abs(s.ecartNul)); }
+    }
   }
   const tout = probasDesMarches(lh, la, rho);
   /* ---- LA DOUBLE CHANCE SUIT LE 1-N-2 VENDU, PAS LA GRILLE ----
@@ -1553,7 +1726,10 @@ function derives(sport, p, margeVoulue, sortie, marges, contexte) {
  * La double chance n'a rien a deduire : elle est EXACTEMENT fixee par le 1-N-2
  * du marche, on la cote dessus a la marge ordinaire. */
 const MARGES_AU_MARCHE = { ou25: 0.22, btts: 0.22, score: 0.30, hand: 0.15 };
-function marchesDuMarche(sport, p, margeVoulue, ligue) {
+/* `extra` (lot 5, 10/10/2026, facultatif) : { total, ombre } — le total du
+   marche des totaux (`butsDe`), et `ombre` vrai pour un calcul de mesure ;
+   il y recoit `servi` / `grille` / `ecarte` (voir `derives`). */
+function marchesDuMarche(sport, p, margeVoulue, ligue, extra) {
   const iss1 = paris.issues(sport);
   if (!p || !iss1.every((i) => Number(p[i]) > 0 && Number(p[i]) < 1)) return null;
   const q = {};
@@ -1561,7 +1737,8 @@ function marchesDuMarche(sport, p, margeVoulue, ligue) {
   const base = habilleUnMarche(q, iss1, 1, margeVoulue);
   if (!base) return null;
   const sortie = derives(sport, q, margeVoulue, { [paris.MARCHE_BASE]: { cotes: base.cotes } }, MARGES_AU_MARCHE,
-                         { ligue, chemin: 'marche' });
+                         { ligue, chemin: 'marche', totalMarche: extra ? extra.total : undefined, ombre: !!(extra && extra.ombre),
+                           retour: extra || null });
   if (sortie.dc && isFinite(q.N)) {
     const Mdc = paris.MARCHES.dc;
     const pdc = { '1X': q[1] + q.N, 12: q[1] + q[2], X2: q.N + q[2] };
@@ -1582,4 +1759,6 @@ module.exports = {
   probasDesMarches, habilleUnMarche, marchesDe, probasImplicites,
   RHO_BORNES, TOTAL_PLANCHER, TOTAL_PLAFOND, TOTAL_BORNES_LIGUE, partAuRapport, rhoAuTotal, ajusteRho,
   chargeButs, totalDe, etatButs,
+  /* lot 5 (10/10/2026) : le total du marche des totaux */
+  RHO_DU_MARCHE, TOTAL_DU_MARCHE, ECART_NUL_GARDE, plusDeLigne, totalDuMarche, butsDe,
 };

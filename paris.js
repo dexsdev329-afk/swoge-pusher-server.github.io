@@ -435,6 +435,21 @@ function valide(brut) {
          * repose prixMarche lui-meme. */
         p: probasDuMarche(m.prixMarche.p, issues(m.sport)),
       } : null,
+      /* ---- LE TOTAL DE BUTS DU MARCHE DES TOTAUX (lot 5, 10/10/2026) ----
+       * D'ou vient le total de la grille quand il vient du plus/moins des
+       * livres (paris_import.avecButs, PARIS_TOTAUX_LIGUES : vide par defaut,
+       * donc jamais pose), et de quand. Le jour ou un score exact ou un
+       * plus/moins se conteste, on veut le savoir. Absent : le total du
+       * championnat, comme avant. Il ne quitte jamais le serveur : `vue()` ne
+       * le recopie pas. Les marches (ou25 « Over 2.5 / Under 2.5 ») et leur
+       * reglement ne changent pas. Il n'est ecrit que si le total a SERVI
+       * (cotes.avecTotalServi) ; `grille` = le total mis dans la grille,
+       * apres la borne TOTAL_DU_MARCHE (relecture du 10/10/2026). */
+      butsMarche: (m.butsMarche && typeof m.butsMarche === 'object' && Number(m.butsMarche.total) > 0 && isFinite(Number(m.butsMarche.total))) ? {
+        total: Number(m.butsMarche.total), t: String(m.butsMarche.t || ''), ref: String(m.butsMarche.ref || ''),
+        ligne: isFinite(Number(m.butsMarche.ligne)) && m.butsMarche.ligne !== null ? Number(m.butsMarche.ligne) : null,
+        grille: Number(m.butsMarche.grille) > 0 && isFinite(Number(m.butsMarche.grille)) ? Number(m.butsMarche.grille) : null,
+      } : null,
     };
   });
 

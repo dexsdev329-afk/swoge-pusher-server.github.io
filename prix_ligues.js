@@ -118,4 +118,67 @@ function refusees() {
   return out;
 }
 
-module.exports = { LIGUES_DEFAUT, decoupe, ligues, observees, JOKER_PERMIS, couvre, vendue, observee, refusee, refusees, venteImpossible, SANS_VERROU_REEL };
+/* ---- LE PLUS/MOINS 2,5 AU PRIX DES TOTAUX DU MARCHE (lot 5, 10/10/2026) ----
+ * Deux listes de plus, sur le meme decoupage et le meme memo, VIDES par
+ * defaut : un deploiement ne releve rien, ne paie rien, ne change rien de ce
+ * qui est vendu. Elles vivent ici pour la meme raison que les deux premieres :
+ * `cotes.js` (la porte d'age du total, `butsDe`) et `totaux_marche.js` (le
+ * releve et le carnet) doivent lire les memes, et ce module ne requiert rien.
+ *   PARIS_TOTAUX_OBSERVE : on RELEVE les totaux (classe 3), rien n'est vendu ;
+ *   PARIS_TOTAUX_LIGUES  : la grille prend le total du marche (classe 1).
+ * Football seulement (`soccer_*`), jamais de joker : une cle s'ecrit en
+ * clair, et un joker ne couvre RIEN (dit au demarrage par `totauxRefusees`).
+ * Ne rien mettre dans PARIS_TOTAUX_LIGUES avant les portes 0, 1 et 2
+ * d'EXPLOITATION 8.8decies. */
+const TOTAUX_PERMIS = /^soccer_[a-z0-9_]+$/;
+/** Ce dont la grille prend le total du marche (vendu). */
+function totauxLigues() { return lue('PARIS_TOTAUX_LIGUES', []); }
+/** Ce dont on releve les totaux sans rien vendre. */
+function totauxObservees() { return lue('PARIS_TOTAUX_OBSERVE', []); }
+/** Cette cle VEND-elle le total du marche ? */
+function totalVendu(cle) { const k = String(cle || ''); return TOTAUX_PERMIS.test(k) && totauxLigues().has(k); }
+/** Cette cle est-elle OBSERVEE (releve sans vente) ? */
+function totalObserve(cle) { const k = String(cle || ''); return !totalVendu(k) && TOTAUX_PERMIS.test(k) && totauxObservees().has(k); }
+/** Les cles dont on releve les totaux : vendues puis observees. */
+function totauxARelever() {
+  const out = new Set();
+  for (const k of [...totauxLigues(), ...totauxObservees()]) if (TOTAUX_PERMIS.test(k)) out.add(k);
+  return out;
+}
+/** Ce qui est ecrit dans les deux listes et ne sera jamais releve (autre que soccer_*, joker). */
+function totauxRefusees() {
+  const out = [];
+  for (const [nom, ens] of [['PARIS_TOTAUX_LIGUES', totauxLigues()], ['PARIS_TOTAUX_OBSERVE', totauxObservees()]]) {
+    for (const e of ens) if (!TOTAUX_PERMIS.test(e)) out.push(nom + ' ' + e + ' (football seulement, cle en clair : soccer_...)');
+  }
+  return out;
+}
+/* ---- L'AGE D'UN TOTAL QUI SE VEND ENCORE ----
+ * PARIS_TOTAUX_AGE_MAX_H, 48 h par defaut ET au plus. Le banc qui fonde le
+ * gain (D2_match_rho40, 0,13 % d'issues plus/moins battables) lit les cotes
+ * « pre-closing » de football-data : relevees le vendredi apres-midi pour le
+ * week-end, le mardi pour le milieu de semaine (swogebet/fd/notes.txt:48 et
+ * :198), soit un age median de 1,13 j et un p90 de 2,19 j sur 15 988
+ * rencontres (age_fd.js, relecture du 09/10). La regle 48 h / 48 h donne au
+ * coup d'envoi un age median de 1,0 j et un p90 de 2,0 j (sim_regle.js sur le
+ * calendrier du 09/10, 609 rencontres, 0 sans total). 168 h n'est mesure nulle
+ * part : au-dessus de 48, la variable est ramenee a 48 (et dit au demarrage).
+ * En dessous, permis (plus strict), fractions comprises (0,5 h). Le reglage
+ * ECHOUE FERME (relecture du 10/10) : 0 ou une valeur negative veut dire
+ * qu'aucun total n'est servi (0 h), jamais 48 ; seules une variable absente,
+ * vide ou illisible valent 48. Avant, « 0 » et « 0.5 » devenaient 48, la
+ * valeur la plus permissive. */
+const TOTAUX_AGE_MAX_H = 48;
+function totauxAgeMaxH() {
+  const brut = process.env.PARIS_TOTAUX_AGE_MAX_H;
+  /* Number('') vaut 0 : une variable vide n'est pas un « 0 » ecrit */
+  if (brut === undefined || String(brut).trim() === '') return TOTAUX_AGE_MAX_H;
+  const h = Number(brut);
+  if (!isFinite(h)) return TOTAUX_AGE_MAX_H;
+  return h > 0 ? Math.min(h, TOTAUX_AGE_MAX_H) : 0;
+}
+function totauxAgeMaxMs() { return totauxAgeMaxH() * 3600000; }
+
+module.exports = { LIGUES_DEFAUT, decoupe, ligues, observees, JOKER_PERMIS, couvre, vendue, observee, refusee, refusees, venteImpossible, SANS_VERROU_REEL,
+                   TOTAUX_PERMIS, totauxLigues, totauxObservees, totalVendu, totalObserve, totauxARelever, totauxRefusees,
+                   TOTAUX_AGE_MAX_H, totauxAgeMaxH, totauxAgeMaxMs };

@@ -81,6 +81,11 @@ const prixObserve = require('./prix_observe');
    /scores paye. Il ne decide rien ; chaque note est isolee (try) : il ne peut
    jamais faire perdre un reglement (reglement_journal.js, EXPLOITATION 8.10). */
 const regJournal = require('./reglement_journal');
+/* Le plus/moins 2,5 au prix des totaux du marche (lot 5, 10/10/2026) :
+   OBSERVATION par defaut — PARIS_TOTAUX_OBSERVE et PARIS_TOTAUX_LIGUES vides,
+   aucun releve, aucun credit, rien de vendu ne change (totaux_marche.js,
+   EXPLOITATION 8.8decies). */
+const totauxMarche = require('./totaux_marche');
 
 const BASE = 'https://api.the-odds-api.com/v4';
 const CLE = process.env.ODDS_API_KEY || '';
@@ -669,6 +674,11 @@ function etatImport() {
        paris_buts.json, et ce que le modele en a fait depuis le demarrage —
        nul de l'Elo manque, total cede au marche, championnat inconnu. */
     buts: cotes.etatButs(),
+    /* Le plus/moins au prix des totaux du marche (lot 5, 10/10/2026) :
+       reglage, credits du mois, couverture (porte 1) et mesure stratifiee
+       (porte 2) par championnat, ecrites d'avance (EXPLOITATION 8.8decies).
+       Rien n'y decide : la bascule reste une variable (PARIS_TOTAUX_LIGUES). */
+    totaux: (() => { try { return etatTotaux(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     dernier: litDernier(),
   };
 }
@@ -983,7 +993,7 @@ async function importeMatchs() {
   const habilles = [], ecartes = [];
   for (const m of [...vus.values()].sort((a, b) => Date.parse(a.debut) - Date.parse(b.debut))) {
     let h;
-    try { h = cotes.habille(avecPrix(m)); }
+    try { h = cotes.habille(avecButs(avecPrix(m))); }
     catch (e) {
       /* ---- UNE RENCONTRE DEJA AU CALENDRIER N'EN SORT PAS ----
        * Une rencontre cotee par le seul marche (equipe que l'Elo ne connait
@@ -1012,6 +1022,9 @@ async function importeMatchs() {
                     marches: h.marches, cotes: h.marches ? undefined : h.cotes,
                     cotesGenerees: !!h.cotesGenerees, source: h.source,
                     prixMarche: h.prixMarche || undefined,
+                    /* lot 5 : le total du marche des totaux, seulement s'il a fait le prix
+                       (cotes.avecTotalServi ; jamais pose par defaut) */
+                    butsMarche: h.butsMarche || undefined,
                     suspendu: h.suspendu || undefined, suspenduRaison: h.suspendu ? h.suspenduRaison : undefined });
   }
   if (ecartes.length) {
@@ -1131,16 +1144,20 @@ async function importeMatchs() {
            paris y sont poses a la cote affichee. */
         let g = m;
         if (t > Date.now() && !isFinite(Date.parse(m.ferme))) {
-          /* Le prix du marche se repose a chaque import (frais, ou suspendue). */
-          const mp = avecPrix(m);
-          g = mp;
+          /* Le prix du marche se repose a chaque import (frais, ou suspendue) ;
+             le total des totaux aussi (lot 5 : reconsidere a chaque import). */
+          const mp = avecButs(avecPrix(m));
+          /* le total du marche n'est dit (butsMarche) que s'il a fait le prix :
+             seul `habille` le repose (cotes.avecTotalServi) ; une cote non
+             refaite, ou devenue incotable, ne le porte pas */
+          g = sansButs(mp);
           if (mp.cotesGenerees) {
             try { g = cotes.habille(mp); }
             catch (e) {
               /* devenue incotable : on la garde telle quelle plutot que de la
                  faire disparaitre avec ses paris — mais SUSPENDUE si elle est
                  au prix du marche : ses anciennes cotes ne valent plus rien. */
-              if (mp.prixMarche) g = Object.assign({}, mp, { prixMarche: undefined, suspendu: true,
+              if (mp.prixMarche) g = Object.assign({}, g, { prixMarche: undefined, suspendu: true,
                 suspenduRaison: 'trop desequilibre au prix du marche' });
             }
           }
@@ -2056,6 +2073,365 @@ function causesAvantMatch(aDesParis, now) {
   return [{ quoi: 'avant', clefs: avant }, { quoi: 'demande', clefs: demande }].filter((x) => x.clefs.length);
 }
 
+/* ============ LE PLUS/MOINS 2,5 AU PRIX DES TOTAUX DU MARCHE (lot 5, 10/10/2026) ============
+ *
+ * OBSERVATION SEULEMENT dans ce lot. Trois variables, VIDES ou eteintes par
+ * defaut (prix_ligues.js) : un deploiement ne releve rien, ne paie rien et
+ * ne change rien de ce qui est vendu (socle.test.js, essais/reference, et
+ * totaux_marche.test.js §5 le tiennent octet pour octet).
+ *   PARIS_TOTAUX_OBSERVE  cles releves sans rien vendre (classe 3) ;
+ *   PARIS_TOTAUX_LIGUES   cles ou la grille prend le total du marche (classe 1)
+ *                         — rien avant les portes 0, 1 et 2 d'EXPLOITATION
+ *                         8.8decies ;
+ *   PARIS_TOTAUX_CLOTURE  '1' : une releve de cloture (classe 2) pour la
+ *                         MESURE de la porte 2, jamais pour la vente.
+ * Les spreads (handicap -1,5) ne sont jamais demandes : hors de ce lot.
+ * Jamais prioritaire (5e argument d'`appel` absent) : si le jour se tend, les
+ * totaux sont refuses avant le prix de ce qui est vendu. */
+
+/* ---- LA PORTE DE VENTE DU TOTAL ----
+ * Pose `butsMarche` = { total, t, ref, ligne } sur une rencontre de football
+ * a venir d'une cle de PARIS_TOTAUX_LIGUES dont le total du carnet :
+ *   - a au plus PARIS_TOTAUX_AGE_MAX_H (48 h : l'age du banc, prix_ligues) ;
+ *   - est celui de ces deux equipes (`totaux_marche.pour`) ;
+ *   - a une ligne de reference 2,5 : tant que la strate « ligne 1,5 ou 3,5
+ *     extrapolee » n'est pas mesuree (porte 2), on ne vend que la ligne que
+ *     le banc a jugee ;
+ *   - a ete releve quand le 1-N-2 du marche etait celui d'aujourd'hui a 5
+ *     points pres (`totaux_marche.servable`, DP_MAX) — sans prix du marche
+ *     servi a la vente (`m.prixMarche`), on ne sait pas : pas servi.
+ * Sinon on le RETIRE : la grille reprend le total du championnat, exactement
+ * comme avant ; le 1-N-2 ne change pas. En observation (cle absente de
+ * PARIS_TOTAUX_LIGUES), rien n'est pose : c'est la porte de l'observation.
+ * Une rencontre commencee ne bouge plus (`habille` la rend telle quelle). */
+function avecButs(m, now) {
+  const t = now || Date.now();
+  const sortie = Object.assign({}, m);
+  delete sortie.butsMarche;
+  const l = m && m.source && m.source.ligue;
+  if (!m || m.sport !== 'foot' || !l || !(Date.parse(m.debut) > t)) return sortie;
+  if (!prixLigues.totalVendu(l)) return sortie;
+  const r = totauxMarche.pour(m.source.evenement, m.domicile, m.exterieur, t);
+  if (!r || r.ligne !== 2.5) return sortie;
+  if (!totauxMarche.servable(r, m.prixMarche && m.prixMarche.p)) return sortie;
+  sortie.butsMarche = { total: r.total, t: new Date(r.t).toISOString(), ref: r.ref, ligne: r.ligne };
+  return sortie;
+}
+/* Une copie sans `butsMarche` : ce qui n'est pas repasse par `habille` ne
+   peut pas dire qu'un total du marche a fait son prix. */
+function sansButs(m) { const s = Object.assign({}, m); delete s.butsMarche; return s; }
+
+/* ---- QUAND RELEVER LES TOTAUX : LA REGLE 48 h / 48 h / 12 h ----
+ * Un championnat de football (cle de PARIS_TOTAUX_OBSERVE ou de
+ * PARIS_TOTAUX_LIGUES, presente dans ODDS_API_LIGUES) est releve quand une de
+ * ses rencontres commence dans 0 a 48 h sans total servable (absent, plus
+ * vieux que 48 h, ou releve sur un 1-N-2 qui a bouge de plus de 5 points) et
+ * sans avoir deja epuise ses TOTAUX_ESSAIS_MAX releves sans reference ; et
+ * jamais deux fois en 12 h. La reponse porte toute la journee d'un coup.
+ * Simule (sim_regle.js, calendrier du 09/10 repete, 17 championnats) : 186
+ * releves par mois, age du total au coup d'envoi median 1,0 j, p90 2,0 j, 0
+ * rencontre sur 609 sans total ; le plus cher, le Championship, 14,3 par
+ * mois. C'est l'age du banc (cotes « pre-closing » de football-data : median
+ * 1,13 j, p90 2,19 j, age_fd.js). La regle 48 h / 7 j / 12 h du prototype en
+ * coutait 73, pour un age median de 3,0 j que rien ne mesure.
+ * Les essais (relecture du 09/10) : une rencontre ne compte une releve sans
+ * reference que si elle commence dans les 48 h — a J+6 les livres n'ont pas
+ * encore ouvert les totaux. Sans plafond, une rencontre que personne ne cote
+ * redeclencherait une releve toutes les 12 h ; deux essais, puis plus rien.
+ * Le plafond du MOIS par championnat : la seule borne dure de la regle est
+ * l'ecart de 12 h, 60 releves par championnat et par mois (1 020 sur 17) ;
+ * 30 = 2,1 fois le maximum simule (14,3), la moitie de la borne dure : au
+ * plus 510 credits par mois sur 17 championnats. Lu dans les credits du
+ * carnet (x-requests-last). */
+const TOTAUX_AVANT_MS = 48 * 3600000, TOTAUX_ECART_MS = 12 * 3600000, TOTAUX_ESSAIS_MAX = 2, TOTAUX_PLAFOND_MOIS = 30;
+/* ---- LA CLOTURE ----
+ * Meme fenetre que l'avant-match du prix (`prixAvantMatch`) : de 75 a 20 min
+ * avant un coup d'envoi, une releve par championnat et par 2 h au plus. Elle
+ * MESURE seulement (la porte 2) : elle n'ecrit jamais un total vendu. Un
+ * creneau (championnat, 2 h) par releve : 116 par semaine au calendrier du
+ * 09/10, ~500 credits par mois, a couper apres la decision. */
+const TOTAUX_CLOTURE_ECART_MS = 2 * 3600000;
+/* Les minuteries (voir `planifie`) : la regle a 20 + 30k min, la cloture a
+   7 min puis toutes les 10 (17 + 10k), jamais en meme temps que l'avant-match
+   des prix (5 + 10k) ni que leur periodique (30k). */
+const TOTAUX_TIC_PREMIER_MS = 20 * 60000, CLOTURE_TIC_DECALAGE_MS = 7 * 60000;
+const CLOTURE_AVANT = [20 * 60000, 75 * 60000];
+function totauxFoot() { return new Set(LIGUES.filter((l) => l.sport === 'foot').map((l) => l.clef)); }
+/* Ce qui ne declenche PAS de releve (relecture du 10/10/2026) : une rencontre
+   FERMEE (absente de la reponse des totaux : elle aurait relance une releve
+   toutes les 12 h jusqu'au coup d'envoi, hors du compteur d'essais), et le
+   1-N-2 qui a bouge quand on n'a PAS de p h2h aujourd'hui (rencontre
+   suspendue, championnat observe sans prix du marche) : sans pNow on ne sait
+   pas s'il a bouge, seule l'absence d'un total frais declenche. L'age d'un
+   total « frais » est celui de la vente (PARIS_TOTAUX_AGE_MAX_H) ; quand la
+   vente est coupee a 0 h, celui de la regle (48 h) : l'observation continue
+   sans relever a chaque ecart de 12 h. */
+function totauxAReleve(now) {
+  const t = now || Date.now(), out = new Set();
+  const cles = prixLigues.totauxARelever();
+  if (!cles.size) return [];
+  const foot = totauxFoot();
+  const age = prixLigues.totauxAgeMaxMs() || TOTAUX_AVANT_MS;
+  for (const m of paris.catalogue().matchs) {
+    const l = m.source && m.source.ligue;
+    if (!l || !cles.has(l) || !foot.has(l) || out.has(l)) continue;
+    if (!(m.debut > t && m.debut - t <= TOTAUX_AVANT_MS)) continue;
+    const ferme = typeof m.ferme === 'number' ? m.ferme : Date.parse(m.ferme);
+    if (isFinite(ferme) && ferme <= t) continue;
+    if (t - totauxMarche.derniere(l) < TOTAUX_ECART_MS) continue;
+    if (totauxMarche.creditsDuMois(l, t) + 1 > TOTAUX_PLAFOND_MOIS) continue;
+    const ev = m.source.evenement;
+    if (totauxMarche.essaisDe(ev) >= TOTAUX_ESSAIS_MAX) continue;
+    const r = totauxMarche.pour(ev, m.domicile, m.exterieur, t, age);
+    const pNow = m.prixMarche ? m.prixMarche.p : ((prixMarche.pour(ev, t) || {}).p || null);
+    if (!r || (pNow && !totauxMarche.servable(r, pNow))) out.add(l);
+  }
+  return [...out];
+}
+function totauxCloture(now) {
+  if (process.env.PARIS_TOTAUX_CLOTURE !== '1') return [];
+  const t = now || Date.now(), out = new Set();
+  const cles = prixLigues.totauxARelever();
+  if (!cles.size) return [];
+  const foot = totauxFoot();
+  for (const m of paris.catalogue().matchs) {
+    const l = m.source && m.source.ligue;
+    if (!l || !cles.has(l) || !foot.has(l) || out.has(l)) continue;
+    if (!(m.debut >= t + CLOTURE_AVANT[0] && m.debut <= t + CLOTURE_AVANT[1])) continue;
+    if (t - totauxMarche.derniereCloture(l) < TOTAUX_CLOTURE_ECART_MS) continue;
+    out.add(l);
+  }
+  return [...out];
+}
+
+/* ---- LA MESURE A LA CLOTURE, RENCONTRE PAR RENCONTRE ----
+ * Pour chaque rencontre de ce championnat qui commence dans les 2 h, ouverte,
+ * au prix du marche frais et dans le bon sens :
+ *   clo    la reference de cloture (ligne 2,5 seulement : Betfair ou Pinnacle
+ *          a 2,5, ou la mediane d'au moins 3 livres a 2,5) ;
+ *   vente  la reference du total du CARNET, celui qu'on vendrait (ref, seul,
+ *          livres25, ligne, t) : c'est elle que la porte 2 range par type de
+ *          reference — « Betfair seul » sur un championnat mince se juge sur
+ *          ce qu'il a fait VENDRE, pas sur la reference de cloture qui le
+ *          juge (relecture du 10/10/2026) ;
+ *   vendu  la cote ou25 du catalogue a cet instant ;
+ *   ombre  la cote ou25 qu'on vendrait au total du carnet (`marchesDuMarche`
+ *          avec `ombre` : compteurs a part), par la MEME porte que la vente
+ *          (age, 1-N-2 qui a bouge) mais toutes lignes : la strate dit si la
+ *          ligne etait 2,5 ou extrapolee ;
+ *   dp     le plus grand ecart du 1-N-2 depuis le releve du total (DP_MAX),
+ *          ecrit sur CHAQUE rencontre ou il se calcule ;
+ *   ombreRefusee, refusePar  la cote qu'on aurait vendue si la porte n'avait
+ *          pas refuse le total (`dp` : 1-N-2 qui a bouge ; `age` : plus de
+ *          48 h ; `sansPh2h` : pas de p h2h au releve) — HORS des strates de
+ *          vente : c'est la ligne d'audit de DP_MAX et de l'age, sans quoi
+ *          on ne saurait jamais si ces gardes servent (relecture du 10/10) ;
+ *   garde  vrai si la garde de coherence a rendu l'ombre au chemin d'avant.
+ * L'age juge est celui de la REGLE (48 h, prix_ligues.TOTAUX_AGE_MAX_H), pas
+ * le reglage de vente : les deux strates d'age restent mesurees quel que soit
+ * PARIS_TOTAUX_AGE_MAX_H.
+ * `avant` : le carnet lu AVANT la releve de cloture (ce qui se vendait). */
+function mesureCloture(clef, refs, avant, t) {
+  const ageMesure = prixLigues.TOTAUX_AGE_MAX_H * 3600000;
+  let notees = 0;
+  for (const m of paris.catalogue().matchs) {
+    if (!m.source || m.source.ligue !== clef || m.sport !== 'foot') continue;
+    if (!(m.debut > t && m.debut - t <= TOTAUX_CLOTURE_ECART_MS) || !paris.ouvert(m, t)) continue;
+    const ev = m.source.evenement;
+    const pm = prixMarche.pour(ev, t);
+    const base = { ligue: clef, dom: m.domicile, ext: m.exterieur, debut: m.debut };
+    if (!pm || !pm.p || (pm.dom && (pm.dom !== m.domicile || pm.ext !== m.exterieur))) {
+      totauxMarche.noteCloture(ev, Object.assign(base, { raison: 'pas de prix du marche frais' }), t); notees++; continue;
+    }
+    const r = refs[ev];
+    const ouCat = m.marches && m.marches.ou25 && m.marches.ou25.cotes;
+    const vendu = ouCat ? { plus: Number(ouCat.plus), moins: Number(ouCat.moins) } : null;
+    if (!r || r.ligne !== 2.5) {
+      totauxMarche.noteCloture(ev, Object.assign(base, { vendu, raison: r ? 'cloture hors ligne 2,5' : 'pas de reference de cloture' }), t); notees++; continue;
+    }
+    const clo = { t, ref: r.ref, seul: !!r.seul, ligne: r.ligne, livres25: r.livres25, total: Math.round(r.total * 1e4) / 1e4, pPlus25: Math.round(r.pPlus25 * 1e6) / 1e6 };
+    const e = avant[ev];
+    let ombre = null, strate = null, raison = null, vente = null, dp = null, ageH = null, refusePar = null, ombreRefusee = null, garde = false;
+    if (!e || !((e.dom === m.domicile && e.ext === m.exterieur) || (e.dom === m.exterieur && e.ext === m.domicile))) raison = 'pas de total au carnet';
+    else {
+      vente = { ref: e.ref, seul: !!e.seul, livres25: Number.isFinite(e.livres25) ? e.livres25 : null,
+                ligne: Number.isFinite(e.ligne) ? e.ligne : null, t: new Date(e.t).toISOString() };
+      ageH = Math.round((t - e.t) / 36000) / 100;
+      dp = totauxMarche.ecartH2h(e, pm.p);
+      if (dp !== null) dp = Math.round(dp * 1e4) / 1e4;
+      if (!(t - e.t <= ageMesure)) { raison = 'total trop vieux'; refusePar = 'age'; }
+      else if (dp === null) { raison = 'sans p h2h au releve'; refusePar = 'sansPh2h'; }
+      else if (!totauxMarche.servable(e, pm.p)) { raison = '1-N-2 qui a bouge'; refusePar = 'dp'; }
+      const x = { total: e.total, ombre: true };
+      const mm = cotes.marchesDuMarche(m.sport, pm.p, undefined, clef, x);
+      const o = mm && mm.ou25 && mm.ou25.cotes;
+      garde = !!x.ecarte;
+      if (!o) { if (!raison) raison = 'plus/moins ecarte au total du marche'; }
+      else if (refusePar) ombreRefusee = { plus: o.plus, moins: o.moins };
+      else {
+        ombre = { plus: o.plus, moins: o.moins };
+        strate = (t - e.t < 24 * 3600000 ? '<24h' : '24-48h') + '|' + (e.ligne === 2.5 ? '2,5' : 'extrapolee');
+      }
+    }
+    if (!vendu && !raison) raison = 'plus/moins absent du catalogue';
+    totauxMarche.noteCloture(ev, Object.assign(base, { clo, vente, vendu, ombre: vendu ? ombre : null, strate: vendu ? strate : null, raison,
+      dp, ageH, refusePar, ombreRefusee: vendu ? ombreRefusee : null, garde }), t);
+    notees++;
+  }
+  return notees;
+}
+
+/* Une releve a la fois, dans la MEME file que les prix : jamais deux appels
+   payants ensemble. 1 credit par championnat (markets=totals, region eu).
+   Rend le nombre de releves de la REGLE reussies d'un championnat VENDU :
+   c'est lui qui decide de refaire le calendrier (`planifie`). */
+function rafraichitTotaux(clefs, pourquoi, opts) {
+  const cloture = !!(opts && opts.cloture);
+  const tour = filePrix.then(async () => {
+    let vendus = 0;
+    const permises = prixLigues.totauxARelever(), foot = totauxFoot();
+    for (const clef of clefs || []) {
+      /* un championnat non liste, ou pas du football importe : aucun appel */
+      if (!permises.has(clef) || !foot.has(clef)) continue;
+      const t0 = Date.now();
+      if (cloture) { if (t0 - totauxMarche.derniereCloture(clef) < TOTAUX_CLOTURE_ECART_MS) continue; }
+      else {
+        if (t0 - totauxMarche.derniere(clef) < TOTAUX_ECART_MS) continue;
+        if (totauxMarche.creditsDuMois(clef, t0) + 1 > TOTAUX_PLAFOND_MOIS) {
+          console.log(`[odds] totaux ${clef} : plafond du mois atteint (${TOTAUX_PLAFOND_MOIS} credits) — pas de releve`);
+          continue;
+        }
+      }
+      const vendu = prixLigues.totalVendu(clef);
+      /* classe : cloture 2 (mesure datee) ; regle 1 si la cle VEND le total,
+         3 si elle est seulement observee. Jamais prioritaire. */
+      const info = { classe: cloture ? 2 : (vendu ? 1 : 3) };
+      try {
+        const evs = await appel(`/sports/${clef}/odds`, { regions: REGION, markets: 'totals', oddsFormat: 'decimal' },
+                                1, (cloture ? 'cloture totaux ' : 'totaux ') + clef, undefined, info);
+        const t = Date.now();
+        const avant = cloture ? totauxMarche.lis().evenements : null;
+        const c = totauxMarche.note(evs, clef, t, { cloture, credits: info.dernier, coutAttendu: 1,
+          pH2hDe: (ev) => {
+            const r = prixMarche.pour(ev.id, t);
+            return r && r.p && (!r.dom || (r.dom === ev.home_team && r.ext === ev.away_team)) ? r.p : null;
+          } });
+        const refs = c.refs || {};
+        delete c.refs;
+        console.log(`[odds] totaux ${clef} (${pourquoi}) : ${JSON.stringify(c)}`);
+        if (cloture) {
+          const n = mesureCloture(clef, refs, avant || {}, t);
+          console.log(`[odds] cloture totaux ${clef} : ${n} rencontre(s) notee(s)`);
+        } else if (vendu) vendus++;
+        if (!vendu) {
+          const ms = totauxMarche.mesure(clef, t);
+          console.log(`[odds] observe totaux ${clef} : ${JSON.stringify({ couverture: { n: ms.couverture.rencontres, part: ms.couverture.part, porte: ms.couverture.porte },
+            cloture: { n: ms.mesure.n, battOmbre: ms.mesure.battOmbre, battVendu: ms.mesure.battVendu } })}`);
+        }
+      } catch (e) {
+        console.log('[odds] ' + (cloture ? 'cloture ' : '') + 'totaux ' + clef + ' : ' + (e.message || e));
+        /* partie mais ratee (statut recu, ou delai) : date et cout ecrits, l'ecart
+           de 12 h et le plafond du mois tiennent ; refusee (rien n'est parti) :
+           rien, le tic suivant redemande gratuitement */
+        if (info.code === 'DELAI' || (info.statut !== null && info.statut !== undefined)) {
+          try { totauxMarche.noteEchec(clef, Date.now(), { cloture, credits: info.dernier, coutAttendu: 1 }); } catch (x) { /* jamais bloquant */ }
+        }
+      }
+    }
+    return vendus;
+  });
+  filePrix = tour.catch(() => 0);
+  return tour;
+}
+
+/* Les cles de totaux absentes des ligues importees : jamais relevees. */
+function totauxInconnues() {
+  const foot = totauxFoot();
+  return [...prixLigues.totauxARelever()].filter((c) => !foot.has(c));
+}
+/* La ligne de demarrage : toujours ecrite, c'est la seule qui dit, apres un
+   changement de variable, ce qui est releve et ce qui est vendu. */
+function ligneTotaux() {
+  const v = [...prixLigues.totauxLigues()].filter((c) => prixLigues.TOTAUX_PERMIS.test(c));
+  const o = [...prixLigues.totauxObservees()].filter((c) => prixLigues.TOTAUX_PERMIS.test(c) && !prixLigues.totalVendu(c));
+  const brut = process.env.PARIS_TOTAUX_AGE_MAX_H;
+  const age = prixLigues.totauxAgeMaxH();
+  let l = '[odds] totaux du marche : vendu sur ' + v.length + (v.length ? ' (' + v.join(', ') + ')' : '')
+    + ', observe sur ' + o.length + (o.length ? ' (' + o.join(', ') + ')' : '')
+    + ', cloture ' + (process.env.PARIS_TOTAUX_CLOTURE === '1' ? 'OUI (classe 2, mesure seule)' : 'non')
+    + ', age max ' + age + ' h' + (age === 0 ? ' (AUCUN total servi)' : '')
+    + (brut !== undefined && String(brut).trim() !== '' && Number(brut) !== age ? ` (PARIS_TOTAUX_AGE_MAX_H « ${brut} » ramene a ${age})` : '')
+    + ', plafond ' + TOTAUX_PLAFOND_MOIS + ' credits par championnat et par mois, spreads jamais demandes';
+  const refus = prixLigues.totauxRefusees();
+  if (refus.length) l += ' — IGNORE(S) : ' + refus.join(' ; ');
+  const inc = totauxInconnues();
+  if (inc.length) l += ' — absente(s) des ligues importees, jamais relevee(s) : ' + inc.join(', ');
+  return l;
+}
+
+/* ---- CE QUE LE PLUS/MOINS VENDU LAISSE AU MARCHE DES TOTAUX, EN DIRECT ----
+ * Comme `ecartAuMarche` pour le 1-N-2 : chaque rencontre ouverte du
+ * championnat dont le total du carnet est frais et dans le bon sens ; une
+ * issue est battable quand la cote ou25 vendue x P(plus/moins de 2,5) du
+ * marche (marge retiree) depasse 1. « Frais » : 48 h au plus, l'age de la
+ * regle (le reglage de vente ne change pas ce que le marche dit). */
+function ecartTotaux(ligue, now, carnet) {
+  const t = now || Date.now();
+  const out = { rencontres: 0, avecTotal: 0, issues: 0, battables: 0, pire: null };
+  const E = (carnet || totauxMarche.lis()).evenements;
+  const ageMax = prixLigues.TOTAUX_AGE_MAX_H * 3600000;
+  try {
+    for (const m of paris.catalogue().matchs) {
+      if (!m.source || m.source.ligue !== ligue || m.sport !== 'foot' || !paris.ouvert(m, t)) continue;
+      out.rencontres++;
+      const e = E[m.source.evenement];
+      if (!e || !(t - e.t <= ageMax) || !((e.dom === m.domicile && e.ext === m.exterieur) || (e.dom === m.exterieur && e.ext === m.domicile))) continue;
+      const c = m.marches && m.marches.ou25 && m.marches.ou25.cotes;
+      if (!c || !(e.pPlus25 > 0 && e.pPlus25 < 1)) continue;
+      out.avecTotal++;
+      for (const [i, p] of [['plus', e.pPlus25], ['moins', 1 - e.pPlus25]]) {
+        if (!(Number(c[i]) > 1)) continue;
+        const x = Number(c[i]) * p - 1;
+        out.issues++;
+        if (x > 0) out.battables++;
+        if (!out.pire || x > out.pire.esperance) out.pire = { rencontre: m.domicile + ' v ' + m.exterieur, issue: i, cote: Number(c[i]), marche: Math.round(p * 1000) / 1000, esperance: Math.round(x * 1000) / 1000 };
+      }
+    }
+  } catch (e) { /* catalogue illisible */ }
+  out.pourquoi = out.avecTotal < 20 ? `${out.avecTotal} rencontre(s) avec un total frais, moins de 20 : ne conclut pas` : null;
+  return out;
+}
+/** etatImport().totaux : le reglage, les credits du mois, et par championnat
+ *  la couverture (porte 1), la mesure stratifiee (porte 2) et l'ecart du
+ *  moment. Le journal d'observation est lu UNE fois (relecture du 09/10 : 17
+ *  lectures par GET sinon). */
+function etatTotaux(now) {
+  const t = now || Date.now();
+  const carnet = totauxMarche.lis();
+  const obs = totauxMarche.lisObs();
+  const mois = new Date(t).toISOString().slice(0, 7);
+  const cm = carnet.credits[mois] || {};
+  let total = 0;
+  for (const x of Object.values(cm)) total += (Number(x.regle) || 0) + (Number(x.cloture) || 0);
+  const out = {
+    reglage: { vendu: [...prixLigues.totauxLigues()], observe: [...prixLigues.totauxObservees()],
+               cloture: process.env.PARIS_TOTAUX_CLOTURE === '1', ageMaxH: prixLigues.totauxAgeMaxH(),
+               plafondMois: TOTAUX_PLAFOND_MOIS, essaisMax: TOTAUX_ESSAIS_MAX, dpMax: totauxMarche.DP_MAX,
+               refusees: prixLigues.totauxRefusees(), inconnues: totauxInconnues(), j0: carnet.j0, j0Ligues: carnet.j0Ligues || {} },
+    credits: { mois, total, parLigue: cm },
+    total: totauxMarche.mesure(null, t, obs, carnet),
+    ligues: {},
+  };
+  for (const clef of prixLigues.totauxARelever()) {
+    const d = Number(carnet.ligues[clef]) || 0, dc = Number(carnet.cloture[clef]) || 0;
+    out.ligues[clef] = Object.assign({ observe: !prixLigues.totalVendu(clef), vendu: prixLigues.totalVendu(clef),
+      releve: d ? new Date(d).toISOString() : null, cloture: dc ? new Date(dc).toISOString() : null,
+      dernierCompte: carnet.couverture[clef] || null, ecartMaintenant: ecartTotaux(clef, t, carnet) },
+      totauxMarche.mesure(clef, t, obs, carnet));
+  }
+  return out;
+}
+
 /* Les competitions ou un match de football peut aller en prolongation : la C1
    (barrages et elimination directe), les series MLS (meme cle que la saison
    reguliere), et toute coupe. Une liste, pas une devinette : une cle inconnue
@@ -2639,6 +3015,19 @@ function planifie(signale, aRegler, expositionDe) {
     const vendues = (await Promise.all(tours)).reduce((a, b) => a + b, 0);
     if (vendues) await rafraichit();
   });
+  /* Les totaux du marche (lot 5) : la regle 48 h / 48 h / 12 h, puis le
+     calendrier qui en descend (0 credit) — seulement si un championnat VENDU
+     a ete releve : un total observe n'entre dans aucune cote. La cloture
+     (PARIS_TOTAUX_CLOTURE=1) mesure seulement : elle ne refait rien. */
+  const totaux = () => sur('totaux', async () => {
+    const clefs = totauxAReleve();
+    if (!clefs.length) return;
+    if (await rafraichitTotaux(clefs, 'avant la journee')) await rafraichit();
+  });
+  const clotureTotaux = () => sur('cloture totaux', async () => {
+    const clefs = totauxCloture();
+    if (clefs.length) await rafraichitTotaux(clefs, 'cloture', { cloture: true });
+  });
   {
     const inconnues = prixInconnues();
     if (inconnues.length) console.log('[odds] PARIS_PRIX_LIGUES / PARIS_PRIX_OBSERVE : ' + inconnues.join(', ') + ' absente(s) des ligues importees — jamais relevee(s)');
@@ -2662,6 +3051,8 @@ function planifie(signale, aRegler, expositionDe) {
     /* Le journal des releves : actif ou coupe, ce qu'il garde. Lire son etat
        ici remplit aussi le compte par fichier (une fois par processus). */
     try { console.log(prixJournal.ligneDemarrage()); } catch (e) { /* jamais bloquant */ }
+    /* Les totaux du marche (lot 5) : toujours dit, meme vide. */
+    try { console.log(ligneTotaux()); } catch (e) { /* jamais bloquant */ }
   }
   const premier = delaiAvantEtalonnage();
   const minuteries = [
@@ -2698,6 +3089,25 @@ function planifie(signale, aRegler, expositionDe) {
       minuteries.push(setInterval(etalonne, SEMAINE));
     }, premier),
   ];
+  /* Les totaux (lot 5) : AUCUNE minuterie quand les deux listes sont vides
+     (le defaut) — un deploiement ne fait rien de plus. Elles passent dans la
+     MEME file que les prix (`filePrix`) : un tic des totaux qui tombe en meme
+     temps que l'avant-match (5 + 10k min apres le demarrage) pouvait faire
+     entrer jusqu'a 17 releves DEVANT la releve h2h de ce qui est vendu (au
+     pire 17 x 15 s de delai, et les paris refuses faute de prix frais ;
+     relecture du 10/10/2026). Donc :
+       - la regle toutes les 30 min a partir de 20 min (20, 50, 80...) : ni
+         sur l'avant-match (5 + 10k), ni sur la periodique des prix (30k) ;
+         son plus long tour (17 x 15 s, 4 min 15 s) finit avant l'avant-match
+         suivant, 5 min plus tard ;
+       - la cloture toutes les 10 min a partir de 17 min (17, 27, 37...) :
+         2 min APRES chaque avant-match, qui est donc deja dans la file ;
+         seulement si PARIS_TOTAUX_CLOTURE=1 (relu au demarrage). */
+  if (prixLigues.totauxARelever().size) {
+    minuteries.push(setTimeout(() => { totaux(); minuteries.push(setInterval(totaux, 30 * 60000)); }, TOTAUX_TIC_PREMIER_MS));
+    if (process.env.PARIS_TOTAUX_CLOTURE === '1')
+      minuteries.push(setTimeout(() => minuteries.push(setInterval(clotureTotaux, 10 * 60000)), CLOTURE_TIC_DECALAGE_MS));
+  }
   console.log(`[odds] alimentation automatique : rencontres toutes les 12 h (0 credit), ` +
               `scores payes une fois par jour et a chaque demarrage, etalonnage une fois par semaine ` +
               `(le prochain dans ${Math.round(premier / H)} h). ` +
@@ -2716,7 +3126,7 @@ function planifie(signale, aRegler, expositionDe) {
   }
   /* On rend les minuteries : une minuterie oubliee garde le processus en
      vie a l arret et peut refaire un appel reseau en plein redeploiement. */
-  return { rafraichit, releve, frequente, etalonne, prix, avantMatch, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
+  return { rafraichit, releve, frequente, etalonne, prix, avantMatch, totaux, clotureTotaux, minuteries, arrete() { minuteries.forEach(clearTimeout); minuteries.forEach(clearInterval); } };
 }
 
 // ---------------------------------------------------------------- l'appel
@@ -2734,9 +3144,19 @@ if (require.main === module) {
                      /scores payes, les portes A et B. 0 credit, aucun appel
                      reseau : il lit DATA_DIR/reglement_journal.json. */
                   '--reglement': async () => { for (const x of lignesReglement(bilanReglement())) console.log(x); },
+                  /* Les totaux du marche (lot 5) : `--totaux <cle>` releve UN
+                     championnat liste (PARIS_TOTAUX_OBSERVE ou _LIGUES : 1
+                     credit), puis le calendrier ; `--totaux` seul ecrit l'etat
+                     (couverture, mesure, credits) — 0 credit, aucun appel. */
+                  '--totaux': async () => {
+                    const l = a.find((x) => !x.startsWith('--'));
+                    if (!l) { console.log(JSON.stringify(etatTotaux(), null, 1)); return; }
+                    if (!prixLigues.totauxARelever().has(l)) throw new Error(`--totaux ${l} : absente de PARIS_TOTAUX_OBSERVE et de PARIS_TOTAUX_LIGUES — aucun appel`);
+                    await rafraichitTotaux([l], 'a la main'); await importeMatchs();
+                  },
                   '--quota': async () => montreQuota() }[quoi];
   if (!suite) {
-    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix | --reglement');
+    console.error('usage : --quota | --sports [filtre] | --matchs | --scores | --calibre [ligue] | --prix | --reglement | --totaux [ligue]');
     process.exit(2);
   }
   suite().then(() => process.exit(0))
@@ -2756,4 +3176,8 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    etatClasses, codeDuCorps,
                    /* le reglement (lot 4, 10/10/2026) : l'ombre, le compte, les portes */
                    ombreReglement, bilanReglement, lignesReglement, clefCoupee, modeEspn, scoresEspnH, scoresEspnFenJ, ombreH,
-                   SCORES_NON_COCHEES, PORTE_A, PORTE_B, OMBRE_FENETRE_MS, attenteCoupeMs, COUPE_ATTENTE_H, refusOmbreVus };
+                   SCORES_NON_COCHEES, PORTE_A, PORTE_B, OMBRE_FENETRE_MS, attenteCoupeMs, COUPE_ATTENTE_H, refusOmbreVus,
+                   /* les totaux du marche (lot 5, 10/10/2026) : observation, cloture, porte de vente */
+                   avecButs, totauxAReleve, totauxCloture, rafraichitTotaux, mesureCloture, etatTotaux, ecartTotaux, ligneTotaux, totauxInconnues,
+                   TOTAUX_AVANT_MS, TOTAUX_ECART_MS, TOTAUX_ESSAIS_MAX, TOTAUX_PLAFOND_MOIS, TOTAUX_CLOTURE_ECART_MS, CLOTURE_AVANT,
+                   TOTAUX_TIC_PREMIER_MS, CLOTURE_TIC_DECALAGE_MS, sansButs };
