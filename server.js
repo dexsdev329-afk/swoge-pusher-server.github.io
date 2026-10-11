@@ -40,6 +40,10 @@ const prixJournal = require('./prix_journal');
    verrou lui passe le moneyline DraftKings qu'ESPN rend deja (0 credit, 0
    requete de plus). Il ne vend rien et ne decide rien. */
 const prixObserve = require('./prix_observe');
+/* Le direct en jeu sur les tres grosses equipes (lot 7, 11/10/2026) :
+   OBSERVATION seulement, eteint par defaut (PARIS_EN_JEU vide). Il releve,
+   ecrit un journal et calcule une porte ; rien de ce qui est vendu ne le lit. */
+const parisEnJeu = require('./paris_en_jeu');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
@@ -188,6 +192,36 @@ function verrouFrais(t) {
       .finally(() => { verrouCache.enVol = false; });
 }
 
+/* L'etat de l'alimentation, plus celui du direct en jeu (lot 7) : mode,
+   rencontres suivies, credits, rencontres completes, porte du dernier bilan.
+   Dans son propre try : une observation qui leve ne casse jamais le panneau. */
+function etatImportEtEnJeu() {
+  const e = parisImport.etatImport();
+  try { e.enJeu = parisEnJeu.etat(); } catch (err) { e.enJeu = { erreur: String((err && err.message) || err) }; }
+  return e;
+}
+
+/* ---- LA PASSE RAPIDE DES RENCONTRES SUIVIES EN JEU (lot 7, 11/10/2026) ----
+ *
+ * L'observation du direct (paris_en_jeu.js) veut le score, les rouges et
+ * l'horloge toutes les 15 s. Une lecture PROPRE a ce module aurait ajoute un
+ * troisieme lecteur d'ESPN (apres l'affichage et le verrou), sur une API non
+ * officielle dont on ne connait pas les limites : un 403 ou un 429 provoque
+ * par lui aurait degrade le second verrou et le reglement gratuit (sceptique
+ * du 09/10). C'est donc l'age de CE cache qui s'abaisse, pour les seules
+ * rencontres suivies : la meme releve (`espn.releve`, 6 h de marge, donc un ou
+ * deux jours par championnat), fusionnee dans `directCache.par` (l'affichage
+ * les voit plus fraiches) et donnee au second verrou (`poseHeuresReelles`,
+ * qui ne fait que fermer plus tot). Le module decide la cadence, compte ses
+ * refus a part et recule tout seul sur 403/429 (`prendre`). Eteint, il ne
+ * l'appelle jamais : rien ne change. */
+async function directSuivies(lot, t, prendre) {
+  const par = await espn.releve(lot, { maintenant: t, marge: 6 * 3600000, prendre });
+  for (const [id, s] of par) directCache.par.set(id, s);
+  paris.poseHeuresReelles(par, t);
+  return par;
+}
+
 function directFrais(t) {
   if (directCache.enVol) return;
   const vieux = t - directCache.t > DIRECT_AGE;
@@ -235,6 +269,7 @@ function directFrais(t) {
 const boutique = require('./boutique');
 const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
+let enJeu = null;                   // les minuteries du direct en jeu (lot 7, observation)
 let xQuotidien = null;
 let tgCmd = null;
 let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
@@ -6550,15 +6585,30 @@ const server = http.createServer(async (req, res) => {
         paris.charge();                       // sinon le serveur sert l'ancien
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ lance: true, rencontres: combien,
-                                        etat: parisImport.etatImport() }));
+                                        etat: etatImportEtEnJeu() }));
       } catch (e) {
         res.writeHead(200, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ lance: true, error: e.message,
-                                        etat: parisImport.etatImport() }));
+                                        etat: etatImportEtEnJeu() }));
       }
     }
     res.writeHead(200, { 'content-type': 'application/json' });
-    return res.end(JSON.stringify(parisImport.etatImport()));
+    return res.end(JSON.stringify(etatImportEtEnJeu()));
+  }
+
+  /* ---- LE JOURNAL DU DIRECT EN JEU, UN JOUR BRUT (lot 7, 11/10/2026) ----
+   * `GET /paris/en-jeu/journal?jour=AAAA-MM-JJ` : le fichier .jsonl d'un jour,
+   * tel quel, pour `outils/releve_en_jeu.js` (le bilan rejoue hors serveur, 0
+   * credit) ; sans `jour`, la liste des jours et leur taille. Lecture seule,
+   * aucun geste ; le journal ne porte ni cle ni URL d'appel. Protegee comme
+   * /paris/import. Le jour est valide AVANT tout acces au disque (400), un
+   * jour absent rend 404. */
+  if (path === '/paris/en-jeu/journal') {
+    if (!authed) return refuse(req, res, false);
+    rate(req, true);
+    const r = parisEnJeu.reponseJournal(new URLSearchParams(req.url.split('?')[1] || '').get('jour'));
+    res.writeHead(r.code, { 'content-type': r.type, 'cache-control': 'no-store' });
+    return res.end(r.corps);
   }
 
   /* ---- LE JOURNAL DES RELEVES DE PRIX, UN JOUR BRUT (lot 1, 10/10/2026) ----
@@ -10998,6 +11048,29 @@ server.listen(cfg.PORT, () => {
   calendrierAuto = parisImport.planifie(reglementAuto,
                                         (id) => game.engagementMatch(id) > 0,
                                         (id) => game.engagementMatch(id));
+  /* ---- LE DIRECT EN JEU, OBSERVATION SEULEMENT (lot 7, 11/10/2026) ----
+   * Eteint tant que PARIS_EN_JEU n'est pas `observe` (le defaut est vide) :
+   * aucune minuterie, aucun credit. Allume, il paie par `appel` du socle en
+   * classe 2 (part du jour moins 80, revérifiee a chaque releve), sous ses
+   * propres plafonds (3 000 sur toute l'observation, 400 par jour), et lit
+   * ESPN par la passe partagee ci-dessus. Il ne lit le moteur que pour savoir
+   * si une rencontre est deja reglee ; il n'y ecrit rien. */
+  enJeu = parisEnJeu.planifie({
+    cle: !!process.env.ODDS_API_KEY,
+    appel: parisImport.appel,
+    catalogue: () => paris.catalogue().matchs,
+    lisEspn: (lot, t, prendre) => directSuivies(lot, t, prendre),
+    estRegle: (id) => !!(game.parisRegles && game.parisRegles[id]),
+    quota: () => {
+      const q = parisImport.etatQuota();
+      return { depense: q.depenseDuJour, part: parisImport.partDuJour(q.reste), reserve: parisImport.RESERVES_CLASSE[2] };
+    },
+    projection: () => {
+      const q = parisImport.etatQuota();
+      const p = parisImport.projectionMois(q);
+      return p ? { credits: p.credits, jourDuMois: p.jourDuMois, mois: String(q.vu).slice(0, 7) } : null;
+    },
+  });
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */
@@ -11034,6 +11107,7 @@ server.listen(cfg.PORT, () => {
 function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(prixMondeInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   if (calendrierAuto) calendrierAuto.arrete();
+  if (enJeu) enJeu.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();

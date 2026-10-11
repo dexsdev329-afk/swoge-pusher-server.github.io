@@ -177,6 +177,17 @@ const ALIAS = {
   'tigres': 'tigres uanl',
   'pumas': 'pumas unam',
   'santos laguna': 'santos',
+  /* ---- LIGUE DES CHAMPIONS (lot 7, 11/10/2026) : DEUX ADVERSAIRES DES CLUBS SUIVIS EN JEU ----
+   * Releves cote a cote, la meme rencontre le meme jour : le calendrier public
+   * du 09/10 (noms The Odds API, /paris/calendrier) dit « LASK - Liverpool » et
+   * « Bodø/Glimt - Borussia Dortmund » le 14/10 a 16:45 et 19:00 UTC ; le
+   * tableau uefa.champions d'ESPN du 14/10 (relu le 10/10) dit « LASK Linz »
+   * et « Bodo/Glimt » aux memes heures, a domicile tous les deux. Sans ces
+   * lignes, LASK - Liverpool n'etait pas appariee : ni reglee gratuitement, ni
+   * observable en jeu (sceptique du 09/10). « ø » n'est pas un accent (NFKD ne
+   * le decompose pas) : normalise rend « bod glimt ». « Viking FK » tombe juste. */
+  'lask': 'lask linz',
+  'bod glimt': 'bodo glimt',
   /* ---- LES COUPES (lot 6) : RELEVES SUR coupes_inventaire.json, JAMAIS DEVINES ----
    * Aucune ligne au 11/10/2026. Les noms The Odds API d'une coupe ne se lisent
    * qu'avec la cle (/events), que seul le serveur porte : l'inventaire
@@ -371,13 +382,53 @@ function lis(ev) {
   const a = camp(c.competitors[0]), b = camp(c.competitors[1]);
   if (!a.nom || !b.nom) return null;
   const st = (ev.status && ev.status.type) || {};
+  /* ---- L'HORLOGE, LA PERIODE, LES BUTS ET LES ROUGES (lot 7, 11/10/2026) ----
+   * Pour l'observation du direct en jeu (paris_en_jeu.js), rien d'autre :
+   * `status.clock` (secondes de jeu, CUMULEES : 5400 a la fin de la 2e
+   * periode), `status.period`, `status.displayClock`, et les faits de
+   * `competitions[0].details[]` — `scoringPlay`, `redCard`, `clock.value`,
+   * `team.id` rapproche de `competitors[].team.id`. Lus sur le vrai tableau
+   * esp.1 du 09/10 (Espanyol at Malaga, STATUS_FULL_TIME, clock 5400 pour
+   * « 90'+5' », period 2, 11 details) : un rouge reel et une horloge en cours
+   * de jeu n'y figurent PAS (sceptique du 09/10) — l'observation les verra.
+   * Une seance de tirs au but (`shootout`) n'est pas un but. Chaque lecture
+   * est dans un try : un `details` bancal ne fait jamais perdre le score. */
+  let horloge = null, periode = null, affiche = '', evenements = [];
+  try {
+    const s0 = ev.status || {};
+    const h = Number(s0.clock), p = Number(s0.period);
+    if (s0.clock !== undefined && s0.clock !== null && s0.clock !== '' && isFinite(h)) horloge = h;
+    if (s0.period !== undefined && s0.period !== null && s0.period !== '' && isFinite(p)) periode = p;
+    affiche = s0.displayClock ? String(s0.displayClock).slice(0, 20) : '';
+  } catch (e) { horloge = null; periode = null; affiche = ''; }
+  try { evenements = faitsDe(c); } catch (e) { evenements = []; }
   /* `statut` : le nom exact (STATUS_FULL_TIME, STATUS_FINAL_AET,
      STATUS_FINAL_PEN...). `fini` ne distingue pas un match regle a 90 minutes
      d'un match prolonge, et le score rendu compte la prolongation. */
   return { a, b, quand: Date.parse(ev.date) || 0,
            etat: st.state || 'pre', fini: !!st.completed, statut: String(st.name || ''),
            detail: st.shortDetail || st.detail || st.description || '',
-           fournisseur, dkSansClose };
+           fournisseur, dkSansClose, horloge, periode, affiche, evenements };
+}
+/* Les buts et les rouges d'une rencontre, sur les camps du TABLEAU (`a` = le
+   premier competiteur, `b` le second) : { camp, but, rouge, clock }. Un fait
+   d'une equipe inconnue garde camp null. */
+function faitsDe(c) {
+  const ids = c.competitors.map((x) => (x && x.team && x.team.id !== undefined && x.team.id !== null) ? String(x.team.id) : null);
+  const out = [];
+  for (const d of Array.isArray(c.details) ? c.details : []) {
+    try {
+      if (!d || typeof d !== 'object') continue;
+      const but = d.scoringPlay === true && d.shootout !== true;
+      const rouge = d.redCard === true;
+      if (!but && !rouge) continue;
+      const tid = d.team && d.team.id !== undefined && d.team.id !== null ? String(d.team.id) : null;
+      const camp = tid !== null && tid === ids[0] ? 'a' : tid !== null && tid === ids[1] ? 'b' : null;
+      const v = Number(d.clock && d.clock.value);
+      out.push({ camp, but, rouge, clock: d.clock && d.clock.value !== null && d.clock.value !== undefined && isFinite(v) ? v : null });
+    } catch (e) { /* un fait illisible est saute, pas la rencontre */ }
+  }
+  return out;
 }
 /** Une cote americaine (« -142 », « +120 ») en cote decimale, ou null. */
 function americaine(s) {
@@ -418,10 +469,18 @@ async function releve(matchs, opts) {
   for (const [ligue, lot] of parLigue) {
     const debuts = lot.map((m) => m.debut).filter((x) => isFinite(x));
     if (!debuts.length) continue;
+    /* ---- LA MARGE AUTOUR DES COUPS D'ENVOI (lot 7, 11/10/2026) ----
+     * Un jour de chaque cote par defaut (tous les appelants d'avant). Le
+     * direct en jeu passe 6 h : UN jour pour un coup d'envoi de midi, DEUX
+     * pour un coup d'envoi du soir (18:45 UTC demande aussi le lendemain,
+     * `requetes`), au lieu de trois. Une marge illisible garde le defaut. */
+    const marge = typeof o.marge === 'number' && isFinite(o.marge) && o.marge >= 0 ? o.marge : 86400000;
     const evs = await tableau(CHEMINS[ligue],
-                              Math.min(...debuts) - 86400000,
-                              Math.max(...debuts) + 86400000, o.prendre);
-    const lus = evs.map(lis).filter(Boolean);
+                              Math.min(...debuts) - marge,
+                              Math.max(...debuts) + marge, o.prendre);
+    /* Un evenement qui fait lever `lis` n'emporte que lui (lot 7) : avant, il
+       emportait tout le championnat de la releve. */
+    const lus = evs.map((ev) => { try { return lis(ev); } catch (e) { return null; } }).filter(Boolean);
     for (const m of lot) {
       /* La MEME rencontre, c'est les deux memes noms ET la meme journee.
          Deux clubs se rencontrent deux fois par saison : sans la date, on
@@ -457,6 +516,21 @@ async function releve(matchs, opts) {
       const { e, dom, ext } = cands[0];
       const su = { fini: e.fini, etat: e.etat, detail: e.detail, statut: e.statut, quand: e.quand,
                    dom: m.domicile, ext: m.exterieur };
+      /* L'horloge et les faits dans NOTRE orientation (lot 7, football seul) :
+         `rouges` = [domicile, exterieur], `evenements` = [[camp, 'b'|'r',
+         clock]] avec camp 'd' (domicile) ou 'x' (exterieur), lus sur le camp
+         qui porte le nom de notre domicile — jamais sur la position. */
+      if (m.sport === 'foot') {
+        su.horloge = e.horloge; su.periode = e.periode; su.affiche = e.affiche;
+        const nous = (camp) => (camp === null ? null : ((camp === 'a') === (dom === e.a) ? 'd' : 'x'));
+        su.evenements = [];
+        su.rouges = [0, 0];
+        for (const f of e.evenements || []) {
+          const k = nous(f.camp);
+          if (f.but) su.evenements.push([k, 'b', f.clock]);
+          if (f.rouge) { su.evenements.push([k, 'r', f.clock]); if (k === 'd') su.rouges[0]++; else if (k === 'x') su.rouges[1]++; }
+        }
+      }
       if (isFinite(dom.points) && isFinite(ext.points)) {
         su.score = `${dom.points}-${ext.points}`;
         su.resultat = dom.points > ext.points ? '1'
@@ -658,6 +732,6 @@ async function reprise(ligues, opts) {
   return tot;
 }
 
-module.exports = { CHEMINS, ALIAS, normalise, meme, lis, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour,
+module.exports = { CHEMINS, ALIAS, normalise, meme, lis, faitsDe, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour,
                    releve, finies, reprise, americaine,
                    releveTennis, tourDe };

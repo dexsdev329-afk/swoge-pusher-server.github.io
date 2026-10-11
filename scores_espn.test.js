@@ -399,6 +399,101 @@ console.log('\n-- qui recoit quel score --');
     const vf = await dkDe(foot, 'Borussia Dortmund', 'Bayern Munich', 'foot', 'soccer_germany_bundesliga');
     ok(vf && !('dk' in vf) && !('dkSansClose' in vf), 'un match de football ne porte pas de dk');
 
+    // ================== 14. LE DIRECT EN JEU : HORLOGE, PERIODE, BUTS, ROUGES, MARGE (lot 7, 11/10/2026)
+    /* Le vrai tableau esp.1 du 09/10 (essais/en_jeu/esp1_20261009.json, reduit
+     * aux champs lus) : Espanyol at Malaga, 1-1, STATUS_FULL_TIME, clock 5400
+     * pour « 90'+5' », period 2, 11 details — but d'Espanyol (team 88) a
+     * 725 s, but de Malaga (99) a 5400 s (arrets de jeu : l'horloge reste
+     * figee a 5400), neuf jaunes, aucun rouge. */
+    console.log('\n-- le direct en jeu : horloge, periode, buts, rouges --');
+    /* les deux adversaires de Ligue des champions releves le 10/10 (calendrier The Odds API du 09/10 contre ESPN du 14/10) */
+    ok(e.meme('LASK', 'LASK Linz') && e.meme('Bodø/Glimt', 'Bodo/Glimt') && e.meme('Viking FK', 'Viking FK'),
+       'LASK = LASK Linz, Bodø/Glimt = Bodo/Glimt (ALIAS releves), Viking FK tombe juste');
+    ok(!e.meme('LASK', 'Liverpool') && !e.meme('Bodø/Glimt', 'Borussia Dortmund'), 'et rien d autre ne s y rapproche');
+    const ESP = JSON.parse(fs.readFileSync(path.join(__dirname, 'essais', 'en_jeu', 'esp1_20261009.json'), 'utf8')).events[0];
+    const lv = e.lis(ESP);
+    eq(JSON.stringify([lv.horloge, lv.periode, lv.affiche]), JSON.stringify([5400, 2, "90'+5'"]), 'lis : horloge 5400, periode 2, « 90\'+5\' » (le vrai tableau)');
+    eq(JSON.stringify(lv.evenements), JSON.stringify([{ camp: 'b', but: true, rouge: false, clock: 725 }, { camp: 'a', but: true, rouge: false, clock: 5400 }]),
+       'lis : les deux buts sur les camps du tableau (a = Malaga, b = Espanyol), les jaunes ignores');
+    eq(JSON.stringify([lv.a.nom, lv.b.nom, lv.a.points, lv.b.points, lv.etat, lv.statut]), JSON.stringify(['Málaga', 'Espanyol', 1, 1, 'post', 'STATUS_FULL_TIME']),
+       'lis : noms, points, etat, statut inchanges');
+    /* releve : dans NOTRE orientation, meme quand ESPN met l'exterieur en premier, avec un rouge */
+    const enJeuEv = (inverse) => {
+      const x = JSON.parse(JSON.stringify(ESP));
+      x.status = { clock: 2950, displayClock: "49'", period: 2, type: { name: 'STATUS_SECOND_HALF', state: 'in', completed: false, shortDetail: "49'" } };
+      x.competitions[0].competitors[0].score = '1'; x.competitions[0].competitors[1].score = '2';
+      x.competitions[0].details = [
+        { type: { text: 'Goal' }, clock: { value: 600 }, team: { id: '88' }, scoringPlay: true, redCard: false },
+        { type: { text: 'Goal' }, clock: { value: 1500 }, team: { id: '88' }, scoringPlay: true, redCard: false },
+        { type: { text: 'Goal' }, clock: { value: 1700 }, team: { id: '99' }, scoringPlay: true, redCard: false },
+        { type: { text: 'Red Card' }, clock: { value: 2000 }, team: { id: '99' }, scoringPlay: false, redCard: true },
+        { type: { text: 'Penalty - Scored' }, clock: { value: 7200 }, team: { id: '99' }, scoringPlay: true, shootout: true },
+        { type: { text: 'Bancal' }, clock: null, team: null, scoringPlay: true },
+      ];
+      if (inverse) x.competitions[0].competitors.reverse();
+      return x;
+    };
+    const nousEsp = (dom, ext, id) => ({ id, sport: 'foot', domicile: dom, exterieur: ext, debut: Date.parse('2026-10-09T19:00Z'), source: { ligue: 'soccer_spain_la_liga' } });
+    for (const inverse of [false, true]) {
+      const su = (await e.releve([nousEsp('Espanyol', 'Málaga', 'q')], { prendre: commeLeVrai([enJeuEv(inverse)]) })).get('q');
+      eq(su && su.score, '2-1', `releve${inverse ? ' (exterieur ESPN en premier)' : ''} : le score dans NOTRE orientation (Espanyol a domicile chez nous)`);
+      eq(JSON.stringify(su && su.rouges), JSON.stringify([0, 1]), '... les rouges [domicile, exterieur] : celui de Malaga est chez l exterieur');
+      eq(JSON.stringify(su && su.evenements), JSON.stringify([['d', 'b', 600], ['d', 'b', 1500], ['x', 'b', 1700], ['x', 'r', 2000], [null, 'b', null]]),
+         '... les faits en d/x, la seance de tirs au but ignoree, un fait sans equipe garde camp null');
+      eq(JSON.stringify([su.horloge, su.periode, su.affiche, su.etat]), JSON.stringify([2950, 2, "49'", 'in']), '... horloge, periode, affichage, en jeu');
+    }
+    /* un autre sport ne porte pas ces champs (les appelants d'avant voient les memes objets) */
+    const nhlSu = await dkDe(pre, 'Boston Bruins', 'Philadelphia Flyers');
+    ok(!('horloge' in nhlSu) && !('evenements' in nhlSu) && !('rouges' in nhlSu), 'un match de NHL ne porte ni horloge ni faits');
+    /* des `details` qui levent ne font pas perdre le score : lis rend la rencontre, sans faits */
+    {
+      const x = enJeuEv(false);
+      Object.defineProperty(x.competitions[0], 'details', { get() { throw new Error('details illisibles'); } });
+      const lx = e.lis(x);
+      eq(JSON.stringify([lx && lx.a.points, lx && lx.b.points, lx && lx.horloge, lx && lx.evenements]), JSON.stringify([1, 2, 2950, []]),
+         'details qui levent : score et horloge lus, faits vides (le score n est jamais perdu)');
+    }
+    /* un evenement qui fait lever lis n'emporte plus tout le championnat */
+    {
+      const piege = { date: '2026-10-09T19:00Z' };
+      Object.defineProperty(piege, 'competitions', { get() { throw new Error('details malformes'); } });
+      const bon = enJeuEv(false);
+      const vus = await e.releve([nousEsp('Espanyol', 'Málaga', 'q')], { prendre: async () => ({ ok: true, json: async () => ({ events: [piege, bon] }) }) });
+      eq(vus.get('q') && vus.get('q').score, '2-1', 'un evenement qui fait lever lis est saute : la rencontre voisine reste lue');
+    }
+    /* la marge : 6 h = UN jour pour un coup d'envoi de midi, DEUX pour 19:00 UTC ; sans marge, trois (inchange) */
+    {
+      const jours = async (heure, opts) => {
+        const vus = [];
+        await e.releve([{ id: 'm', sport: 'foot', domicile: 'A', exterieur: 'B', debut: Date.parse('2026-10-11T' + heure + 'Z'), source: { ligue: 'soccer_epl' } }],
+                       Object.assign({ prendre: async (u) => { vus.push(/dates=([^&]+)/.exec(String(u))[1]); return { ok: true, json: async () => ({ events: [] }) }; } }, opts || {}));
+        return vus.sort().join(',');
+      };
+      eq(await jours('12:00', { marge: 6 * 3600000 }), '20261011', 'marge 6 h, coup d envoi a 12:00 UTC : un seul jour demande');
+      eq(await jours('19:00', { marge: 6 * 3600000 }), '20261011,20261012', 'marge 6 h, 19:00 UTC : deux jours (le lendemain jusqu a 01:00)');
+      eq(await jours('12:00'), '20261010,20261011,20261012', 'sans marge : trois jours, comme avant (les appelants d avant)');
+      eq(await jours('12:00', { marge: 'n importe quoi' }), '20261010,20261011,20261012', 'une marge illisible garde le defaut');
+      /* mutation du 11/10/2026 (S07) : une marge NEGATIVE prise telle quelle inverserait la fenetre */
+      eq(await jours('12:00', { marge: -1 }), '20261010,20261011,20261012', 'une marge negative garde le defaut (trois jours), jamais une fenetre inversee');
+    }
+    /* Les garde-fous que la mutation du 11/10/2026 laissait passer (S05, S10). */
+    {
+      /* S05 : le try PAR FAIT. L'essai d'au-dessus fait lever `details` lui-meme
+         (le try englobant de lis) ; ici un SEUL fait leve, a cote d'un but valide :
+         sans le try par fait, tous les faits de la rencontre seraient perdus. */
+      const c = { competitors: [{ team: { id: '1' } }, { team: { id: '2' } }],
+                  details: [Object.defineProperty({ team: { id: '1' } }, 'scoringPlay', { get() { throw new Error('bancal'); } }),
+                            { scoringPlay: true, team: { id: '2' }, clock: { value: 600 } }] };
+      eq(JSON.stringify(e.faitsDe(c)), JSON.stringify([{ camp: 'b', but: true, rouge: false, clock: 600 }]),
+         'un fait qui leve est saute SEUL : le but valide d a cote reste (camp b, 600 s)');
+      /* S10 : un rouge sans equipe ne compte chez personne (la garde « rouge » du bilan le lit) */
+      const x = enJeuEv(false);
+      x.competitions[0].details = [{ type: { text: 'Red Card' }, redCard: true, team: null, clock: { value: 100 } }];
+      const su = (await e.releve([nousEsp('Espanyol', 'Málaga', 'q')], { prendre: commeLeVrai([x]) })).get('q');
+      eq(`${JSON.stringify(su && su.rouges)}|${JSON.stringify(su && su.evenements)}`, '[0,0]|[[null,"r",100]]',
+         'un rouge sans equipe : rouges [0, 0] (jamais compte a l exterieur), le fait garde camp null');
+    }
+
     console.log(`\nscores_espn.test.js : ${n} verifications OK`);
   });
 }

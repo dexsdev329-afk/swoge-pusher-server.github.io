@@ -42,6 +42,10 @@ const PRIVEES = ['/admin', '/players', '/stats',
                  /* Le journal brut des releves de prix (lot 1, 10/10/2026) :
                     ce qu on vend et a quel prix, releve par releve. */
                  '/paris/journal-prix?jour=2026-10-10',
+                 /* Le journal du direct en jeu (lot 7, 11/10/2026) : prix de la
+                    bourse et scores, releve par releve, et la liste des jours. */
+                 '/paris/en-jeu/journal',
+                 '/paris/en-jeu/journal?jour=2026-10-11',
                  /* La valeur de cloture par parieur (lot 2, 10/10/2026) :
                     nomme chaque joueur, ce qu il mise, et s il nous bat. */
                  '/paris/clv',
@@ -248,6 +252,19 @@ const code = async (port, chemin, entetes, suivre) => (await fetch(
       const r = await fetch('http://127.0.0.1:8792/paris/mises?jours=1000', { headers: { 'x-admin-key': CLE } });
       eq(r.status, 200, 'avec la cle, /paris/mises repond');
       eq((await r.json()).jours, 90, '/paris/mises?jours=1000 : borne a 90 jours');
+    }
+    /* Le direct en jeu (lot 7) : eteint par defaut, son etat dans /paris/import,
+       son journal derriere la cle (jour valide avant tout acces au disque). */
+    {
+      const r = await fetch('http://127.0.0.1:8792/paris/import', { headers: { 'x-admin-key': CLE } });
+      const j = await r.json();
+      eq(r.status, 200, 'avec la cle, /paris/import repond');
+      eq(j.enJeu && j.enJeu.mode, 'off', '/paris/import -> enJeu : eteint par defaut (PARIS_EN_JEU vide)');
+      eq(JSON.stringify([j.enJeu.credits.total, j.enJeu.rencontres.admises]), '[0,0]', 'aucun credit, aucune rencontre');
+      const g = async (q) => (await fetch('http://127.0.0.1:8792/paris/en-jeu/journal' + q, { headers: { 'x-admin-key': CLE } })).status;
+      eq(await g(''), 200, '/paris/en-jeu/journal sans jour : la liste (200)');
+      eq(await g('?jour=2026-02-31'), 400, 'un jour invalide : 400');
+      eq(await g('?jour=2026-10-11'), 404, 'un jour absent : 404');
     }
 
     /* ---- LE PONT, ET RIEN QUE LE PONT ----
