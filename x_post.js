@@ -23,6 +23,9 @@
  * qui tourne (hype, chiffres, humour, communaute…) a partir de ce que le
  * site fait VRAIMENT ce jour-la, puis l envoi sur X en deux appels : l image,
  * le post. Une copie part sur le Telegram, le journal reste sur le volume.
+ * Depuis le 11 octobre 2026, chaque creneau parle d UN produit ou d UNE
+ * nouveaute, avec une scene de ce produit ; l angle ne regle plus que le ton
+ * (voir « CHAQUE POST PARLE D UN PRODUIT » plus bas).
  *
  * ---- ce que ca coute, mesure le 18 septembre 2026 ----
  *
@@ -338,82 +341,883 @@ function promptImage(scene, cle, choix) {
   return `${rendu}. ${cadrage}. ${PERSONNAGE}, ${scene.prompt}. ${monde}${NEGATIF}`;
 }
 
-// ------------------------------------------------------------ les faits du jour
+/* ==========================================================================
+ * CHAQUE POST PARLE D UN PRODUIT (11 octobre 2026)
+ *
+ * Demande du proprietaire, 11/10/2026 : « on a mis des tweets automatiques
+ * pour 4 fois dans la journee, mais ca serait bien que ca soit concentre plus
+ * sur les produits qu on a [...] sur les nouvelles mises a jour qu on fait et
+ * sur les produits qu on a exactement. Donc on a le betting, on a le SWOGE
+ * World, on a le casino, etc. Et ca serait bien qu on parle de ca dans les
+ * tweets, a chaque fois. » Elle REMPLACE celle du 18/09 (« pas forcement
+ * parler du site, juste faire un tweet bullish ») : huit angles sur onze
+ * interdisaient alors de nommer quoi que ce soit.
+ *
+ * Desormais chaque creneau choisit UN sujet avant d ecrire :
+ *  1. une NOUVEAUTE de moins de NOUVEAUTE_FRAICHE_JOURS jours, jamais tweetee
+ *     (puis au plus une fois de plus, NOUVEAUTE_RETOUR_JOURS jours apres) ;
+ *  2. sinon le produit suivant de la ROTATION, ou paris, SWOGE World et casino
+ *     — les trois que le proprietaire nomme — reviennent plus souvent.
+ * Le modele recoit le nom du produit, UN fait vedette et deux faits voisins,
+ * rien d autre : il ne peut citer que ce qui est ecrit ici. L ANGLE ne choisit
+ * plus que le TON.
+ *
+ * Un tweet est PUBLIC. Chaque fait ci-dessous a ete relu le 11/10/2026 dans le
+ * code pousse sur main (serveur d592de0, site 01d2818) ou sur la page publique,
+ * et porte sa preuve (fichier:ligne ou commit). Un fait qui depend d une
+ * variable Railway (non lue) n est pas ecrit en dur : il porte une `condition`
+ * evaluee au moment du post sur ce que le processus lit vraiment (prix au
+ * marche, reglement automatique), ou il est calcule depuis `cfg` (mise minimum,
+ * nombre de selections). Ce qui n est PAS vendu (pari en direct, plus/moins au
+ * prix du marche, coupes : en OBSERVATION) n est nulle part — et
+ * MOTS_INTERDITS le refuse si le modele l invente.
+ *
+ * AJOUTER UNE NOUVEAUTE : une ligne dans NOUVEAUTES (id, date du jour ou elle
+ * est en ligne, produit, texte en anglais de 208 signes au plus, preuve).
+ * x_post.test.js refuse une ligne sans preuve, trop longue, qui ne nomme pas
+ * son produit ou qui porte un mot interdit.
+ * ======================================================================== */
+const VERIFIE = '2026-10-11';
+const fmt = (n) => Number(n).toLocaleString('en-US');
 
-const NOMS_SPORT = { foot: 'football', tennis: 'tennis', nba: 'NBA', nfl: 'NFL', nhl: 'NHL', mlb: 'MLB', cricket: 'cricket' };
-/** Ce qui est vrai AUJOURD HUI sur le site : le texte s appuie dessus, il n invente pas. */
-function faitsDuJour(t) {
-  const faits = [];
+/* Les onze championnats secondaires passes au prix du marche le 09/10/2026 par
+   la variable PARIS_PRIX_LIGUES (paris_import.js:159-169, EXPLOITATION.md 8.8quinquies).
+   La variable n est pas lue d ici : on ne dit « 17 » que si `prix_ligues.ligues()`
+   le confirme dans le processus qui poste. */
+const SECONDAIRES = ['soccer_efl_champ', 'soccer_france_ligue_two', 'soccer_germany_bundesliga2', 'soccer_spain_segunda_division',
+  'soccer_italy_serie_b', 'soccer_netherlands_eredivisie', 'soccer_portugal_primeira_liga', 'soccer_belgium_first_div',
+  'soccer_turkey_super_league', 'soccer_usa_mls', 'soccer_mexico_ligamx'];
+
+/* Les images de chaque produit : sa scene a lui (celle de l inventaire du
+   11/10, reecrite sans personnage puisque PERSONNAGE le porte, et sans texte,
+   ecran de trading ni courbe puisque NEGATIF les refuse), plus des scenes de
+   la banque qui lui vont. Une scene du produit tourne : la moins recemment
+   postee d abord (sceneProduit), le rendu et le cadrage tournent par-dessus. */
+const SCENES_PRODUITS = [
+  { nom: 'tunnel', prompt: 'bursting out of the players\' tunnel into a packed stadium, a match ball tucked under one front paw, the other paw raised to the roaring crowd',
+    monde: 'a floodlit soccer stadium at night, bright green pitch, confetti drifting through white floodlights, a wall of scarves in the stands' },
+  { nom: 'nexus', prompt: 'standing proud in a pixel-art town square, a tiny shiba puppy pet trotting at his side, a few small pixel adventurers in the background',
+    monde: 'a glowing 2.5D pixel-art plaza at night, a stone fountain, a swirling blue portal and a swirling crimson portal at the edge of the square, a lava glow on the far horizon' },
+  { nom: 'oeuf', prompt: 'kneeling on mossy stone as a speckled glowing egg cracks open between his paws and a tiny pixel shiba puppy peeks out',
+    monde: 'a hidden pixel-art grove at dusk, fireflies, soft violet and teal light, ancient standing stones' },
+  { nom: 'table', prompt: 'leaning over a glowing green blackjack table, sliding a tall stack of blank gold chips forward with one huge paw, playing cards frozen mid-air around him',
+    monde: 'a neon-lit casino at night, a tall board of glowing pegs on the wall behind him, warm gold and purple light on his muscles' },
+  { nom: 'plinko', prompt: 'dropping a single glowing ball into a giant board of brass pegs twice his height, watching it bounce with a calm grin',
+    monde: 'a dark velvet game hall, the peg board lit from within in warm amber, deep purple shadows' },
+  { nom: 'rampe', prompt: 'on a rooftop launch pad as a small dog-bone-shaped rocket lifts off on a bright green trail, a tiny friendly robot sidekick waving from it, his other paw resting on a heavy steel vault door sealed with a glowing chain',
+    monde: 'a neon city at dusk seen from a rooftop, magenta sky, cool blue city lights far below' },
+  { nom: 'pont', prompt: 'striding across a glowing suspension bridge that links two floating islands, a small travel bag over one shoulder',
+    monde: 'two floating islands above a sea of clouds at sunrise, the bridge glowing soft gold, pastel pink and blue sky' },
+  { nom: 'village', prompt: 'sitting at the center of a night village of tiny friendly robot agents, a satellite-dish scout, a shield-bearing guard, a little whale-shaped watcher and a crystal-ball oracle, each carrying a glowing blue cube to him',
+    monde: 'a cozy village square at night, warm lanterns, soft neon accents, blank letterless speech bubbles drifting upward' },
+  { nom: 'popcorn', prompt: 'lounging in a red velvet cinema seat with a giant popcorn bucket, watching a tall vertical movie screen that shows a cartoon tropical island at sunset on one half and an electric-blue time portal on the other',
+    monde: 'a dark cinema room, a projector beam cutting through the air, empty rows around him, warm gold and cool blue light' },
+  { nom: 'projection', prompt: 'in a cramped projection booth, carefully threading a film reel onto an old projector, the beam already shining through the little window',
+    monde: 'a tiny projection room, warm tungsten light, dust in the beam, film cans stacked on wooden shelves' },
+];
+
+/* ---- LE CATALOGUE ----
+ * `nom` : le nom public, tel que le tweet doit l ecrire ; `motsCles` : ce qui
+ * compte comme « le tweet le nomme » ; `faits` : { id, texte, preuve, verifie,
+ * nom? (un volet du produit, ex. le launchpad dans le portefeuille),
+ * condition? (lecture vivante) } ; `reserves` : des textes vrais si le modele
+ * se tait ou se trompe ; `interdits` : ce que CE produit ne doit jamais dire,
+ * en plus de MOTS_INTERDITS. Les six produits suivent les six groupes de
+ * l inventaire verifie du 11/10 (le portefeuille et le launchpad y forment un
+ * seul produit, SWOGE AI et SWOGE Agents un autre). */
+const PRODUITS = [
+  { cle: 'bet', nom: 'SWOGE Bet', motsCles: /SWOGE Bet\b/i, lien: 'https://swoleeswoge.dog/swogebet.html',
+    scenes: ['tunnel', 'foot', 'tennis', 'hockey'],
+    faits: [
+      /* Aucun domaine nu dans un fait (relecture du 11/10) : X fait un lien de « swoleeswoge.dog »
+         comme de « Pump.fun », et un post avec lien coute 0,200 $ au lieu de 0,015 $ (en tete). */
+      { id: 'carnet', texte: 'SWOGE Bet is our sportsbook: real fixtures, and your odds are locked in the moment you place the bet.',
+        preuve: 'site swogebet.html:108 (title), :3966 « Odds are locked in when you place the bet. Nothing changes them afterwards. »' },
+      { id: 'swogebet', texte: 'Bets on SWOGE Bet are played in $SWOGEBET only: deposit it in the bet vault, and winnings come back to your $SWOGEBET bet balance.',
+        preuve: 'site swogebet.html:2574 ; serveur game.js:3746, 3796, 3811 (jeton swogebet), 4424-4426 (_crediteTicket)' },
+      { id: 'paire', texte: '$SWOGEBET is paired with $SWOGE and nothing else, so buying $SWOGEBET for SWOGE Bet buys $SWOGE first.',
+        preuve: 'site whitepaper.html:2786-2790 (section 41 « Buying it buys $SWOGE first, even when the buyer pays in ETH »)' },
+      { id: 'achat', texte: 'No $SWOGEBET yet? The SWOGE Bet page links its DexScreener pair on Robinhood Chain, so you can pick some up before your first bet.',
+        preuve: 'site swogebet.html:2731-2732 (carte BUY $SWOGEBET), :2780 (dexscreener.com/robinhood/0xc129…924e)' },
+      { id: 'sports', texte: 'Seven sports have a tab on SWOGE Bet: soccer, tennis, NBA, NFL, cricket, NHL and MLB. A sport with no fixtures shows its return date or soon.',
+        preuve: 'serveur paris.js:60-90 (SPORTS), paris_import.js:1263-1265 ; site swogebet.html:3457-3486' },
+      { id: 'marches', texte: 'Soccer matches on SWOGE Bet carry six markets: match result, double chance, both teams to score, over/under 2.5 goals, handicap -1.5 and correct score.',
+        preuve: 'serveur paris.js:169-252 (MARCHES) ; site swogebet.html:3333-3344, index.html:1179' },
+      { id: 'combines', texte: `Accumulators of up to ${fmt(cfg.PARI_JAMBES_MAX)} selections on SWOGE Bet, one per match: the odds multiply, and one wrong pick loses the whole slip.`,
+        preuve: 'serveur config.js:1465 (PARI_JAMBES_MAX, lu dans le processus qui poste), game.js:3681-3682, 3701 ; site swogebet.html:3964-3966' },
+      { id: 'mise', texte: `The minimum stake on SWOGE Bet is ${fmt(cfg.PARI_MIN)} $SWOGEBET a slip.`,
+        preuve: 'serveur config.js:1423 (PARI_MIN, lu dans le processus qui poste) ; site whitepaper.html:2826' },
+      { id: 'prix-marche', condition: (v) => !!v.sixGrands,
+        texte: 'On SWOGE Bet, the Premier League, La Liga, Serie A, Bundesliga, Ligue 1 and the Champions League are priced off the betting market (Betfair, else Pinnacle, else the median of the books), with the house margin added.',
+        preuve: 'serveur prix_ligues.js:16-17 (LIGUES_DEFAUT), prix_marche.js:32-37 (ordre des references) ; commit d856863. Condition : les six cles dans prix_ligues.ligues()' },
+      { id: 'elo', texte: 'SWOGE Bet prices tennis, NBA, NFL, NHL, MLB and cricket with its own Elo ratings, recalibrated every week.',
+        preuve: 'serveur paris.js:631 (aLElo) ; EXPLOITATION.md:481 (etalonnage hebdomadaire de paris_notes.json)' },
+      { id: 'fermeture', texte: 'Betting on a match on SWOGE Bet closes at kickoff, checked against the real start time on ESPN, not just the schedule.',
+        preuve: 'serveur paris.js:506-511 (ouverts), :576-610 (ouvert : etat ESPN in/post, heure ESPN moins 60 s)' },
+      /* Sans cadence : la page ne redemande parisListe qu a hello, auth et :4105 (aucun setInterval),
+         et DIRECT_AGE (server.js:89) est l age maximal du cache ESPN, pas un rafraichissement. */
+      { id: 'direct', texte: 'A LIVE NOW board on SWOGE Bet shows the scores of matches under way, from ESPN. Scores only, no odds.',
+        preuve: 'site swogebet.html:3537-3552 (sbPeintDirect, « no odds and no button »), :4085, :4097, :4111 ; serveur server.js:191-235 (directFrais)' },
+      { id: 'reglement', condition: (v) => !!v.auto,
+        texte: 'SWOGE Bet settles on its own: once the final score is in from ESPN and a safety delay has passed, winning slips are paid to your $SWOGEBET bet balance, no claim needed.',
+        preuve: 'serveur paris_import.js:1726-1730 (PARIS_AUTO, AUTO_DELAI_MIN 90) ; game.js:4320-4332. Condition : PARIS_AUTO different de 0 dans le processus' },
+      { id: '90min', texte: 'Soccer bets on SWOGE Bet settle on the 90-minute score. Extra time and penalties don\'t count.',
+        preuve: 'serveur scores_espn.js:255-257 (FOOT_REGLEMENTAIRE), commit 1a9dcd6' },
+      { id: 'coffre', texte: 'The SWOGE Bet vault is its own on-chain contract, verified on Blockscout, and withdrawals are signed vouchers that you cash yourself.',
+        preuve: 'site whitepaper.html:2800-2805' },
+      { id: 'casino', texte: 'Your SWOGE Bet balance also plays in the SWOGE casino and at the SWOGE World blackjack table: pick Stake from: Bet $SWOGEBET, and wins come back in $SWOGEBET.',
+        preuve: 'site coffre.js:130-135 (libelles), commits a1c2b88, 0e3bb9d, 086f639 ; serveur game.js:4442-4461, commit 358bf8a' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'SWOGE Bet: real fixtures, and your odds lock in the moment you place the bet. Nothing changes them after. 🏟️🐕',
+      'Seven sports, one sportsbook. SWOGE Bet covers soccer, tennis, NBA, NFL, cricket, NHL and MLB, all played in $SWOGEBET. ⚽🐕',
+    ],
+    /* En anglais americain « football » est la NFL ; « $SWOGE Bet » est un faux nom ; le carnet n est
+       pas « provably fair » (c est le vocabulaire du casino) ; les cotes ne sont pas sur la chaine ;
+       aucune mise maximum (la page et le serveur se contredisent) ; jamais « copie du livre ».
+       Relecture du 11/10 : le pari en jeu se dit aussi « in-game », « in-running » ; aucun cash-out
+       (un pari reste jusqu au reglement) ; aucune cadence du tableau LIVE NOW (il ne se rafraichit pas seul). */
+    interdits: [/\bfootball\b/i, /\$SWOGE Bet\b/, /provably fair/i, /on[- ]?chain odds|odds (are |live )?on[- ]?chain/i, /no sign[- ]?up/i,
+      /\bmax(imum)? (stake|bet)\b|\bup to [\d,]+ \$SWOGEBET/i, /copied|straight from the book/i, /every bet is (announced|posted)/i,
+      /\bin[- ](game|match|running)\b/i, /\bcash(es|ed|ing)?[- ]?out\b/i, /\brefresh\w*|\bupdates? every\b|\bevery \w+ seconds\b/i] },
+
+  { cle: 'world', nom: 'SWOGE World', motsCles: /SWOGE World\b/i, lien: 'https://swoleeswoge.dog/nexus.html',
+    scenes: ['nexus', 'oeuf', 'portail', 'mine'],
+    faits: [
+      { id: 'monde', texte: 'SWOGE World is our multiplayer pixel game: you land in the Nexus, a hub where you watch the other players walk around live.',
+        preuve: 'site index.html:1009, :1314, games.html:1068-1069, nexus.js:2-12 ; serveur server.js:9843-9847 (nexusEtat, sur main d592de0)' },
+      /* « The SWOGE World Nexus is drawn in 2.5D pixel art » retire le 11/10 : le commit 0b9fd0e n a
+         refait en 2,5D (rendu, pas pixel) que les cinq batiments de la place, sur un sol vu de dessus,
+         et nexus.js:3420-3428 sont les libelles de l editeur de cartes. */
+      { id: 'gratuit', texte: 'Every account gets a free character in SWOGE World, so anyone who signs in can play.', preuve: 'serveur skins.js:83-95 (OFFERT)' },
+      { id: 'persos', texte: 'SWOGE World has six playable characters, each with its own level, its own XP and 8 RPG stats: HP, MP, ATT, DEF, SPD, DEX, VIT and WIS.',
+        preuve: 'serveur skins.js:55-62 (6 SKINS, compte le 11/10), personnages.js:4-9, 44-53' },
+      { id: 'niveau', texte: 'Characters in SWOGE World level up to 20.', preuve: 'serveur personnages.js:121 (NIVEAU_MAX = 20) ; site index.html:1142, 1155' },
+      { id: 'equipement', texte: 'Each SWOGE World character has four gear slots: a power fruit, a weapon, armor and a ring.', preuve: 'site nexus.js:1161 (EMPLACEMENTS)' },
+      { id: 'anneaux', texte: 'The SWOGE World map is built in rings, calm plains at the edge and a lava core in the middle. The closer you get to the center, the harder it hits.',
+        preuve: 'serveur monde.js:21-28, 61-67 (ANNEAUX)' },
+      { id: 'monstres', texte: 'SWOGE World has 34 monster types, and 19 of them roam the open world.',
+        preuve: 'serveur monde.js:2156 (MONSTRES, 34 cles), 3367-3420 (PEUPLEMENT, 19 especes) ; comptes en requerant monde.js le 11/10' },
+      { id: 'donjons', texte: 'Four dungeons in SWOGE World, each with its own boss: The Forge, Pirate Cave, Cinder Sanctum and The Storm Arena.',
+        preuve: 'serveur monde.js:169-345 (DONJONS)' },
+      { id: 'portail', texte: 'In SWOGE World some monsters rip open a dungeon portal when they die. It stays open 40 seconds, and anyone in that world can jump in.',
+        preuve: 'serveur monde.js:378-386 (PORTAIL.duree 40), :404 ; server.js:10295-10318 (sur main d592de0)' },
+      { id: 'arene', texte: 'The Storm Arena has its own portal in the SWOGE World Nexus: a solo boss fight you can run again and again.',
+        preuve: 'site nexus.js:6964-6974 ; serveur server.js:8527-8554 (une salle par joueur, sur main d592de0)' },
+      { id: 'crimson', texte: 'The Crimson Reach is the PvP world of SWOGE World, and loot there never drops below Legendary.',
+        preuve: 'site nexus.js:6961-6963 ; serveur server.js:957 (PLANCHER_CRIMSON legendaire), :978-985 (pvp: true, sur main d592de0)' },
+      { id: 'pvp', texte: 'Get taken down by another player in the SWOGE World Crimson Reach and you only drop what you picked up on that run. Your gear, your level and your vault come home with you.',
+        preuve: 'serveur server.js:10327-10345 (sur main d592de0) ; site nexus.js:10803-10804' },
+      { id: 'mort', texte: 'Die to a monster in SWOGE World and your character goes back to level 0, losing the gear it wore and the loot it carried. Your vault stays safe.',
+        preuve: 'serveur game.js:8192-8196, server.js:10321-10324, 10365 (sur main d592de0) ; site nexus.js:10805' },
+      { id: 'reliques', texte: 'Relics are the one SWOGE World rarity you cannot buy. They only drop in the world.', preuve: 'serveur boutique.js:112-121 (relique)' },
+      { id: 'oeufs', texte: 'Monsters in SWOGE World can drop eggs, about 1 in every 1,200 kills, in six kinds from the Plain Egg to the Prism Egg.',
+        preuve: 'serveur monde.js:4441-4464 (chance 1/1200, 6 especes), game.js:143-149' },
+      { id: 'familiers', texte: 'Hatched pets live in Petworld. Pick one and it follows you everywhere in SWOGE World.', preuve: 'site nexus.html:2939, nexus.js:7003-7005' },
+      { id: 'familiers-niveau', texte: 'SWOGE World pets level up to 100. At level 1 a pet acts once a minute, and at level 100 it acts 20 times a minute.',
+        preuve: 'serveur monde.js:3814-3836 (niveauMax 100, parMinute 1 -> 20)' },
+      { id: 'blackjack', texte: 'The SWOGE World Nexus has a blackjack table on the same balance as the casino. The dealer stands on 17, and insurance is offered.',
+        preuve: 'site nexus.html:2950, nexus.js:6613-6616, 7008 ; serveur game.js:6209' },
+      { id: 'editeur', texte: 'SWOGE World has a Map Editor: players build their own maps, share them in a gallery and walk them together.',
+        preuve: 'site nexus.html:3198, nexus.js:2702-2706 ; serveur server.js:8071-8165, 8455-8471 (sur main d592de0)' },
+      /* Le prix vient de PRIX_MONDE_GOLD (variable d env, non lue d ici) : dit seulement s il est > 0 dans
+         le processus qui poste. Verse chaque MOIS (server.js:7008-7016, game.verseMonde) ; le commentaire
+         « chaque semaine » de config.js:347 est perime, le code et la page disent mois. */
+      { id: 'classement', condition: () => cfg.PRIX_MONDE_GOLD > 0,
+        texte: 'The SWOGE World leaderboard ranks living characters by XP. Die and you drop off it, and every month the top of the board splits a prize in in-game gold.',
+        preuve: 'site nexus.js:11810-11815 ; serveur game.js:2761-2797, 2801-2818 (moisCle), 2837-2856 (verseMonde), server.js:7008-7016, config.js:361 (PRIX_MONDE_GOLD)' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'SWOGE World is a multiplayer pixel world: land in the Nexus and watch the other players walk around live. Every account gets a free character. 🎮🐕',
+      'Four dungeons, four bosses. The Forge, Pirate Cave, Cinder Sanctum and The Storm Arena are waiting in SWOGE World. Bring your gear. ⚔️🐕',
+    ],
+    /* La salle de cinema est vide depuis le 27/09 (liens pirates retires) ; Manga et Series sont des
+       facades ; le portail +18 mene a une ville vide ; aucun agent IA dans le monde ; pas de
+       play-to-earn, l or ne sort pas du jeu ; les objets ne sont pas des NFT ; personnages de tiers
+       (Boy's Club) et monstre au nom de marque jamais nommes ; aucun chiffre de joueurs invente.
+       (Les NFT, le manga et le play-to-earn sont refuses par MOTS_INTERDITS, pour tous les produits.) */
+    interdits: [/cinema|\bmovies?\b|\bfilms?\b|\bseries\b|\+18/i, /\bearn/i, /\bAI agents?\b/i,
+      /\bPepe\b|\bAndy\b|\bBrett\b|Landwolf|Optimus|Street Fighter/i, /thousands of players|\bmillions?\b/i, /provably fair|exclusive|premium/i] },
+
+  { cle: 'casino', nom: 'the SWOGE casino', motsCles: /SWOGE (casino|Games|Blackjack|Spin|Smash|Bonanza|Kennel|Poker)\b|DEAD SWOGE/i, lien: 'https://swoleeswoge.dog/games.html',
+    scenes: ['table', 'casino', 'plinko'],
+    faits: [
+      { id: 'salle', texte: 'The SWOGE casino lists 11 games against the house, 4 against other players and 5 head-to-head 1v1 duels.',
+        preuve: 'site games.html:1123-1125 (nb 11), 1205-1207 (nb 4), 1222-1224 (nb 5)' },
+      { id: 'maison', texte: 'Against the house in the SWOGE casino: Blackjack Gold Table, SWOGE Spin, Casino Hold\'em, Three Card, Mines, Hi-Lo, Plinko, SWOGE Bonanza, SWOGE Kennel, DEAD SWOGE and SWOGE Smash.',
+        preuve: 'site games.html:1133-1158' },
+      { id: 'joueurs', texte: 'Against other players in the SWOGE casino: Boulier, SWOGE Poker, the shared Coin Pusher and Crash, plus 1v1 duels where the winner takes the stake.',
+        preuve: 'site games.html:1205-1236' },
+      /* Pas « every round » (relecture du 11/10) : Crash et le Boulier tirent d une chaine de hachage
+         engagee d avance (crash.js:8-16, boulier_salle.js:63), le Poker a la graine de sa table
+         (poker_room.js:45-58), les duels HMAC(graine, 'duel:id') sans graine client (game.js:10159).
+         Graine serveur + graine client + nonce : verifie jeu par jeu ci-dessous. */
+      { id: 'equitable', texte: 'Blackjack, Plinko, Mines and Hi-Lo in the SWOGE casino are provably fair: the server seed\'s SHA-256 hash is shown before you play, and each round is drawn with your client seed and a nonce.',
+        preuve: 'serveur game.js:5537-5540 (_rotateSeed), 6289 (blackjack), 6583 (hilo), 6691 (mines), 6766-6767 (plinko), casino.js:23-31 ; site swoge_blackjack.html:1931, swoge_casino.html:1904' },
+      { id: 'graine', texte: 'When the SWOGE casino seed rotates, the old server seed is published so anyone can recompute every round played under it, and a rotation is refused while a hand is still open.',
+        preuve: 'serveur game.js:5585-5600 (tourneGraine), 5551-5576 (partiesEnCours) ; site whitepaper.html:1482-1492' },
+      { id: 'crash-chaine', texte: 'Crash in the SWOGE casino plays a pre-built hash chain backwards. The commitment is published before the first round, so the house cannot change a future round.',
+        preuve: 'serveur crash.js:8-16, 57-70 ; site crash.html:2054-2058' },
+      { id: 'crash-auto', texte: 'Crash in the SWOGE casino: everyone rides the same curve and cashes out when they want, and auto cash out fires on the server the instant the curve hits your target, even if your connection lags.',
+        preuve: 'serveur crash.js:2-4, 36-39 ; site crash.html:1281, 1289' },
+      { id: 'blackjack', nom: 'SWOGE Blackjack', texte: 'SWOGE Blackjack pays 3:2 on a blackjack, the dealer stands on 17, insurance pays 2:1, and there are Perfect Pairs and 21+3 side bets.',
+        preuve: 'serveur game.js:6214, 6300, 6394-6396, config.js:1169-1171 ; site swoge_blackjack.html:1605-1616, 1637' },
+      { id: 'side-bets', nom: 'SWOGE Blackjack', texte: 'SWOGE Blackjack side bets: Perfect Pairs pays up to 25 to 1, and 21+3 pays up to 100 to 1 on suited trips.',
+        preuve: 'serveur config.js:1169 (BJ_PP_PAY parfaite 25), :1170 (BJ_213_PAY brelanServi 100), constantes hors env' },
+      { id: 'plinko', texte: 'Plinko in the SWOGE casino: choose 8, 12 or 16 rows and low, medium or high risk. The ball\'s path is drawn from the seed first, and the animation just replays it.',
+        preuve: 'serveur plinko.js:8-14, 35-36 ; site plinko.html:1669, 1187-1188' },
+      { id: 'bonanza', nom: 'SWOGE Bonanza', texte: 'SWOGE Bonanza is a 6x5 grid that pays anywhere with 8+ matching symbols, with tumbling wins, multiplier bombs and a Buy bonus.',
+        preuve: 'serveur bonanza.js:11-20 ; site swoge_bonanza.html:121, 1688' },
+      { id: 'chenil', nom: 'SWOGE Kennel', texte: 'SWOGE Kennel: 5 reels and 20 fixed lines, Wilds that stay sticky during free spins, and a free-spin count that is drawn, not fixed.',
+        preuve: 'serveur chenil.js:5-14, 36, 52-60 ; site swoge_chenil.html:121' },
+      { id: 'dod', nom: 'DEAD SWOGE', texte: 'DEAD SWOGE: 5 reels and 243 ways. The Wild stretches to fill its reel and multiplies, and Wilds multiply together: three x3 Wilds make x27.',
+        preuve: 'serveur dod.js:5-38 ; site swoge_dod.html:121' },
+      { id: 'smash', nom: 'SWOGE Smash', texte: 'SWOGE Smash: smash the gem, and the top prize is 250x the bet.',
+        preuve: 'serveur config.js:1114-1126 (SPIN_PRIZES, 250 au plus, constante) ; site swoge_smash.html:122' },
+      { id: 'spin', nom: 'SWOGE Spin', texte: 'SWOGE Spin is the Volcano slot, with a Buy Bonus button.',
+        preuve: 'site swoge_spin.html:118-123, 235 ; serveur game.js:6165, 6190' },
+      { id: 'hilo-mines', texte: 'Hi-Lo in the SWOGE casino: call higher or lower and cash out whenever you like. Mines: a 5x5 grid where you pick how many bombs to play against.',
+        preuve: 'serveur hilo.js:3-8, mines.js:5, 35 ; site games.html:1141-1144' },
+      { id: 'three', texte: 'In Three Card at the SWOGE casino, a straight beats a flush, because three-card straights are rarer than flushes.',
+        preuve: 'serveur casino.js:50-57 (eval3)' },
+      { id: 'boulier', texte: 'Boulier in the SWOGE casino: pick 10 numbers out of 90, watch 30 balls drop, and hit 10 out of 10 for the progressive jackpot.',
+        preuve: 'serveur boulier.js:3-7, 66-68 ; site boulier.html:121, 1488' },
+      { id: 'poker', nom: 'SWOGE Poker', texte: 'SWOGE Poker is 6-max Texas Hold\'em with real players only, never a bot. A table with one player just waits for a second.',
+        preuve: 'serveur poker_room.js:9, 47 ; site swoge_poker.html:122' },
+      { id: 'email', texte: 'Sign in to the SWOGE casino with just your email and a wallet is created for you automatically. No app needed.',
+        preuve: 'site crash.html:1483-1484' },
+      { id: 'retrait', texte: 'Withdrawals from the SWOGE casino balance go straight to your wallet through a signed voucher.',
+        preuve: 'site swoge_blackjack.html:1748 ; serveur game.js:4-11' },
+      { id: 'deux-coffres', texte: 'Holders of $SWOGEBET can stake it on 12 SWOGE casino games with the Stake from: Vault $SWOGE / Bet $SWOGEBET selector, and wins come back in the same token.',
+        preuve: 'site coffre.js:1-16, 100, 130-135 ; serveur game.js:4442-4461' },
+      { id: 'chaine', texte: '$SWOGE and the SWOGE casino run on Robinhood Chain (chain 4663).', preuve: 'serveur config.js:102-103 ; site crash.html:121, plinko.html:121' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'Blackjack, Plinko, Mines and Hi-Lo in the SWOGE casino are provably fair: the seed\'s hash is shown before you play, and the old seed is published when it rotates. 🎰🐕',
+      'Blackjack, Plinko, Crash, Mines, Hi-Lo, Poker and more. The SWOGE casino runs on Robinhood Chain, and you sign in with just your email. 🃏🐕',
+    ],
+    /* Aucun taux de retour ni avantage de la maison (plusieurs viennent de l env) ; l equite est un
+       engagement du serveur, pas « sur la chaine » ; aucune page ne laisse choisir sa graine ; pas
+       de bonus de bienvenue ; aucune promesse de gain. */
+    interdits: [/\bRTP\b|house edge|return to player/i, /fair on[- ]?chain|on[- ]?chain fair|verified on the blockchain/i,
+      /choose your (own )?(client )?seed|pick your (own )?seed|your own seed/i, /welcome bonus|free \$?SWOGE\b/i, /\bweekly\b|every week|\bmax(imum)? bet\b|\bmin(imum)? bet\b/i] },
+
+  { cle: 'wallet', nom: 'SWOGE Wallet', motsCles: /SWOGE Wallet\b|launchpad|SWOGE FUN\b/i, lien: 'https://swoleeswoge.dog/swoge_wallet.html',
+    scenes: ['rampe', 'coffre', 'pont'],
+    faits: [
+      { id: 'wallet', texte: 'SWOGE Wallet holds, sends and swaps $SWOGE and $SWOGEBET on Robinhood Chain (chain ID 4663).', preuve: 'site swoge_wallet.html:6-7, 3324-3325' },
+      { id: 'email', texte: 'Sign in to SWOGE Wallet with just your email and a wallet is created on the spot: no extension, no app to install. Or connect the browser wallet you already use.',
+        preuve: 'site swoge_wallet.html:3413-3416, 3433' },
+      { id: 'swap', texte: 'SWOGE Wallet swaps $SWOGE, $SWOGEBET and ETH on Robinhood Chain\'s own pools, and shows you the price impact and the minimum you receive before you sign.',
+        preuve: 'site swoge_wallet.html:3332-3333, 2747-2748' },
+      /* Pas « bridges ETH from … BNB Chain, Polygon or Avalanche » : de ces trois-la on envoie du BNB,
+         du POL ou de l AVAX (CHAINES_PONT, sym). */
+      { id: 'pont', texte: 'SWOGE Wallet bridges into Robinhood Chain from Ethereum, Base, Arbitrum, Optimism, BNB Chain, Polygon or Avalanche, and back out, with the bridge fee and network fee quoted before you sign.',
+        preuve: 'site swoge_wallet.html:3339-3340, 3523-3544 (CHAINES_PONT, sym ETH/BNB/POL/AVAX), 3128' },
+      /* Pas « every send » : un envoi Solana n est pas simule (swoge_wallet.html:7294-7295, etat 'autre'). */
+      { id: 'apercu', texte: 'Before you sign a send on Robinhood Chain, SWOGE Wallet dry-runs it and shows expected to succeed or would FAIL, with the reason. It warns you, it never blocks you.',
+        preuve: 'site swoge_wallet.html:3148, 7280-7296, 7327, 7336-7339' },
+      { id: 'faceid', texte: 'SWOGE Wallet has an optional Face ID / Touch ID lock, checked by the server. It hides your screen, and every transaction still needs your wallet\'s signature.',
+        preuve: 'site swoge_wallet.html:2963-2966, 4750-4754 ; serveur wallet_passkey.js' },
+      { id: 'assistant', texte: 'SWOGE Wallet has a built-in assistant: type or say buy $50 of SWOGE or bridge 0.2 ETH to Base, it fills in the real form, you review it, and your own wallet signs.',
+        preuve: 'site swoge_wallet.html:2833-2834, 2846-2848, 2852-2857, 11717 ; serveur wallet_assistant.js:54-61' },
+      { id: 'soldes', texte: 'SWOGE Wallet shows both game balances, $SWOGE for the casino and $SWOGEBET for bets: deposit to play, and withdraw back to your wallet whenever you like.',
+        preuve: 'site swoge_wallet.html:2878-2879, 2916-2918, 3349, 3362' },
+      { id: 'cle', texte: 'SWOGE never sees or stores your private key, and an email wallet can export its key from the Account screen of SWOGE Wallet.',
+        preuve: 'site swoge_wallet.html:3020-3025, 3394-3397' },
+      { id: 'sol', texte: 'SOL and classic Solana tokens can be sent from SWOGE Wallet too.', preuve: 'site swoge_wallet.html:6754-6757' },
+      { id: 'lp', nom: 'the SWOGE launchpad', texte: 'Launch a token on Robinhood Chain from the SWOGE launchpad into a real Uniswap pool paired with ETH or $SWOGE, signed from your own wallet. SWOGE never holds your keys.',
+        preuve: 'site launchpad.html:640-645, 1276-1279, lance_v4.js:4-6' },
+      { id: 'lp-frais', nom: 'the SWOGE launchpad', texte: 'The SWOGE launchpad fee is 0.0001 ETH on the ETH pool, or 10,000 $SWOGE burned on the $SWOGE pool.',
+        preuve: 'site launchpad.html:641, 645, lance_v4.js:25-26 (feeWei) ; contrats/SwogeFunV4.sol:162, 227' },
+      /* La fiche securite (launchpad.html:1245-1252) ne vaut que pour les pools ETH et $SWOGE de
+         Robinhood Chain ; un lancement Solana suit les regles de sa courbe (:1231-1238 : frais a part,
+         achat du createur possible, aucun partage). D ou « on Robinhood Chain » dans ces quatre-la,
+         au present (« you launch ») : l ancien bouton Classic (V3), ou le launchpad etait proprietaire
+         du jeton, est retire depuis le 05/10 (launchpad.html:637-638). */
+      { id: 'lp-offre', nom: 'the SWOGE launchpad', texte: 'A token you launch on Robinhood Chain from the SWOGE launchpad has a 1,000,000,000 supply, all of it in the pool: no team bag, and nothing for the creator either.',
+        preuve: 'site launchpad.html:637-647, 1247 ; contrats/SwogeFunV4Weth.sol:168, 250-257, 277' },
+      { id: 'lp-verrou', nom: 'the SWOGE launchpad', texte: 'Liquidity of a token you launch on Robinhood Chain from the SWOGE launchpad is locked forever: the pool position stays in the launchpad contract, which has no function to withdraw it.',
+        preuve: 'site launchpad.html:1248 ; contrats/SwogeFunV4Weth.sol:290-316 (collectFees seulement)' },
+      { id: 'lp-erc20', nom: 'the SWOGE launchpad', texte: 'A token you launch on Robinhood Chain from the SWOGE launchpad is a bare ERC-20 with no owner, no mint, no tax and no blacklist.',
+        preuve: 'site launchpad.html:1249 ; contrats/SwogeFunV4Weth.sol:93, 101, 104-117' },
+      { id: 'lp-partage', nom: 'the SWOGE launchpad', texte: 'Tokens you launch on Robinhood Chain from the SWOGE launchpad carry a 1% trading fee, split 50% to the creator and 50% to the SWOGE treasury, and the token side of the fees is burned.',
+        preuve: 'site launchpad.html:1250 ; contrats/SwogeFunV4Weth.sol:156, 163, 297-315' },
+      { id: 'lp-claim', nom: 'the SWOGE launchpad', texte: 'Creators collect their fee share from the SWOGE launchpad\'s Portfolio with one Claim all my fees button.',
+        preuve: 'site launchpad.html:2308' },
+      { id: 'lp-copies', nom: 'the SWOGE launchpad', texte: 'The SWOGE launchpad refuses copycats: no official Robinhood stock token names, no major tickers like BTC, ETH or USDC, and no SWOGE.',
+        preuve: 'site launchpad.html:1251 ; serveur lancement_v4.js:81-88' },
+      { id: 'lp-agent', nom: 'the SWOGE launchpad', texte: 'On the SWOGE launchpad a token can get its own AI agent: pick a personality (Hype, Analyst, Stoic, Contrarian or Builder) and an objective, and preview its first post before you launch.',
+        preuve: 'site launchpad.html:642-643, 675-687 ; serveur agent_jeton.js:51-57' },
+      { id: 'lp-pilote', nom: 'the SWOGE launchpad', texte: 'A creator runs their SWOGE launchpad token\'s agent from their wallet with a gas-free signature: set it up, pause it, link its X account and a Telegram group, and see its activity and spending.',
+        preuve: 'site launchpad.html:784-786, 1405-1440' },
+      { id: 'lp-public', nom: 'the SWOGE launchpad', texte: 'Every SWOGE launchpad token agent and its posts are public on the AI Agents page.', preuve: 'site token_agents.html:53-54, 93, 120' },
+      /* Sans « Pump.fun » (un domaine : X en fait un lien), et dans son propre `groupe` : ses voisins ne
+         sont jamais les regles des pools de Robinhood Chain, fausses pour un jeton Solana. */
+      { id: 'lp-solana', nom: 'the SWOGE launchpad', groupe: 'solana', texte: 'The SWOGE launchpad can also launch your token on Solana, on a bonding curve, signed with Phantom. SWOGE never holds your keys.',
+        preuve: 'site launchpad.html:646-647, 1231-1238, 1262-1264' },
+      { id: 'lp-telegram', nom: 'the SWOGE launchpad', texte: 'Launch from Telegram: /launch Moon Dog MDOG eth replies with a pre-filled SWOGE launchpad link, and you sign in your own wallet. The bot never signs.',
+        preuve: 'serveur tg_lance.js:7-14, tg_commandes.js:23, 97' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'SWOGE Wallet: sign in with your email, then hold, send and swap $SWOGE and $SWOGEBET on Robinhood Chain, with the price impact shown before you sign. 👛🐕',
+      'Launch a token on Robinhood Chain from the SWOGE launchpad: all of the supply goes in the pool, liquidity is locked forever, and SWOGE never holds your keys. 🚀🐕',
+    ],
+    /* Le pool est Uniswap v3 (« V4 » est la version de NOTRE launchpad) ; le 70/30 est l ancien
+       modele ; pas d « instantane » sur DexScreener ; V4 n est pas audite ; le rachat de l agent est
+       du papier ; Face ID est un verrou de confidentialite, pas une protection des fonds ; l apercu
+       avertit, il ne garantit rien ; l assistant pre-remplit, il n execute pas. (« Uniswap v4 » est
+       refuse par MOTS_INTERDITS, « renounced » couvre « ownership renounced ».) */
+    interdits: [/\bv4\b/i, /\binstant(ly)?\b/i, /\baudit(ed)?\b/i, /buy[- ]?backs?|fund(s|ed)? (it|them)sel(f|ves)/i,
+      /Face ID protects|sign with Face ID|protects? your (funds|money)/i, /keys stay on your device/i, /blocks scams|stops honeypots|honeypot[- ]proof/i,
+      /any Solana token/i, /trades for you|executes (trades|for you)/i, /\brenounced\b/i, /volume bench/i] },
+
+  /* « SWOGE AI » seul, jamais le debut de « SWOGE AI Cinema » : un tweet du cinema ne nomme pas SWOGE AI.
+     Le lien du produit est celui de la colonie (son volet sans `nom`) ; chaque volet a le sien (LIENS_VOLETS). */
+  { cle: 'ai', nom: 'SWOGE AI', motsCles: /SWOGE AI\b(?!\s+Cinema)|SWOGE Agents\b|SwoleMind|SwogeAgentic|Agent Passport|Agent Store|Solana AI|Ethereum AI|SWOGE Security/i,
+    lien: 'https://swoleeswoge.dog/swoge_ai.html',
+    scenes: ['village', 'labo', 'bibliotheque'],
+    faits: [
+      { id: 'colonie', texte: 'SWOGE AI is a colony of AI agents that reads new Robinhood Chain tokens, scores them, paper-trades them at the real price, and learns from what actually worked.',
+        preuve: 'site swoge_ai.html:6, 972' },
+      { id: 'papier', texte: 'SWOGE AI is paper trading: the page signs no real transaction, and every colony trade is paper, at real prices.',
+        preuve: 'site swoge_ai.html:977, index.html:1131' },
+      { id: 'roles', texte: 'In SWOGE AI each agent has one job: the Scout finds new pools, the Warden checks the contract, Whale-Watch reads the holders, Whisper reads the trades one by one, and any of them can veto.',
+        preuve: 'site swoge_ai.html:1331-1333 ; serveur ai_colonie.js:797-809 (ROSTER_DEPART)' },
+      { id: 'oracle', texte: 'In SWOGE AI the Oracle scores what survived and decides, and before any buy the Test Subject simulates the sale on chain, signing nothing.',
+        preuve: 'site swoge_ai.html:1334-1335 ; serveur ai_colonie.js:810-818' },
+      { id: 'naissance', texte: 'The SWOGE AI colony can give birth to new specialist agents, and the page counts how many were born from it.',
+        preuve: 'serveur ai_colonie.js:787-794 ; site swoge_terminal.js:96, 387-388' },
+      { id: 'suivi', texte: 'Every token SWOGE AI looks at, bought or rejected, is followed to its deadline and priced again.', preuve: 'site swoge_ai.html:1302, 1337' },
+      { id: 'preuve', texte: 'The SWOGE AI Proof tab lists everything the server kept, newest first, each token linked to its DexScreener pair.', preuve: 'site swoge_ai.html:1314' },
+      { id: 'scanner', texte: 'Paste a token address into the SWOGE AI market scanner and submit it to the colony: it is judged by the same rules as every other token.',
+        preuve: 'site swoge_ai.html:1254, swoge_terminal.js:1134-1141 ; serveur server.js:7537-7543 (colonieSoumets, sur ws.addr seulement)' },
+      { id: 'sol-eth', nom: 'Solana AI and Ethereum AI', texte: 'Solana AI and Ethereum AI read every new token on their chain at its first price and again 30 minutes later, and a paper colony buys some at real quotes, fees included, against a blind control.',
+        preuve: 'site swoge_sol_ai.html:8, swoge_eth_ai.html:8' },
+      { id: 'chat', nom: 'SWOGE Agents', texte: 'SWOGE Agents: chat with Claude, ChatGPT and Grok and create images and videos, with no subscription. Each request is billed at its actual cost.',
+        preuve: 'site swoge_agents.html:122, 1604-1605' },
+      /* Pas « No $SWOGE needed » tout court : « Videos are paid in $SWOGE for now » (swoge_agents.html:1579). */
+      { id: 'usdc', nom: 'SWOGE Agents', texte: 'No $SWOGE needed for chat, images or agent tasks on SWOGE Agents: sign USDC from your wallet on Base or Solana, or top up a dollar credit once. Videos are paid in $SWOGE for now.',
+        preuve: 'site swoge_agents.html:1579 (« every answer and image », « Videos are paid in $SWOGE for now »), 1605, 1736' },
+      { id: 'mission', nom: 'SWOGE Agents', texte: 'Give SwoleMind an objective on SWOGE Agents: it plans the work, runs the tools (web search, token and on-chain checks) and shows every step it ran with what each one cost.',
+        preuve: 'site swoge_agents.html:1597, 1651' },
+      { id: 'compare', nom: 'SWOGE Agents', texte: 'Compare on SWOGE Agents: ask 2 or 3 AI models the same question side by side, then a Council verdict shows where they agree and disagree.',
+        preuve: 'site swoge_agents.html:1657, 3959' },
+      { id: 'images', nom: 'SWOGE Agents', texte: 'SWOGE Agents makes images with Grok Imagine or ChatGPT Image and short videos with Grok, and Series & Ads keeps the same characters and voices in every scene.',
+        preuve: 'site swoge_agents.html:1605, 1659' },
+      { id: 'pieces', nom: 'SWOGE Agents', texte: 'On SWOGE Agents you can attach a photo or a PDF to a chat and dictate your message with the mic. You read it back and send it yourself.',
+        preuve: 'site swoge_agents.html:1646-1649, 4265-4279' },
+      { id: 'agent', nom: 'SWOGE Agents', texte: 'The Agent tab of SWOGE Agents reads tokens, new launches, wallets, the SWOGE AI colony and the web, then answers with the numbers it read. Read-only: it can\'t buy, sell, sign or post.',
+        preuve: 'site swoge_agents.html:1752, 1761' },
+      { id: 'browse', nom: 'SWOGE Agents', texte: 'Browse on SWOGE Agents is a real browser running on SWOGE\'s server. Screen asks the AI about what you see, and the AI never follows instructions written on a page.',
+        preuve: 'site swoge_agents.html:1548, 1937, 1962' },
+      { id: 'autopilot', nom: 'SWOGE Agents', texte: 'Browse Autopilot on SWOGE Agents: write a goal and Claude, ChatGPT or Grok clicks, scrolls and types in that browser by itself, 30 minutes max, never over the AI budget you set.',
+        preuve: 'site swoge_agents.html:1965, 2000' },
+      { id: 'x402', nom: 'SWOGE Agents', texte: 'With x402, any AI agent can hire SWOGE Agents tools with no account and no API key: it gets a 402 with the price and pays per call in USDC on Base or Solana.',
+        preuve: 'site swoge_agents.html:1804, llms.txt:9' },
+      { id: 'outils', nom: 'SWOGE Agents', texte: 'SWOGE Agents tools include token scans with GoPlus security, a can I sell? check, Robinhood Chain reads, provably fair draws, a token roast, images, videos and a full research agent.',
+        preuve: 'site llms.txt:15-40, swoge_agents.html:1812' },
+      { id: 'devs', nom: 'SWOGE Agents', texte: 'Developers plug SwogeAgentic into Claude Desktop, Claude Code, Cursor or their own script (API key or MCP) with a daily cap they set, and a price quote is free.',
+        preuve: 'site swoge_agents.html:1817, llms.txt:11' },
+      { id: 'passport', nom: 'Agent Passport', texte: 'Agent Passport: an AI agent\'s key gets a passport (owner wallet, limits, permissions, measured history) signed by SWOGE that anyone can verify.',
+        preuve: 'site agent_passport.html:8, llms.txt:46 ; serveur passeport.js' },
+      { id: 'store', nom: 'Agent Store', texte: 'The SWOGE Agent Store lists measured agents and paid tools, with the numbers behind each one and no invented ratings.',
+        preuve: 'site agent_store.html:8, swoge_agents.html:2668-2681' },
+      { id: 'cansell', nom: 'SWOGE Security', texte: 'The free Can I sell? check on SWOGE Security simulates a buy and a sell of a Robinhood Chain token, read-only, and shows the round-trip cost, the pool, the liquidity and whether the LP is burned.',
+        preuve: 'site swoge_security.html:147-153, 330-345 ; serveur server.js:4654-4662 (/bugbounty/cansell, gratuit pour la page, sur main d592de0)' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'SWOGE AI: a colony of AI agents reads new Robinhood Chain tokens, scores them and paper-trades them at the real price. Paper only, and the Proof tab shows what it kept. 🤖🐕',
+      'Claude, ChatGPT and Grok in one place, no subscription: SWOGE Agents bills each request at its actual cost, and you can pay in USDC. 🧠🐕',
+    ],
+    /* SWOGE AI est du papier : ni gain (« profit » est refuse partout, MOTS_INTERDITS), ni taux de gain, ni P&L, ni « l IA gagne » ; le miroir n est
+       pas presente ; fournisseurs « peu censures », Tor, bug bounty, mode blackjack (jeu sur des sites
+       tiers) jamais ; aucun agent exterieur « qui paie deja » ; l eSIM depend d un fournisseur non
+       verifie ; l agent du chat ne lance pas de jeton. */
+    interdits: [/win rate|\bP&L\b|\bPnL\b|makes? money|the AI wins|beats? the market|\bgains?\b/i, /\bmirror\b|real money/i,
+      /uncensored|Venice|OpenRouter|DeepSeek|Mistral|\bTor\b|\.onion|bug bounty|martingale|paroli|blackjack mode|restyle/i,
+      /already (pay|paying|use|using)|agents? (are )?paying us|\brevenue\b/i, /\beSIM\b/i, /launch(es)? (a |your )?token/i] },
+
+  { cle: 'cinema', nom: 'SWOGE AI Cinema', motsCles: /SWOGE AI Cinema\b/i, lien: 'https://swoleeswoge.dog/swoge_cinema.html',
+    scenes: ['popcorn', 'cinema', 'projection'],
+    faits: [
+      { id: 'ouvert', texte: 'SWOGE AI Cinema is live: three AI-made cartoon series, free to watch in the browser, no sign-in.',
+        preuve: 'site swoge_cinema.html:531-541, 600-620, commit f88b4eb' },
+      { id: 'episodes', texte: 'SWOGE AI Cinema has 14 episodes across 3 series: SWOGE ISLAND (3), SWOGE SAGA (6) and SWOGE SAGA Season 2 (5).',
+        preuve: 'site swoge_cinema.html:601-619 (CATALOGUE, 3 + 6 + 5 compte le 11/10), :725' },
+      { id: 'format', texte: 'Every SWOGE AI Cinema episode is a short vertical 9:16 video, about 1 to 1.5 minutes long.',
+        preuve: 'site swoge_cinema.html:648 ; durees d: 55 a 90 s dans le CATALOGUE (:601-619)' },
+      { id: 'island', texte: 'SWOGE ISLAND on SWOGE AI Cinema is a dating-reality parody: nine singles, then the bombshells.', preuve: 'site swoge_cinema.html:601-602' },
+      { id: 'saga', texte: 'SWOGE SAGA on SWOGE AI Cinema: a jacked shiba from 2099 crashes into Leo\'s tiny Paris flat with a warning he is not allowed to explain.',
+        preuve: 'site swoge_cinema.html:606-607' },
+      { id: 'saison2', texte: 'SWOGE SAGA Season 2 on SWOGE AI Cinema: the meme multiverse moves in.', preuve: 'site swoge_cinema.html:614' },
+      { id: 'choix', texte: 'Four SWOGE AI Cinema episodes end on an A/B choice, and viewers are asked to drop A or B in the comments.',
+        preuve: 'site swoge_cinema.html:602-604, 612 (champs a/b), 650-657' },
+      { id: 'partage', texte: 'Each SWOGE AI Cinema episode has its own link, plus Share on X, Telegram and Copy link buttons.',
+        preuve: 'site swoge_cinema.html:551-553, 632-635, 665-666' },
+      { id: 'suite', texte: 'On SWOGE AI Cinema, when an episode ends, the next one starts on its own.', preuve: 'site swoge_cinema.html:722' },
+      { id: 'heberge', texte: 'All SWOGE AI Cinema episodes are hosted on our own site, with no outside player.', preuve: 'site swoge_cinema.html:644, swoge_cinema.test.js:83' },
+    ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
+    reserves: [
+      'SWOGE AI Cinema is live: three AI-made cartoon series, free to watch in your browser, no sign-in. When an episode ends, the next one starts on its own. 🎬🐕',
+      'A jacked shiba from 2099 crashes into a tiny Paris flat. SWOGE SAGA is free to watch on SWOGE AI Cinema. 🍿🐕',
+    ],
+    /* Les personnages de la saison 2 viennent de memes connus : jamais « 100 % original » ni « aucun
+       sous licence » ; aucun vote n est compte (on demande A ou B en commentaire) ; aucun episode
+       promis ; aucune audience ; les episodes ne sont pas faits avec SwoleMind. (FLIX, ferme, est refuse
+       par MOTS_INTERDITS pour tous les produits.) */
+    interdits: [/100% original|\boriginal characters\b|none licensed|no licensed/i, /\bPepe\b|\bBrett\b/i, /\bvot(e|es|ed|ing)\b/i,
+      /season 3|new episodes|coming soon|\bviews\b|\bviewers watched\b/i, /SwoleMind|same tools/i] },
+].map((p) => Object.assign({ interdits: [] }, p));
+
+/* ---- LES MOTS QU AUCUN TWEET NE PORTE ----
+ * Ce qui n est pas vendu (en OBSERVATION seulement : pari en direct, plus/moins
+ * au prix du marche, coupes), toute promesse de gain, ce qui est ferme (staking,
+ * FLIX, la ville +18) et les mots que l inventaire du 11/10 a releves faux.
+ * Le texte du modele qui en porte un est remplace par une reserve (verifieTexte). */
+const MOTS_INTERDITS = [
+  /\blive[- ]?bet/i, /\bbet(s|ting)? (live|in[- ]play)\b/i, /\bin[- ]play\b/i, /\bin[- ]game bet/i, /\blive odds\b/i,
+  /\btotals\b/i, /\bcups?\b/i, /Europa League|Conference League|Pokal|Copa del Rey|Coppa Italia|Coupe de France/i,
+  /\bguarantee/i, /price target/i, /\bbeat(ing)? the (bookies|books|bookmakers?|house|market)\b/i, /\+EV\b|positive EV/i,
+  /easy money|free money|risk[- ]free|sure (win|thing)|can'?t lose|passive income|get rich/i,
+  /\bAPR\b|\bAPY\b|\byield\b|\bstaking\b/i,
+  /instant(ly)? (pay|paid|payout|withdraw)|final whistle/i,
+  /\bbest odds\b|sharp(est)? odds|zero margin|no margin|same odds/i,
+  /play[- ]to[- ]earn|\bP2E\b|\bNFTs?\b/i,
+  /Uniswap v4/i, /SWOGE \+18|SWOGE FLIX|\bmanga\b/i,
+  /* Relecture du 11/10 : les memes choses, dites autrement. Le pari pendant le match (pas vendu) ;
+     les promesses de gain ; un domaine nu (« swoleeswoge.dog », « Pump.fun ») que X transforme en
+     lien, donc facture au prix d un post avec lien (0,200 $ au lieu de 0,015 $, en tete) meme sans
+     X_LIEN. */
+  /\bbet(s|ting)? on (live|ongoing|running)\b|\blive (match|game|sports?) (bet|betting|wager)/i,
+  /\b(bet|bets|betting|wager\w*)\b[^.!?\n]{0,40}\b(during|mid[- ]?(match|game)|while (the|they|it|games?|matches?)\b|as (it|they) (play|happen))/i,
+  /\bodds\b[^.!?\n]{0,20}\b(move|moving|change|changing|update|updating)\b[^.!?\n]{0,12}\blive\b/i,
+  /\bwin(ning)? (big|real|crypto|money)\b|\bearn(s|ing)? (big|real|crypto|money)\b|\bprofit(s|able)?\b|\bcash out (your )?(profits?|winnings)\b/i,
+  /\bbest (payouts?|prices?)\b|\bbetter (odds|payouts?|than)\b/i,
+  /\b[a-z0-9][a-z0-9-]*\.[a-z]{2,}\b/i,
+];
+
+/* ---- LES NOUVEAUTES, COTE JOUEUR ----
+ * Celles de l inventaire du 11/10 qui changent quelque chose pour un joueur,
+ * dedoublonnees (le casino en $SWOGEBET y figurait trois fois) ; les
+ * retouches d interface seules (onglets, cadre) n y sont pas. `deja` : les
+ * sorties faites HORS rotation (le post programme casino-swogebet du 08/10
+ * compte pour la premiere). `condition` : comme pour les faits. */
+const NOUVEAUTES = [
+  { id: 'bet-marche-17', date: '2026-10-09', produit: 'bet', condition: (v) => !!v.dixSept,
+    texte: '11 more soccer leagues on SWOGE Bet now use market-priced odds, from the Championship and Serie B to MLS and Liga MX. That makes 17 leagues on market prices.',
+    preuve: 'serveur 26cd304 ; paris_import.js:159-169 ; EXPLOITATION.md:466 (PARIS_PRIX_LIGUES posee le 09/10). Condition : 17 cles soccer_ dans prix_ligues.ligues(), les onze comprises' },
+  { id: 'lp-gaz', date: '2026-10-09', produit: 'wallet', nom: 'the SWOGE launchpad',
+    texte: 'The SWOGE launchpad now tells you the full ETH you need before you sign, launch fee plus gas, so a launch no longer fails halfway for lack of gas.',
+    preuve: 'site 01d2818, lance_v4.js:28-38' },
+  { id: 'bet-marche-6', date: '2026-10-08', produit: 'bet', condition: (v) => !!v.sixGrands,
+    texte: 'SWOGE Bet now prices the Premier League, La Liga, Serie A, Bundesliga, Ligue 1 and the Champions League off the betting market, with the house margin added.',
+    preuve: 'serveur d856863 ; prix_marche.js, prix_ligues.js:16-17. Condition : les six cles dans prix_ligues.ligues()' },
+  { id: 'bet-90', date: '2026-10-08', produit: 'bet',
+    texte: 'Soccer bets on SWOGE Bet now settle on the 90-minute score (extra time and penalties don\'t count), and a match closes at its real kickoff, checked on ESPN.',
+    preuve: 'serveur 1a9dcd6 ; scores_espn.js:255-257, paris.js:576-610' },
+  { id: 'casino-swogebet', date: '2026-10-08', produit: 'casino', deja: ['2026-10-08T19:00:00Z'],
+    texte: 'Your $SWOGEBET from SWOGE Bet now plays in the SWOGE casino: pick Stake from: Bet $SWOGEBET on Smash, Spin, Plinko, Crash, Blackjack and more, and wins come back in $SWOGEBET.',
+    preuve: 'serveur 358bf8a (game.js:4442-4461) ; site 0e3bb9d, a1c2b88, 086f639 (coffre.js:130-135) ; deja annonce : PROGRAMMES casino-swogebet, 08/10 19:00 UTC' },
+  { id: 'ai-sol-eth', date: '2026-10-08', produit: 'ai', nom: 'Solana AI and Ethereum AI',
+    texte: 'Solana AI and Ethereum AI are now two separate SWOGE AI paper colonies: every new token is read at its first price and again 30 minutes later, against a blind-buy control.',
+    preuve: 'site afe74c6 (swoge_sol_ai.html, swoge_eth_ai.html)' },
+  { id: 'cinema-ouvert', date: '2026-10-07', produit: 'cinema',
+    texte: 'SWOGE AI Cinema is open: 3 AI-made cartoon series, 14 short vertical episodes, free to watch, with A/B choice episodes and a share link for each one.',
+    preuve: 'site f88b4eb (swoge_cinema.html, media/cinema/*.mp4)' },
+  { id: 'wallet-apercu', date: '2026-10-06', produit: 'wallet',
+    texte: 'SWOGE Wallet now dry-runs your Robinhood Chain sends and burns before you sign and shows expected to succeed or would FAIL, with the reason. It warns, it never blocks.',
+    preuve: 'site 30883ca (swoge_wallet.html:7280-7340 ; Solana non simule, :7294-7295)' },
+  { id: 'wallet-faceid', date: '2026-10-06', produit: 'wallet',
+    texte: 'SWOGE Wallet now has an optional Face ID / Touch ID lock, checked by the server. It hides your screen, and every transaction still needs your wallet\'s signature.',
+    preuve: 'site db8fed2 ; serveur 19875a7, 2df90dd (wallet_passkey.js)' },
+  { id: 'ai-micro', date: '2026-10-06', produit: 'ai', nom: 'SWOGE Agents',
+    texte: 'SwoleMind on SWOGE Agents: tap the mic and dictate your chat message instead of typing it.',
+    preuve: 'site 1ea6150 (swoge_agents.html:1647) ; serveur 7018433' },
+  /* L agent par jeton et sa conduite depuis le portefeuille ont deja eu leurs deux sorties le 05/10,
+     hors rotation : PROGRAMMES agents-48h (« every SWOGE token gets its own AI agent … the creator owns
+     & controls it from their wallet ») et agent-explique (« You own and control it from your wallet »,
+     « link X/Telegram » dans son sujet). Ils ne repartent pas en nouveaute ; leurs faits (lp-agent,
+     lp-pilote) restent dans la rotation. */
+  { id: 'lp-agent', date: '2026-10-05', produit: 'wallet', nom: 'the SWOGE launchpad', deja: ['2026-10-05T16:00:00Z', '2026-10-05T19:40:00Z'],
+    texte: 'AI Agent Launch is now the default on the SWOGE launchpad: your token gets its own AI agent with a personality and an objective, and you preview its first post before launch.',
+    preuve: 'site cdc7c0b, dab8333 (launchpad.html) ; serveur c4a1bd6..cfb81d0 (agent_jeton.js) ; deja annonce : PROGRAMMES agents-48h et agent-explique, 05/10' },
+  { id: 'lp-tableau', date: '2026-10-05', produit: 'wallet', nom: 'the SWOGE launchpad', deja: ['2026-10-05T16:00:00Z', '2026-10-05T19:40:00Z'],
+    texte: 'Creators on the SWOGE launchpad now run their token\'s agent from a dashboard: link its X account and a Telegram group, pause or resume it, and see its activity.',
+    preuve: 'site 39b3a7f, 9bb7bb8, b45dbb9, a3e9f1a, 7f14bb4, ed115b1 (launchpad.html:784-786, 1405-1440) ; deja annonce : PROGRAMMES agents-48h et agent-explique, 05/10' },
+  { id: 'lp-page-agents', date: '2026-10-05', produit: 'wallet', nom: 'the SWOGE launchpad',
+    texte: 'New public AI Agents page: every token agent from the SWOGE launchpad, its posts and its settings, in one place.',
+    preuve: 'site 64484fe (token_agents.html)' },
+  { id: 'lp-solana', date: '2026-10-05', produit: 'wallet', nom: 'the SWOGE launchpad', groupe: 'solana',
+    texte: 'The SWOGE launchpad now launches your token on Solana too, on a bonding curve, signed with Phantom. SWOGE never holds your keys.',
+    preuve: 'site 5fa8e2a (launchpad.html:646-647, 1231-1238) ; serveur 6242321 (solana_pump.js)' },
+  { id: 'ai-osint', date: '2026-10-05', produit: 'ai', nom: 'SWOGE Agents',
+    texte: 'New on SWOGE Agents: Analyze my socials shows what is publicly exposed about your own handle, email or domain. Public sources only.',
+    preuve: 'site b3d9ac3 (swoge_agents.html:2527)' },
+  { id: 'wallet-assistant', date: '2026-10-04', produit: 'wallet',
+    texte: 'SWOGE Wallet now has a built-in assistant you can type or talk to: it fills in send, swap or bridge for you, and only your wallet signs.',
+    preuve: 'site 901ffe6 (wallet_assistant.js, swoge_wallet.html)' },
+  { id: 'securite-cansell', date: '2026-10-04', produit: 'ai', nom: 'SWOGE Security',
+    texte: 'New SWOGE Security page: a free Can I sell? check that simulates a buy and a sell of a Robinhood Chain token before you ape in.',
+    preuve: 'site ee14f00 (swoge_security.html) ; serveur server.js:4654 (sur main d592de0)' },
+  { id: 'lp-pools', date: '2026-10-03', produit: 'wallet', nom: 'the SWOGE launchpad',
+    texte: 'On the SWOGE launchpad you now pick the ETH pool or the $SWOGE pool right on the page, and new tokens show up in Explore, where they can be traded.',
+    preuve: 'site 904f672, d5516dc (launchpad.html)' },
+  { id: 'lp-telegram', date: '2026-10-03', produit: 'wallet', nom: 'the SWOGE launchpad',
+    texte: 'Launch a token from Telegram with /launch: you get a pre-filled SWOGE launchpad link, you sign in your own wallet, and the launch is announced once confirmed on-chain.',
+    preuve: 'site f89304d (launchpad.html) ; serveur 36727c9 (tg_lance.js)' },
+  { id: 'ai-autopilot', date: '2026-10-02', produit: 'ai', nom: 'SWOGE Agents',
+    texte: 'Browse Autopilot on SWOGE Agents: write a goal and Claude, ChatGPT or Grok uses a real browser by itself, inside an AI budget it can never exceed.',
+    preuve: 'site 99568c4 (swoge_agents.html:1965, 2000) ; serveur ae2d79e' },
+  { id: 'ai-store', date: '2026-10-01', produit: 'ai', nom: 'Agent Store',
+    texte: 'The Agent Store is now a tab of SWOGE Agents: measured agents and paid tools, with the numbers behind each one.',
+    preuve: 'site 9185e2e (swoge_agents.html:2668)' },
+  { id: 'lp-claim', date: '2026-09-30', produit: 'wallet', nom: 'the SWOGE launchpad',
+    texte: 'Creators on the SWOGE launchpad now collect their 50% of trading fees from Portfolio, with one Claim all my fees button.',
+    preuve: 'site f79f0f6 (launchpad.html:2308)' },
+  { id: 'ai-mission', date: '2026-09-29', produit: 'ai', nom: 'SWOGE Agents',
+    texte: 'SwoleMind on SWOGE Agents now asks what you want to accomplish: give it an objective, and it plans, runs the tools and shows every step with its cost.',
+    preuve: 'site 6f01dba (swoge_agents.html:1596-1597)' },
+  { id: 'ai-usdc', date: '2026-09-29', produit: 'ai', nom: 'SWOGE Agents',
+    texte: 'No $SWOGE needed for AI chat or agent tasks on SWOGE Agents: sign USDC from your wallet on Base or Solana, or use a dollar credit.',
+    preuve: 'site 7d2fd5e, a485eb4 (swoge_agents.html:1579, 1736)' },
+  { id: 'ai-passport', date: '2026-09-29', produit: 'ai', nom: 'Agent Passport',
+    texte: 'New: Agent Passport, a signed identity for an AI agent\'s API key (owner, limits, permissions, measured history) that anyone can verify.',
+    preuve: 'site 9d34bb1 (agent_passport.html) ; serveur be179fb' },
+  { id: 'ai-scanner', date: '2026-09-28', produit: 'ai',
+    texte: 'Paste a token contract into the SWOGE AI scanner, submit it to the colony and see what it decided.',
+    preuve: 'site e9a7fff (swoge_ai.html:1254, swoge_terminal.js:1134) ; serveur 873cd56' },
+  /* Premiere sortie hors rotation : PROGRAMMES x402-payai, 27/09 22:55 UTC (« AI agents can now hire SWOGE »). */
+  { id: 'ai-x402', date: '2026-09-28', produit: 'ai', nom: 'SWOGE Agents', deja: ['2026-09-27T22:55:00Z'],
+    texte: 'SWOGE Agents opened its tools to other AI agents: any agent can pay per call in USDC with x402, with prices shown live.',
+    preuve: 'site 623b211 (swoge_agents.html:1803-1812) ; deja annonce : PROGRAMMES x402-payai, 27/09' },
+].map((n) => Object.assign({ verifie: VERIFIE }, n));
+
+/* ---- LA ROTATION ----
+ * Deux jours = huit creneaux. Dans chaque bloc de huit : les six produits, plus
+ * deux retours pour paris, SWOGE World et casino, qui tournent d un bloc a
+ * l autre. Les trois produits « autres » gardent la MEME place dans chaque bloc
+ * (3, 5, 7), donc ils reviennent tous les huit creneaux pile ; les trois nommes
+ * par le proprietaire ne sont jamais a plus de six creneaux de leur passage
+ * precedent. Sur 24 creneaux (six jours) : 5 fois chacun pour paris, World et
+ * casino, 3 fois pour les trois autres. Verifie dans x_post.test.js : toute
+ * fenetre de huit creneaux consecutifs couvre les six produits, et jamais deux
+ * fois le meme d affilee, y compris d un tour au suivant. */
+const ROTATION = [
+  'bet', 'world', 'casino', 'wallet', 'bet', 'ai', 'world', 'cinema',
+  'casino', 'bet', 'world', 'wallet', 'casino', 'ai', 'bet', 'cinema',
+  'world', 'casino', 'bet', 'wallet', 'world', 'ai', 'casino', 'cinema',
+];
+/* Une nouveaute : de moins de 14 jours (au-dela ce n est plus une nouveaute),
+   deux sorties au plus, la seconde 7 jours apres la premiere au plus tot
+   (demande du 11/10).
+   ---- UN CRENEAU SUR DEUX AU PLUS ----
+   Le 11/10, 27 nouveautes sont fraiches, dont 22 portefeuille, launchpad ou
+   IA. Mesure sur la semaine simulee du 12 au 18/10 (choixSujet, journal vide,
+   liste par defaut des championnats) :
+     - sans plafond : les 16 premiers creneaux (quatre jours) sont TOUS des
+       nouveautes, dont 3 seulement pour paris / World / casino — les trois
+       que le proprietaire nomme ; sur la semaine, 17 nouveautes, et paris 5,
+       World 3, casino 3 contre portefeuille + launchpad 9, IA 6 ;
+     - avec NOUVEAUTE_UN_SUR = 2 (jamais deux nouveautes d affilee) : 14
+       nouveautes sur 28 posts, paris 6, World 3, casino 4, portefeuille +
+       launchpad 8, IA 4, cinema 3 ; la semaine d apres (stock ecoule,
+       journal vide) : paris 7, World 5, casino 6.
+   Le reglage se juge sur les vues de X Analytics (le serveur ne les voit
+   pas) : 4 = une nouveaute par jour au plus. */
+const NOUVEAUTE_FRAICHE_JOURS = 14;
+const NOUVEAUTE_RETOUR_JOURS = 7;
+const NOUVEAUTE_SORTIES_MAX = 2;
+const NOUVEAUTE_UN_SUR = 2;
+
+const produitDe = (cle) => PRODUITS.find((p) => p.cle === cle) || null;
+const sceneDeNom = (nom) => SCENES_PRODUITS.find((s) => s.nom === nom) || SCENES.find((s) => s.nom === nom) || null;
+const hache = (s) => Number.parseInt(crypto.createHash('sha1').update(String(s)).digest('hex').slice(0, 8), 16);
+
+/* Les pages de chaque volet (X_LIEN) : « the SWOGE launchpad » mene au launchpad, pas au
+   portefeuille ; Solana AI, Agents, Security, Passport, Store a leur page. Toutes presentes
+   dans le site (01d2818). Un volet absent d ici prend le lien de son produit. */
+const LIENS_VOLETS = {
+  'the SWOGE launchpad': 'https://swoleeswoge.dog/launchpad.html',
+  'SWOGE Agents': 'https://swoleeswoge.dog/swoge_agents.html',
+  'Solana AI and Ethereum AI': 'https://swoleeswoge.dog/swoge_sol_ai.html',
+  'SWOGE Security': 'https://swoleeswoge.dog/swoge_security.html',
+  'Agent Passport': 'https://swoleeswoge.dog/agent_passport.html',
+  'Agent Store': 'https://swoleeswoge.dog/agent_store.html',
+};
+
+/* Les nombres ecrits en lettres comptent aussi (relecture du 11/10 : « eight sports », « hundreds of
+   players » passaient). Un mot-nombre vaut son chiffre, des deux cotes : « Seven sports » dans un fait
+   permet « 7 sports ». « one » n est pas compte : il sert a tout (« one place », « one slip ») sans
+   rien affirmer. Les ordres de grandeur (dozens, hundreds…) ne valent qu eux-memes : un fait ecrit
+   en chiffres ne les permet pas. */
+const MOTS_NOMBRES = { zero: '0', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
+  eleven: '11', twelve: '12', thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17', eighteen: '18',
+  nineteen: '19', twenty: '20', thirty: '30', forty: '40', fifty: '50', hundred: 'hundred', thousand: 'thousand', million: 'million',
+  billion: 'billion', dozen: 'dozen' };
+const RE_MOTS_NOMBRES = new RegExp('\\b(' + Object.keys(MOTS_NOMBRES).join('|') + ')s?\\b', 'gi');
+/** Les nombres d un texte, sans separateurs de milliers : « 1,200 » et « 1200 » sont le meme ; « seven » vaut « 7 ». */
+function nombres(s) {
+  const t = String(s || '');
+  const chiffres = (t.match(/\d[\d,]*(?:\.\d+)?/g) || []).map((x) => x.replace(/,/g, '').replace(/^0+(?=\d)/, ''));
+  const mots = (t.match(RE_MOTS_NOMBRES) || []).map((m) => MOTS_NOMBRES[m.toLowerCase().replace(/s$/, '')]);
+  return chiffres.concat(mots);
+}
+
+/* ---- CE QUE LE SERVEUR LIT AU MOMENT DU POST ----
+ * Rien n est mis en cache : un chiffre vivant est lu dans la seconde ou le
+ * texte s ecrit. `deps` vient de server.js (planifie) : `game` et la colonie ;
+ * les paris et les championnats sont requis directement, comme avant. Un
+ * chiffre trop petit pour servir (une poignee de personnages) n est pas dit. */
+const MONDE_VIVANTS_MIN = 25;          /* sous ce nombre de personnages vivants, le chiffre dessert (« Deux cartes, trente-neuf joueurs », server.js:9836 sur main d592de0) */
+const NOMS_SPORT = { foot: 'soccer', tennis: 'tennis', nba: 'NBA', nfl: 'NFL', nhl: 'NHL', mlb: 'MLB', cricket: 'cricket' };
+let DEPS = null;
+function instantane(deps, t) {
+  const d = deps || DEPS || {};
+  const v = { bet: { faits: [] }, world: { faits: [] }, casino: { faits: [] }, wallet: { faits: [] }, ai: { faits: [] }, cinema: { faits: [] } };
   try {
-    const paris = require('./paris');
-    const l = paris.ouverts(t || Date.now());
+    const l = require('./paris').ouverts(t || Date.now());
     const parSport = {}; const comps = new Set();
     for (const m of l) { parSport[m.sport] = (parSport[m.sport] || 0) + 1; comps.add(m.competition); }
     const sports = Object.keys(parSport);
-    if (l.length) {
-      faits.push(`${l.length} matches open right now on SWOGE Bet across ${sports.length} sports (${sports.map((k) => NOMS_SPORT[k] || k).join(', ')}) and ${comps.size} competitions`);
+    if (l.length) v.bet.faits.push(`${l.length} matches are open right now on SWOGE Bet across ${sports.length} sports (${sports.map((k) => NOMS_SPORT[k] || k).join(', ')}) and ${comps.size} competitions.`);
+    const marche = l.filter((m) => m.prixMarche).length;
+    if (marche) v.bet.faits.push(`${marche} of the matches open on SWOGE Bet right now are priced off the betting market.`);
+  } catch (e) { /* pas de calendrier : rien de vivant sur les matchs */ }
+  try {
+    const pl = require('./prix_ligues');
+    const s = pl.ligues();
+    const foot = [...s].filter((k) => k.startsWith('soccer_') && !(pl.estCoupe && pl.estCoupe(k)));
+    v.bet.sixGrands = pl.LIGUES_DEFAUT.every((k) => s.has(k));
+    v.bet.dixSept = v.bet.sixGrands && foot.length === 17 && SECONDAIRES.every((k) => s.has(k));
+    if (foot.length) v.bet.faits.push(`${foot.length} soccer leagues on SWOGE Bet are priced off the betting market right now.`);
+  } catch (e) { /* liste illisible : aucun fait de prix au marche */ }
+  v.bet.auto = String(process.env.PARIS_AUTO || '1') !== '0';           /* la meme lecture que paris_import.js:1730 */
+  try {
+    if (d.game && typeof d.game.classementMonde === 'function') {
+      const n = Number((d.game.classementMonde(null, 1) || {}).vivants);
+      if (n >= MONDE_VIVANTS_MIN) v.world.faits.push(`${fmt(n)} characters are alive on the SWOGE World leaderboard right now.`);
     }
-  } catch (e) { /* pas de calendrier : on parle du reste */ }
-  faits.push('SWOGE Bet: sports betting paid in $SWOGE, odds on-chain, 7 sports, no signup');
-  faits.push('SWOGE Nexus: a 2.5D pixel world with an arcade, a casino, a cinema, SWOGE TV (285 free live channels) and a pet world');
-  faits.push('SWOGE Wallet: multi-chain, Solana included, keys stay on your device');
-  faits.push('SWOGE is a community-run memecoin (CTO) with a real product shipping every week');
+  } catch (e) { /* jeu illisible */ }
+  try {
+    if (d.game && typeof d.game.boulierPotStr === 'function') {
+      const pot = Math.floor(Number(d.game.boulierPotStr()));
+      if (pot > 0) v.casino.faits.push(`The Boulier progressive jackpot in the SWOGE casino stands at ${fmt(pot)} $SWOGE right now.`);
+    }
+  } catch (e) { /* cagnotte illisible */ }
+  try {
+    if (d.colonie && typeof d.colonie.vue === 'function') {
+      const c = d.colonie.vue() || {};
+      const lus = Number(c.compteurs && c.compteurs.scoutVu);
+      /* Avant charge(), vue() rend un etat neuf a zero (ai_colonie.js) : rien n est dit. */
+      if (c.tours > 0 && lus > 0) {
+        /* « Active agents » : le libelle de la page pour roster.length (swoge_ai.html:982, swoge_terminal.js:387).
+           Aucun « 0 of them born » : sans naissance, on ne dit que le nombre d agents. */
+        const r = c.roster || [];
+        const nes = r.filter((a) => a.role === 'specialiste').length;
+        if (r.length) v.ai.faits.push(`${r.length} agents are active in the SWOGE AI colony right now${nes ? ', ' + nes + ' of them born from it' : ''}.`);
+        /* Des LECTURES, pas des jetons distincts : scoutVu compte chaque examen du Scout (ai_colonie.js:1004-1011,
+           10160), et un jeton est reexamine. La page dit « token readings since » (swoge_terminal.js:93). */
+        const depuis = c.depuis ? new Date(c.depuis).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' }) : '';
+        v.ai.faits.push(`The SWOGE AI colony has made ${fmt(lus)} token readings${depuis ? ' since ' + depuis : ''}.`);
+      }
+    }
+  } catch (e) { /* colonie illisible */ }
+  return v;
+}
+
+/* Le fait vedette d un produit : celui qui n a jamais ete mis en avant, dans
+   l ordre du catalogue, sinon celui qui l a ete il y a le plus longtemps. */
+function faitDu(p, partis, vp) {
+  const dispo = p.faits.filter((f) => !f.condition || f.condition(vp || {}));
+  const dernier = (id) => { const e = partis.find((x) => x.produit === p.cle && x.fait === id); return e ? (e.quand || ' ') : ''; };
+  return dispo.slice().sort((a, b) => dernier(a.id).localeCompare(dernier(b.id)))[0] || p.faits[0];
+}
+
+/** Les nouveautes qui peuvent partir a `t`, la plus prioritaire d abord. */
+function nouveautesDues(liste, partis, t, v, exclu) {
+  const c = [];
+  for (const n of liste) {
+    const d = Date.parse(n.date + 'T00:00:00Z');
+    if (!(d <= t) || t - d >= NOUVEAUTE_FRAICHE_JOURS * 864e5) continue;
+    if (n.produit === exclu) continue;
+    if (n.condition && !n.condition(v[n.produit] || {})) continue;
+    const sorties = (n.deja || []).map((x) => Date.parse(x)).concat(partis.filter((e) => e.nouveaute === n.id).map((e) => Date.parse(e.quand || 0)));
+    if (sorties.length >= NOUVEAUTE_SORTIES_MAX) continue;
+    if (sorties.length && t - Math.max(...sorties) < NOUVEAUTE_RETOUR_JOURS * 864e5) continue;
+    c.push({ n, d, retour: sorties.length > 0 });
+  }
+  /* Jamais tweetee avant un retour ; puis la plus recente ; puis l ordre de la liste. */
+  return c.sort((a, b) => (a.retour - b.retour) || (b.d - a.d) || (liste.indexOf(a.n) - liste.indexOf(b.n)));
+}
+
+/**
+ * Le sujet d un creneau : `{ produit, nouveaute?, retour?, rang?, fait }`, ce
+ * que le journal garde. Le creneau precedent est le dernier post PARTI ; un post
+ * programme ou une annonce n a pas de produit et ne bloque rien.
+ * `o.nouveautes` et `o.vivant` servent aux essais.
+ */
+function choixSujet(cle, journal, t, o) {
+  const opt = o || {};
+  const liste = opt.nouveautes || NOUVEAUTES;
+  const v = opt.vivant || instantane(null, t);
+  const partis = dernieres(journal, 100000);
+  const prec = partis[0] || {};
+  const precProduit = prec.produit || null;
+  if (!partis.slice(0, NOUVEAUTE_UN_SUR - 1).some((e) => e.nouveaute)) {
+    const due = nouveautesDues(liste, partis, t, v, precProduit)[0];
+    if (due) return { produit: due.n.produit, nouveaute: due.n.id, retour: due.retour || undefined, fait: due.n.id };
+  }
+  const dernierRang = (partis.find((e) => Number.isInteger(e.rang)) || {}).rang;
+  let i = Number.isInteger(dernierRang) ? (dernierRang + 1) % ROTATION.length : 0;
+  /* Une nouveaute du meme produit vient de passer : le suivant de la rotation prend la place
+     (ROTATION n a jamais deux fois le meme d affilee, un pas suffit). */
+  if (ROTATION[i] === precProduit) i = (i + 1) % ROTATION.length;
+  const p = produitDe(ROTATION[i]);
+  return { produit: p.cle, rang: i, fait: faitDu(p, partis, v[p.cle]).id };
+}
+
+/** Ce que le modele recoit pour ecrire : le nom, le fait vedette, deux voisins, le vivant. */
+function sujetDe(entree, v, liste) {
+  const p = produitDe(entree.produit) || PRODUITS[0];
+  const vp = (v && v[p.cle]) || {};
+  let n = entree.nouveaute ? (liste || NOUVEAUTES).find((x) => x.id === entree.nouveaute) || null : null;
+  if (n && n.condition && !n.condition(vp)) n = null;     /* la lecture a change entre deux essais : on revient au produit */
+  const dispo = p.faits.filter((f) => !f.condition || f.condition(vp));
+  const fait = n ? null : (dispo.find((f) => f.id === entree.fait) || dispo[0] || p.faits[0]);
+  const nom = (n ? n.nom : fait.nom) || p.nom;
+  /* Les voisins : meme volet ET meme `groupe` (le launchpad sur Solana n a pas les regles des pools
+     de Robinhood Chain, et inversement). */
+  const groupe = (x) => (x && x.groupe) || (x && x.nom) || p.nom;
+  const g = groupe(n || fait);
+  const voisins = dispo.filter((f) => f !== fait && groupe(f) === g);
+  const k = fait ? Math.max(0, voisins.findIndex((f) => p.faits.indexOf(f) > p.faits.indexOf(fait))) : 0;
+  const autres = voisins.slice(k).concat(voisins.slice(0, k)).slice(0, 2).map((f) => f.texte);
+  /* Les reserves, dans l ordre de preference. Une nouveaute : son texte (« ICYMI: » en rappel). Un
+     produit : ses reserves, puis le fait vedette, ses voisins et ses autres faits vrais du moment
+     (chacun nomme deja le produit) — de quoi ne pas reposter un texte identique (X refuse un doublon,
+     le creneau tomberait apres avoir paye son image ; voir `reserveDe`). 215 signes au plus, la place
+     de $SWOGE et #RobinhoodChain. */
+  const reserves = n ? [(entree.retour ? 'ICYMI: ' : '') + n.texte]
+    : p.reserves.concat([fait.texte], autres, dispo.map((f) => f.texte)).filter((t, i, l) => t.length <= 215 && l.indexOf(t) === i);
+  return { produit: p.cle, nom, motsCles: p.motsCles, interdits: p.interdits, lien: LIENS_VOLETS[nom] || p.lien, lead: n ? n.texte : fait.texte, autres,
+           vivants: (vp.faits || []).slice(), nouveaute: n ? n.id : null, retour: !!(n && entree.retour), date: n ? n.date : null, reserves };
+}
+
+/**
+ * Le texte tient-il ses promesses ? Il nomme son produit, ne porte aucun mot
+ * interdit, et chaque nombre qu il ecrit est dans les faits qu on lui a donnes.
+ * Sinon on poste une reserve vraie : un tweet public ne s invente rien.
+ */
+function verifieTexte(texte, s) {
+  const t = String(texte || '');
+  if (!s.motsCles.test(t)) return { ok: false, raison: 'ne nomme pas ' + s.nom };
+  /* Un texte peut citer un AUTRE produit (« your SWOGE Bet balance plays in the SWOGE casino ») :
+     les interdits de chaque produit qu il nomme s appliquent aussi (relecture du 11/10 : « SWOGE Bet
+     also lets you play the SWOGE World cinema » passait). */
+  const autres = PRODUITS.filter((p) => p.interdits !== s.interdits && p.motsCles.test(t)).map((p) => p.interdits);
+  for (const r of MOTS_INTERDITS.concat(s.interdits || [], ...autres)) if (r.test(t)) return { ok: false, raison: 'mot interdit ' + String(r) };
+  const permis = new Set(nombres([s.lead].concat(s.autres || [], s.vivants || []).join(' ')));
+  const inventes = nombres(t).filter((x) => !permis.has(x));
+  if (inventes.length) return { ok: false, raison: 'nombre absent des faits : ' + inventes.join(', ') };
+  return { ok: true };
+}
+/* « $SWOGE Bet » est un faux nom (le ticker colle au produit) : on rend le nom
+   juste, et `nettoie` remet le cashtag a part si la rotation le demande. */
+function corrigeNoms(brut) {
+  return String(brut || '').replace(/\$SWOGE(?=\s(?:Bet|World|Wallet|AI|Agents|Blackjack|Spin|Smash|Bonanza|Kennel|Poker|Games|Security|casino|launchpad)\b)/g, 'SWOGE');
+}
+
+/* L image d un creneau produit : la scene du produit la moins recemment postee
+   (les jamais postees d abord, departagees par la cle du creneau). */
+function sceneProduit(p, cle, journal) {
+  const partis = journal ? dernieres(journal, 100000) : [];
+  const sc = p.scenes.map(sceneDeNom).filter(Boolean);
+  const derniere = (nom) => { const e = partis.find((x) => x.scene === nom); return e ? (e.quand || ' ') : ''; };
+  const depart = hache('scene:' + cle) % sc.length;
+  const tour = sc.slice(depart).concat(sc.slice(0, depart));
+  return tour.slice().sort((a, b) => derniere(a.nom).localeCompare(derniere(b.nom)))[0];
+}
+
+// ------------------------------------------------------------ les faits du jour
+
+/** Ce qui est vrai AUJOURD HUI sur le site, en garde-fou des annonces : un fait par produit, plus le vivant des paris. */
+function faitsDuJour(t) {
+  const v = instantane(null, t || Date.now());
+  const faits = v.bet.faits.slice();
+  for (const p of PRODUITS) faits.push(p.faits.find((f) => !f.condition).texte);
   faits.push('$SWOGE lives on Robinhood Chain (chain 4663), the new chain from Robinhood');
-  faits.push('SWOGE AI: a colony of 13 AI agents that scouts new Robinhood Chain tokens and paper-trades them on real prices, every trade public');
-  faits.push('An AI agent writes, illustrates and posts on this X account by itself, four times a day');
+  const n = env().heures.length;
+  faits.push(`An AI agent writes, illustrates and posts on this X account by itself, ${n === 4 ? 'four' : n} times a day`);
   return faits;
 }
 
 // ------------------------------------------------------------ le texte
 
-/* L angle tourne d un post a l autre : deux posts par jour ecrits sur le
-   meme ton se lisent comme un robot. */
-/* ---- LA PLUPART DES POSTS NE PARLENT PAS DU SITE ----
- * Demande du proprietaire, le 18 septembre 2026 : « pas forcement parler du
- * site, juste faire un tweet bullish ». Deux posts par jour qui enumerent des
- * fonctionnalites se lisent comme un catalogue, et un catalogue ne se partage
- * pas. Les angles marques `produit: false` interdisent de nommer quoi que ce
- * soit : c'est du meme, du ton, de l'humeur. Trois sur onze seulement parlent
- * de ce qu'on a construit — assez pour que le fil ne soit pas creux, assez peu
- * pour qu'il ne soit pas une brochure. */
+/* ---- L ANGLE NE CHOISIT PLUS QUE LE TON (11/10/2026) ----
+ * Le sujet est choisi avant (un produit, une nouveaute) ; l angle dit
+ * seulement COMMENT en parler. Deux posts d affilee jamais sur le meme ton.
+ * `chiffre` : seulement si le fait vedette porte un nombre. `nouveaute` /
+ * `retour` : reserves aux creneaux de nouveaute (premiere sortie / rappel). */
 const ANGLES = [
-  { a: 'pure hype: two or three punchy lines about momentum and conviction, nothing else', produit: false },
-  { a: 'humor: a joke about the very buff dog, self-aware meme energy', produit: false },
-  { a: 'community: talk to the holders as a pack, we/us, CTO pride', produit: false },
-  { a: 'midnight vibes: calm and confident, the dog never sleeps, late-night degen energy', produit: false },
-  { a: 'one-liner: a single short line that could be a caption, sharp enough to quote', produit: false },
-  { a: 'the flex: the dog is simply built different, say it with swagger', produit: false },
-  { a: 'patience: early is uncomfortable, holders know, quiet conviction', produit: false },
-  { a: 'good morning energy: greet the pack, set the tone for the day, light and warm', produit: false },
-  { a: 'the numbers: lead with one real stat from the facts, make it feel huge', produit: true },
-  { a: 'product flex: name ONE concrete thing from the facts and why it is cool, no list', produit: true },
-  { a: 'teaser: hint at what is coming next without details, build curiosity', produit: true },
+  { a: 'hype: two or three punchy lines of momentum around this one product', ton: 'hype' },
+  { a: 'humor: a self-aware joke about the very buff dog using this product', ton: 'humour' },
+  { a: 'the number: lead with ONE number from the facts, written exactly as given, and make it land', ton: 'chiffre', chiffre: true },
+  { a: 'how-to: say in one or two short steps how to use it, plain and concrete', ton: 'mode' },
+  { a: 'one-liner: a single sharp line about it that could be a caption', ton: 'ligne' },
+  { a: 'the flex: say with swagger why this one thing is built different', ton: 'flex' },
+  { a: 'community: talk to the pack (we/us) about this one thing we built', ton: 'communaute' },
+  { a: 'new: it just shipped; say what is new and why it matters to a player, in plain words', ton: 'new', nouveaute: true },
+  { a: 'reminder: it shipped recently and was already posted once; in-case-you-missed-it energy, never "new today"', ton: 'rappel', retour: true },
 ];
-const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) on Robinhood Chain whose mascot is a very buff Shiba Inu. The goal is viral, bullish, shareable posts.
-Audience: American crypto Twitter. Write in natural US English, with the humor and slang of US crypto X where it fits (never forced). Robinhood Chain is the hook Americans recognize: bring it up when it lands, never in every post.
-Voice: bullish, playful, meme energy, confident and fun, never desperate, never rude, never repetitive.
-MOST POSTS ARE PURE VIBES. You do NOT have to talk about the product. A post that lists features reads like a brochure and nobody shares a brochure. The ANGLE tells you which kind this one is: when it says NO PRODUCT, write pure meme and conviction and mention no feature, no number, no place, nothing that is being built — the facts are there only so you never contradict them. When the ANGLE asks for the product, name ONE thing and one only.
-Hard rules: English. Maximum 240 characters, and shorter is usually better. The request tells you, in its TICKER and HASHTAG lines, whether this post carries "$SWOGE" and "#RobinhoodChain": follow them exactly, and weave them in naturally rather than tacking them on. No other hashtag. 1 to 3 emojis. No links. No promises of returns, no "guaranteed", no price targets. Never invent a number. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
+const TONS_PRODUIT = ANGLES.filter((a) => !a.nouveaute && !a.retour);
+/** Le ton d un creneau : fixe pour une nouveaute, sinon tire par la cle, jamais celui du post precedent. */
+function angleDuCreneau(cle, sujet, journal) {
+  if (sujet.nouveaute) return ANGLES.find((a) => (sujet.retour ? a.retour : a.nouveaute)).a;
+  const dernier = (dernieres(journal, 1)[0] || {}).angle;
+  const permis = TONS_PRODUIT.filter((a) => a.a !== dernier && (!a.chiffre || /\d/.test(sujet.lead)));
+  return permis[hache('ton:' + cle) % permis.length].a;
+}
+const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memecoin (CTO) on Robinhood Chain whose mascot is a very buff Shiba Inu. SWOGE ships real products, and EVERY post is about one of them.
+Audience: American crypto Twitter. Write in natural US English, with the humor and slang of US crypto X where it fits (never forced). In US English "football" means the NFL: say "soccer" or name the league.
+The request names ONE PRODUCT (or one NEW UPDATE of a product) and gives its LEAD FACT. The post is about that one thing: name it exactly as written on the PRODUCT line, never with a "$" in front of it, and build the post on the lead fact. You may add one of the other facts given, nothing else: no feature, number, date, price, user count, ranking or comparison that is not in the request. The TONE line only sets the voice. When the request gives an ANNOUNCEMENT instead, the post is about that announcement.
+Voice: bullish, playful, confident and fun, never desperate, never rude, never repetitive.
+Hard rules: English. Maximum 240 characters, and shorter is usually better. The request tells you, in its TICKER and HASHTAG lines, whether this post carries "$SWOGE" and "#RobinhoodChain": follow them exactly, and weave them in naturally rather than tacking them on. No other hashtag. 1 to 3 emojis. No links and no web addresses or domain names (nothing like "name.dog" or "name.fun"). Every number you write must appear in the request, written the same way, in digits or in words; never invent a number. No promises of returns or winnings ("win big", "profit", "earn"), no "guaranteed", no price targets, no "beat the house" or "beat the bookies", no "best odds" or "better than". SWOGE Bet has NO live or in-play betting, no betting during a match, no cash-out and no cup competitions: never suggest any of them. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
 Output only the post text, nothing else.`;
 
-/* Si le modele ne repond pas, on poste quand meme — avec une phrase de
-   reserve, vraie, plutot que de rater le creneau. */
-const RESERVE = [
-  'Another day, another rep. $SWOGE keeps shipping. 💪🐕',
-  'Bet, play, stake, repeat. The SWOGE machine never sleeps. 🐕🚀',
-  'Seven sports, one dog, zero excuses. $SWOGE Bet is live. 🏟️🐕',
-  'Community-run, product-first. That is the $SWOGE way. 🐕💚',
-  'The Nexus is open. Arcade, casino, cinema, and a very buff dog. $SWOGE 🎮🐕',
-  'We came for the memes. We stayed for the product. $SWOGE 🐕🔥',
-  'Strong paws only. $SWOGE 🐕💪',
-  'Every day the dog gets bigger. $SWOGE 📈🐕',
-];
+/* Si le modele ne repond pas (ou se trompe), on poste quand meme — avec une
+   phrase de reserve, vraie, plutot que de rater le creneau. Depuis le 11/10,
+   chaque produit a les siennes ; RESERVE les rassemble pour un post sans
+   produit (une annonce sans texte de secours). */
+const RESERVE = PRODUITS.reduce((l, p) => l.concat(p.reserves), []);
+
+/* ---- JAMAIS DEUX FOIS LE MEME TEXTE (relecture du 11/10) ----
+ * X refuse un post identique a un post deja fait : le creneau echoue trois fois et
+ * il est abandonne, apres avoir paye son image. Avec deux reserves par produit
+ * tirees par la cle, la simulation de 30 jours ou chaque texte est refuse donnait
+ * 64 doublons exacts sur 120 creneaux, le premier des le 14/10. La reserve est donc
+ * la premiere de la liste qui n a JAMAIS ete postee (comparee sans $, #, lien ni
+ * espaces : le cashtag et le hashtag changent d un creneau a l autre) ; si toutes
+ * l ont ete, celle postee il y a le plus longtemps. `postes` : les textes partis,
+ * du plus recent au plus ancien (tache). */
+const empreinte = (s) => String(s || '').replace(/https?:\/\/\S+/g, '').trim()
+  .replace(/(\s+(\$SWOGE|#RobinhoodChain))+$/i, '')                 /* les etiquettes que nettoie ajoute en fin */
+  .replace(/#RobinhoodChain\b/gi, 'Robinhood Chain').replace(/[$#]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+function reserveDe(liste, postes, cle) {
+  const l = (liste || []).filter(Boolean);
+  if (!l.length) return '';
+  const p = (postes || []).map(empreinte);
+  const age = (r) => { const e = empreinte(r); const i = p.findIndex((x) => x.includes(e)); return i < 0 ? Infinity : i; };
+  const jamais = l.filter((r) => age(r) === Infinity);
+  if (jamais.length) return jamais[0];
+  return l.slice().sort((a, b) => age(b) - age(a) || (hache('reserve:' + cle + a) - hache('reserve:' + cle + b)))[0];
+}
 
 /** L'angle, retrouve par son libelle : le journal n'en garde que le texte. */
 function angleDe(a) {
   if (a && typeof a === 'object' && a.a) return a;
   const x = ANGLES.find((y) => y.a === a);
-  return x || { a: a || ANGLES[0].a, produit: false };
+  return x || { a: a || ANGLES[0].a };
 }
 
 /* ---- LE TICKER ET LE HASHTAG, PAR ROTATION EXACTE ----
@@ -460,10 +1264,32 @@ function nettoie(brut, lien, tags) {
   return t;
 }
 
+/** La demande d un creneau produit : le nom, le genre (produit, nouveaute, rappel), le ton, le fait vedette, les voisins, le vivant.
+ *  AUCUNE date en chiffres (relecture du 11/10) : la demande donnait « shipped on 2026-10-08 » et la
+ *  date du jour, le modele les citait (« New since Oct 8 »), et verifieTexte refusait ce 8 absent des
+ *  faits — une reserve de plus, sans rien gagner. Le jour de la semaine suffit au ton. */
+function demandeProduit(s, ang, tags, o, jour) {
+  const genre = s.nouveaute
+    ? (s.retour ? 'REMINDER of an update shipped recently and already posted once: never say "new today", never write its date'
+                : 'NEW UPDATE, shipped in the last few days (do not write its date)')
+    : 'one of our products';
+  return [`Day: ${jour}`, `PRODUCT: ${s.nom} (name it exactly like this, once)`, `KIND: ${genre}`, `TONE: ${ang.a}`,
+    `TICKER: ${tags.ticker ? 'include "$SWOGE" exactly once' : 'do NOT write "$SWOGE"'}`,
+    `HASHTAG: ${tags.hashtag ? 'include "#RobinhoodChain" exactly once' : 'no hashtag at all'}`,
+    `LEAD FACT (the post is built on this one): ${s.lead}`]
+    .concat(s.autres.length ? [`Other true facts about it (use one at most, or none):\n- ${s.autres.join('\n- ')}`] : [])
+    .concat(s.vivants.length ? [`Live right now (read seconds ago; quote exactly or not at all):\n- ${s.vivants.join('\n- ')}`] : [])
+    .concat([`Today's image: SWOGE ${o.scene.prompt}`])
+    .concat((o.precedents || []).length ? [`Previous posts (do not repeat their openings, structure or jokes):\n- ${o.precedents.join('\n- ')}`] : []);
+}
+
 /**
- * `o.scene` : la scene de l image ; `o.sujet` : un sujet impose (un post
- * special) ; `o.angle` : l angle du jour ; `o.precedents` : les derniers
+ * `o.scene` : la scene de l image ; `o.sujetProduit` : le produit ou la
+ * nouveaute du creneau (sujetDe) ; `o.sujet` : un sujet impose (un post
+ * special, une annonce) ; `o.angle` : le ton ; `o.precedents` : les derniers
  * textes, pour ne pas les repeter.
+ * Un creneau produit ne poste le texte du modele que s il passe verifieTexte ;
+ * sinon il poste une reserve du produit, vraie, et le dit dans `refus`.
  */
 async function ecritTexte(faits, o, prendre) {
   const e = env();
@@ -471,20 +1297,26 @@ async function ecritTexte(faits, o, prendre) {
   const t = o.maintenant || Date.now();
   const jour = jourDe(t);
   const tags = etiquettes(o.cle, e.heures);
+  const s = o.sujetProduit || null;
+  /* X_LIEN : un creneau produit mene a la page de SON produit, pas a l accueil. */
+  const lien = o.lien !== undefined ? o.lien : (e.lien && s ? s.lien : e.lien);
+  const reserve = (motif) => {
+    const l = s ? s.reserves : RESERVE;
+    const r = { texte: nettoie(o.reserve || reserveDe(l, o.postes, o.cle || jour), lien, tags), via: 'reserve' };
+    if (motif) r.refus = motif;
+    return r;
+  };
   if (e.anthropic) {
     try {
-      /* L'angle dit s'il a le droit de nommer quelque chose. Un post special
-         (`o.sujet`) parle toujours de son sujet : c'est sa raison d'etre. */
       const ang = angleDe(o.angle);
-      const produit = !!o.sujet || ang.produit;
-      const demande = [`Date: ${jour}`, `ANGLE: ${ang.a}${produit ? '' : ' — NO PRODUCT: mention nothing that is built, no feature, no number, no place'}`,
-        `TICKER: ${tags.ticker ? 'include "$SWOGE" exactly once' : 'do NOT write "$SWOGE"'}`,
-        `HASHTAG: ${tags.hashtag ? 'include "#RobinhoodChain" exactly once' : 'no hashtag at all'}`]
-        .concat(o.sujet ? [`Today's announcement (this is the subject of the post): ${o.sujet}`] : [])
-        .concat([`Today's image: SWOGE ${o.scene.prompt}`,
-                 produit ? `Facts:\n- ${faits.join('\n- ')}`
-                         : `Background, do not quote any of it, it is only here so you never contradict it:\n- ${faits.join('\n- ')}`])
-        .concat((o.precedents || []).length ? [`Previous posts (do not repeat their openings, structure or jokes):\n- ${o.precedents.join('\n- ')}`] : [])
+      const semaine = new Date(t).toLocaleDateString('en-US', { weekday: 'long', timeZone: e.fuseau });
+      const demande = (s ? demandeProduit(s, ang, tags, o, semaine)
+        : [`Date: ${jour}`, `TONE: ${ang.a}`,
+           `TICKER: ${tags.ticker ? 'include "$SWOGE" exactly once' : 'do NOT write "$SWOGE"'}`,
+           `HASHTAG: ${tags.hashtag ? 'include "#RobinhoodChain" exactly once' : 'no hashtag at all'}`]
+          .concat(o.sujet ? [`Today's announcement (this is the subject of the post): ${o.sujet}`] : [])
+          .concat([`Today's image: SWOGE ${o.scene.prompt}`, `Facts:\n- ${faits.join('\n- ')}`])
+          .concat((o.precedents || []).length ? [`Previous posts (do not repeat their openings, structure or jokes):\n- ${o.precedents.join('\n- ')}`] : []))
         .join('\n');
       const r = await f('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -495,15 +1327,21 @@ async function ecritTexte(faits, o, prendre) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       const brut = ((j.content || []).find((b) => b.type === 'text') || {}).text || '';
-      if (brut.trim()) return { texte: nettoie(brut, o.lien !== undefined ? o.lien : e.lien, tags), via: 'modele' };
-      throw new Error('reponse vide');
+      if (!brut.trim()) throw new Error('reponse vide');
+      if (!s) return { texte: nettoie(brut, lien, tags), via: 'modele' };
+      /* Verifie SANS le lien (une adresse n est pas un fait), poste avec. */
+      const v = verifieTexte(nettoie(corrigeNoms(brut), false, tags), s);
+      /* Un texte deja poste, mot pour mot : X le refuserait comme doublon (voir reserveDe). */
+      const deja = v.ok && (o.postes || []).some((x) => empreinte(x) === empreinte(nettoie(corrigeNoms(brut), false, tags)));
+      if (v.ok && !deja) return { texte: nettoie(corrigeNoms(brut), lien, tags), via: 'modele' };
+      const raison = deja ? 'texte deja poste' : v.raison;
+      console.error('[x] texte du modele refuse (' + raison + '), reserve du produit');
+      return reserve(raison);
     } catch (err) {
       console.error('[x] texte : le modele n a pas repondu (' + (err.message || err) + '), phrase de reserve');
     }
   }
-  const i = Number.parseInt(crypto.createHash('sha1').update(String(o.cle || jour)).digest('hex').slice(0, 6), 16) % RESERVE.length;
-  if (o.reserve) return { texte: nettoie(o.reserve, o.lien !== undefined ? o.lien : e.lien, tags), via: 'reserve' };
-  return { texte: nettoie(RESERVE[i], o.lien !== undefined ? o.lien : e.lien, tags), via: 'reserve' };
+  return reserve(null);
 }
 
 // ------------------------------------------------------------ l image
@@ -765,7 +1603,9 @@ function purgeImages() {
 }
 const nomImage = (cle) => String(cle).replace(/[^0-9A-Za-z-]+/g, '_');
 function vue(cle, e) {
+  /* `produit`, `nouveaute`, `fait` (11/10/2026) : le sujet du creneau ; null sur les entrees d avant, sur une annonce et sur un post programme. */
   return { cle, scene: e.scene, angle: e.angle || null, texte: e.texte, id: e.id || null, essais: e.essais || 0, erreur: e.erreur || null,
+           produit: e.produit || null, nouveaute: e.nouveaute || null, fait: e.fait || null, refus: e.refus || null,
            via: e.via || null, quand: e.quand || null, image: e.image ? '/x/image/' + e.image.replace(/\.png$/, '') + '.png' : null,
            url: e.id ? `https://x.com/${env().compte}/status/${e.id}` : null };
 }
@@ -778,7 +1618,8 @@ function derniere() {
   return { actif: enabled(), manque: manque(), heures: e.heures, fuseau: e.fuseau,
            creneau: creneauDu(Date.now(), e.heures, e.fuseau),
            derniere: c ? vue(c, j.jours[c]) : null,
-           recents: dernieres(j, 6).map((x) => ({ cle: x.cle, scene: x.scene, quand: x.quand, url: `https://x.com/${e.compte}/status/${x.id}` })) };
+           recents: dernieres(j, 6).map((x) => ({ cle: x.cle, scene: x.scene, produit: x.produit || null, nouveaute: x.nouveaute || null,
+                                                  quand: x.quand, url: `https://x.com/${e.compte}/status/${x.id}` })) };
 }
 
 // ------------------------------------------------------------ la tache
@@ -813,11 +1654,33 @@ async function tache(opts) {
   enCours = true;
   try {
     if (!o.special && (entree.annonce || annonceEnAttente(journal, o.annonce))) return await posteAnnonce(cle, entree, journal, t, o);
+    /* ---- LE SUJET D ABORD (11/10/2026) ----
+     * Un creneau ordinaire choisit son produit ou sa nouveaute, et le garde
+     * dans le journal : une reprise apres un refus de X parle du meme. Une
+     * entree d avant ce changement (sans `produit`) en recoit un ici. */
+    let vivant = null;
+    const lis = () => vivant || (vivant = instantane(o.deps, t));
+    let sujet = null;
+    if (!o.special) {
+      if (!entree.produit) {
+        const c = choixSujet(cle, journal, t, { vivant: lis(), nouveautes: o.nouveautes });
+        entree.produit = c.produit; entree.fait = c.fait;
+        if (c.nouveaute) { entree.nouveaute = c.nouveaute; if (c.retour) entree.retour = true; }
+        if (Number.isInteger(c.rang)) entree.rang = c.rang;
+      }
+      sujet = sujetDe(entree, lis(), o.nouveautes);
+    }
     const scene = o.special && o.special.prompt ? { nom: o.special.nom, prompt: o.special.prompt }
-                : entree.scene ? (SCENES.find((s) => s.nom === entree.scene) || sceneSuivante(cle, journal))
+                : entree.scene ? (sceneDeNom(entree.scene) || sceneSuivante(cle, journal))
+                : sujet ? sceneProduit(produitDe(sujet.produit), cle, journal)
                 : sceneSuivante(cle, journal);
     entree.scene = scene.nom;
-    if (!entree.angle) entree.angle = ANGLES[Number.parseInt(crypto.createHash('sha1').update(cle).digest('hex').slice(0, 6), 16) % ANGLES.length].a;
+    /* Un angle d avant le 11/10 (« teaser: hint at what is coming next », « pure hype … nothing else »)
+       n est plus un ton : donne comme TONE a un creneau produit, il pousserait le modele vers ce qui
+       n est pas sorti. Tant que le texte n est pas ecrit, il est remplace par un ton d aujourd hui
+       (gratuit : l image, deja payee, et sa scene sont gardees). */
+    if (sujet && !entree.texte && entree.angle && !ANGLES.some((a) => a.a === entree.angle)) delete entree.angle;
+    if (!entree.angle) entree.angle = sujet ? angleDuCreneau(cle, sujet, journal) : TONS_PRODUIT[hache(cle) % TONS_PRODUIT.length].a;
     /* L image d abord, sur le disque : un refus de X plus loin ne la fait
        pas payer deux fois. */
     fs.mkdirSync(DOSSIER_IMAGES(), { recursive: true });
@@ -843,10 +1706,12 @@ async function tache(opts) {
       journal.jours[cle] = entree; ecritJournal(journal);
     }
     if (!entree.texte) {
-      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: entree.angle,
-                                                    sujet: o.special && o.special.sujet,
-                                                    precedents: dernieres(journal, 5).map((x) => x.texte) }, o.prendre);
+      const r = await ecritTexte(sujet ? [] : faitsDuJour(t), { scene, cle, maintenant: t, angle: entree.angle,
+                                                    sujet: o.special && o.special.sujet, sujetProduit: sujet,
+                                                    precedents: dernieres(journal, 5).map((x) => x.texte),
+                                                    postes: dernieres(journal, 100000).map((x) => x.texte) }, o.prendre);
       entree.texte = r.texte; entree.via = r.via;
+      if (r.refus) entree.refus = r.refus;
       journal.jours[cle] = entree; ecritJournal(journal);
     }
     const mediaId = await televerse(png, o.prendre);
@@ -854,12 +1719,13 @@ async function tache(opts) {
     entree.id = id; entree.quand = new Date(t).toISOString(); delete entree.erreur;
     journal.jours[cle] = entree; ecritJournal(journal);
     purgeImages();
-    console.log(`[x] poste ${cle} · scene ${scene.nom} · https://x.com/${e.compte}/status/${id}`);
+    console.log(`[x] poste ${cle} · ${entree.nouveaute ? 'nouveaute ' + entree.nouveaute : 'produit ' + (entree.produit || '-')} · scene ${scene.nom} · https://x.com/${e.compte}/status/${id}`);
     if (o.signale) {
       try { o.signale({ cle, texte: entree.texte, id, image: e.domaine ? `https://${e.domaine}/x/image/${nomImage(cle)}.png` : null, url: `https://x.com/${e.compte}/status/${id}` }); }
       catch (x) { /* le Telegram ne fait pas rater le post */ }
     }
-    return { etat: 'poste', cle, id, texte: entree.texte, scene: scene.nom, angle: entree.angle };
+    return { etat: 'poste', cle, id, texte: entree.texte, scene: scene.nom, angle: entree.angle,
+             produit: entree.produit || null, nouveaute: entree.nouveaute || null, via: entree.via || null };
   } catch (err) {
     entree.essais = (entree.essais || 0) + 1;
     entree.erreur = String(err && err.message || err).slice(0, 200);
@@ -1051,8 +1917,11 @@ async function programmes(o) {
   return faits;
 }
 
-/** Dans le serveur : un regard toutes les cinq minutes, le journal decide. */
-function planifie(signale) {
+/** Dans le serveur : un regard toutes les cinq minutes, le journal decide.
+ *  `deps` (11/10/2026) : `{ game, colonie }` du serveur, pour les chiffres vivants
+ *  des produits (instantane) ; sans eux, ces chiffres ne sont simplement pas dits. */
+function planifie(signale, deps) {
+  if (deps) DEPS = deps;
   if (!enabled()) {
     console.log('[x] posts ETEINTS : il manque ' + manque().join(', '));
     return null;
@@ -1069,7 +1938,13 @@ function planifie(signale) {
 module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
                    ANNONCE, annonceEnAttente, genereVideo, televerseVideo, appelXGet, FENETRE_SCENES, FENETRE_RENDUS, FENETRE_CADRAGE, faitsDuJour, etiquettes,
                    nettoie, ecritTexte, genereImage, verifiePattes, genereImageVerifiee, televerse, publie, tache, planifie, derniere, reprend, programmes, PROGRAMMES, PROGRAMME_RETARD_MS,
-                   heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE };
+                   heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE,
+                   /* chaque post parle d un produit (11/10/2026) */
+                   PRODUITS, NOUVEAUTES, ROTATION, MOTS_INTERDITS, SCENES_PRODUITS, SECONDAIRES, VERIFIE, TONS_PRODUIT, MONDE_VIVANTS_MIN,
+                   NOUVEAUTE_FRAICHE_JOURS, NOUVEAUTE_RETOUR_JOURS, NOUVEAUTE_SORTIES_MAX, NOUVEAUTE_UN_SUR, choixSujet, sujetDe, verifieTexte, nombres, instantane,
+                   sceneProduit, sceneDeNom, angleDuCreneau, produitDe, corrigeNoms, nouveautesDues,
+                   /* relecture du 11/10 */
+                   LIENS_VOLETS, MOTS_NOMBRES, reserveDe, empreinte };
 
 // ------------------------------------------------------------ en ligne de commande
 
@@ -1080,15 +1955,31 @@ if (require.main === module) {
       /* Image + texte, RIEN n est poste : pour voir a quoi ca ressemble. Coute l image. */
       if (!process.env.OPENAI_API_KEY) { console.error('OPENAI_API_KEY absente'); process.exit(1); }
       const t = Date.now(); const j = litJournal(); const cle = 'essai#' + t;
-      const scene = sceneSuivante(cle, j);
-      console.log('scene :', scene.nom);
+      /* Le sujet que le prochain creneau prendrait, sans rien ecrire au journal. */
+      const v = instantane(null, t);
+      const c = choixSujet(cle, j, t, { vivant: v });
+      const sujet = sujetDe(c, v);
+      const scene = sceneProduit(produitDe(sujet.produit), cle, j);
+      console.log('sujet :', sujet.nouveaute ? 'nouveaute ' + sujet.nouveaute : 'produit ' + sujet.produit, '· scene :', scene.nom);
       const g = await genereImage(promptImage(scene, cle));
       const i = a.indexOf('--essai');
       const sortie = path.resolve(a[i + 1] && !a[i + 1].startsWith('--') ? a[i + 1] : '_x_essai.png');
       fs.writeFileSync(sortie, g.png);
       console.log('image :', sortie, '·', g.jetons, 'jetons');
-      const r = await ecritTexte(faitsDuJour(t), { scene, cle, maintenant: t, angle: ANGLES[t % ANGLES.length].a, precedents: dernieres(j, 5).map((x) => x.texte) });
-      console.log('texte (' + r.via + ') :\n' + r.texte);
+      const r = await ecritTexte([], { scene, cle, maintenant: t, angle: angleDuCreneau(cle, sujet, j), sujetProduit: sujet, precedents: dernieres(j, 5).map((x) => x.texte) });
+      console.log('texte (' + r.via + (r.refus ? ', refus : ' + r.refus : '') + ') :\n' + r.texte);
+      return;
+    }
+    if (a.includes('--sujets')) {
+      /* Les huit prochains sujets, d apres le journal du volume : rien n est genere, rien n est paye, rien n est ecrit. */
+      const t0 = Date.now(); const e = env(); const j = litJournal(); const v = instantane(null, t0);
+      for (let k = 0, q = 0; k < 8 && q < 40; q++) {
+        const tk = t0 + q * 3 * 3600e3; const cr = creneauDu(tk, e.heures, e.fuseau);
+        if (!cr || j.jours[cr.cle]) continue;
+        const c = choixSujet(cr.cle, j, tk, { vivant: v }); const s = sujetDe(c, v);
+        console.log(`${cr.cle}  ${c.nouveaute ? 'NOUVEAUTE ' + c.nouveaute : 'produit ' + c.produit + ' (rang ' + c.rang + ')'}  ·  ${s.lead.slice(0, 90)}`);
+        j.jours[cr.cle] = Object.assign({ id: 'simule', quand: new Date(tk).toISOString() }, c); k++;
+      }
       return;
     }
     if (a.includes('--publie')) {
@@ -1097,7 +1988,7 @@ if (require.main === module) {
       console.log(JSON.stringify(r, null, 1));
       process.exit(r.etat === 'poste' || r.etat === 'deja' ? 0 : 1);
     }
-    console.log('usage : --essai [fichier.png]  (image + texte, sans poster) | --publie  (poste le creneau en cours)');
+    console.log('usage : --essai [fichier.png]  (image + texte, sans poster) | --sujets  (les huit prochains sujets, gratuit) | --publie  (poste le creneau en cours)');
     console.log('cles :', enabled() ? 'toutes presentes' : 'il manque ' + manque().join(', '));
     console.log('creneaux :', env().heures.join(', '), env().fuseau);
   })().catch((e) => { console.error(e.message || e); process.exit(1); });

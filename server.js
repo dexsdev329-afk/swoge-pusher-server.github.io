@@ -11085,8 +11085,11 @@ server.listen(cfg.PORT, () => {
     setInterval(litOdds, 30 * 60000).unref();
   }
   /* Le post quotidien sur X, arme seulement si ses cinq cles sont la ; la
-     copie part sur le Telegram avec le lien du post. */
-  xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url));
+     copie part sur le Telegram avec le lien du post. Depuis le 11/10/2026 chaque
+     post parle d un produit : le jeu et la colonie lui donnent ses chiffres
+     vivants (cagnotte du Boulier, personnages vivants, lectures de la colonie),
+     lus au moment du post, jamais ecrits en dur. */
+  xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url), { game, colonie: aiColonie });
   /* Le bot repond a /id en prive, et a /launch partout (tg_lance.js, 03/10). */
   tgCmd = tgCommandes.planifie({ lanceur: tgLance });
   /* Les agents par jeton postent tout seuls SEULEMENT si AGENT_HORLOGE=1 : eteint
