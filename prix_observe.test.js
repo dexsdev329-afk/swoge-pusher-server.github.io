@@ -284,6 +284,12 @@ const recharge = () => { obs.flush(); obs.oublie(); };
     ok(bt.rencontres === 45 && bt.conclut === true && bt.porte.bascule === false && /no real-time lock/.test(bt.porte.raisons.join(' ')),
        'tennis : 45 rencontres, et pourtant aucune bascule possible sans verrou d heure reelle');
     eq(bt.porte.P4.mesurable, false, 'P4 non mesurable au tennis (pas de DK)');
+    /* le verrou d'heure reelle du tennis (11/10/2026) : la raison change, la bascule jamais */
+    process.env.PARIS_TENNIS_VERROU = 'actif';
+    const bta = obs.bilan(T5).parSport.tennis;
+    delete process.env.PARIS_TENNIS_VERROU;
+    ok(bta.porte.bascule === false && /real-time lock on \(ESPN\), but P4 and P5 cannot be measured for free.*8\.8nonies bis/.test(bta.porte.raisons.join(' ')),
+       'PARIS_TENNIS_VERROU=actif : le tennis ne bascule TOUJOURS pas par cette porte, et la raison dit pourquoi (P4/P5, porte a part)');
     eq(bt.battablesElo, 45, 'l Elo du tennis contre le prix eu : 2,2 x 0,5 > 1 sur chaque rencontre');
   }
 

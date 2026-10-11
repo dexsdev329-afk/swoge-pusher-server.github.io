@@ -44,6 +44,10 @@ const prixObserve = require('./prix_observe');
    OBSERVATION seulement, eteint par defaut (PARIS_EN_JEU vide). Il releve,
    ecrit un journal et calcule une porte ; rien de ce qui est vendu ne le lit. */
 const parisEnJeu = require('./paris_en_jeu');
+/* Le verrou d'heure reelle du tennis (11/10/2026) : eteint par defaut
+   (PARIS_TENNIS_VERROU vide, aucune minuterie). `actif` pose l'etat et l'heure
+   ESPN du tennis au second verrou (paris.poseHeuresReelles) toutes les 60 s. */
+const tennisVerrou = require('./tennis_verrou');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
 const espn = require('./scores_espn');
@@ -270,6 +274,7 @@ const boutique = require('./boutique');
 const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 let enJeu = null;                   // les minuteries du direct en jeu (lot 7, observation)
+let tennisArme = null;              // les minuteries du verrou du tennis (11/10/2026, eteint par defaut)
 let xQuotidien = null;
 let tgCmd = null;
 let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
@@ -11071,6 +11076,17 @@ server.listen(cfg.PORT, () => {
       return p ? { credits: p.credits, jourDuMois: p.jourDuMois, mois: String(q.vu).slice(0, 7) } : null;
     },
   });
+  /* ---- LE VERROU D'HEURE REELLE DU TENNIS (11/10/2026) ----
+   * Sa propre minuterie, a part de `verrouFrais` : la passe large du football
+   * peut durer (huit secondes par journee refusee, ligue apres ligue), et le
+   * tennis vendu ferme si son appariement a plus de 150 s. Il ne fait que
+   * FERMER plus tot (poseHeuresReelles) ; la vente du tennis au marche est
+   * revérifiee par paris.ouvert a chaque pari. La ligne de demarrage est dite
+   * meme eteint. */
+  tennisArme = tennisVerrou.planifie({
+    catalogue: () => paris.catalogue().matchs,
+    pose: (par, t) => paris.poseHeuresReelles(par, t),
+  });
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */
@@ -11111,6 +11127,7 @@ function shutdown() {
   clearInterval(niveauInterval); clearInterval(prixInterval); clearInterval(prixMondeInterval); clearInterval(backupInterval); clearInterval(graineInterval); clearInterval(purgeInterval); clearInterval(stepInterval); clearInterval(bcInterval); clearInterval(metaInterval); clearInterval(saveInterval); clearInterval(pokerInterval); clearInterval(crashInterval); clearInterval(p4Interval); clearInterval(battement); clearInterval(compteInterval);
   if (calendrierAuto) calendrierAuto.arrete();
   if (enJeu) enJeu.arrete();
+  if (tennisArme) tennisArme.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();

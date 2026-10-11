@@ -77,6 +77,9 @@ const paris = require('./paris');
    erreur, et sa couverture) et ses prix eu avec nos cotes Elo du meme instant.
    0 credit de plus : il relit ce que la releve a deja paye. */
 const prixObserve = require('./prix_observe');
+/* Le verrou d'heure reelle du tennis (11/10/2026) : son etat et sa couverture
+   dans etatImport (PARIS_TENNIS_VERROU, vide par defaut : rien ne tourne). */
+const tennisVerrou = require('./tennis_verrou');
 /* Le journal du reglement (lot 4, 10/10/2026) : l'ombre ESPN de 2 h (ce
    qu'une passe frequente aurait regle, et quand) et le compte de chaque
    /scores paye. Il ne decide rien ; chaque note est isolee (try) : il ne peut
@@ -717,6 +720,13 @@ function etatImport() {
        8.11 ; D se mesure hors serveur). Rien n'y decide, rien n'est vendu. */
     coupes: (() => { try { let matchs = []; try { matchs = paris.catalogue().matchs; } catch (e) { /* catalogue illisible */ }
       return coupes.etat(Date.now(), { paysDe, matchs }); } catch (e) { return { erreur: String(e.message || e) }; } })(),
+    /* Le verrou d'heure reelle du tennis (11/10/2026) : mode, derniere passe
+       (couverture par tournoi, non appariees avec les noms ESPN du meme jour),
+       mesure sur 14 jours par circuit (appariees, vues en jeu avant l'heure du
+       catalogue) et la porte T1 ecrite d'avance (EXPLOITATION 8.8nonies bis).
+       Rien n'y decide : la vente reste deux variables (PARIS_TENNIS_VERROU,
+       PARIS_PRIX_LIGUES). */
+    tennis: (() => { try { return tennisVerrou.etat(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     dernier: litDernier(),
   };
 }
@@ -1427,9 +1437,14 @@ async function importeScores(aRegler, opts) {
    * de cette ligue, et ils repartent donc payer leurs deux credits, ce qui est
    * exactement ce qu'on veut.
    *
-   * Le tennis n'est pas couvert : le tableau d'ESPN ne rend que des tournois,
-   * sans les rencontres. Il reste sur The Odds API — deux credits pour UN
-   * sport au lieu de cinq.
+   * Le tennis passe par l'API INTERNE d'ESPN (`espn.finies` -> releveTennis),
+   * pas par le tableau public, puis par The Odds API. Ce qui etait ecrit ici
+   * jusqu'au 11/10/2026 — « le tableau d'ESPN ne rend que des tournois, sans
+   * les rencontres » — etait vrai au 18/09 et ne l'est plus : releve du
+   * 11/10, `tennis/atp|wta/scoreboard` porte chaque rencontre dans
+   * `groupings[].competitions[]` (Shanghai : 162), avec l'etat pre/in/post.
+   * Il sert au verrou d'heure reelle du tennis (tennis_verrou.js), pas encore
+   * au reglement : le brancher ici serait un autre lot, avec sa mesure.
    *
    * Une panne d'ESPN ne casse rien : `finies` rend une liste vide et tout
    * repasse par le chemin d'avant. C'est le meme raisonnement que partout

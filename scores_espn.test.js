@@ -494,6 +494,27 @@ console.log('\n-- qui recoit quel score --');
          'un rouge sans equipe : rouges [0, 0] (jamais compte a l exterieur), le fait garde camp null');
     }
 
+    /* ---- LE TENNIS AU TABLEAU PUBLIC (11/10/2026) ----
+     * Le detail (appariement, verrou, module) est dans tennis_verrou.test.js ;
+     * ici, ce que CE module promet aux autres : les deux chemins releves, et
+     * que le chemin du football n'en lit rien (rien ne change pour lui). */
+    console.log('\n-- le tennis au tableau public : atp et wta, et rien de plus pour le football --');
+    {
+      eq(JSON.stringify(e.CHEMINS_TENNIS), '{"atp":"tennis/atp","wta":"tennis/wta"}', 'les deux tableaux du tennis, releves le 11/10/2026 (200, rencontres dans groupings[].competitions[])');
+      ok(!Object.keys(e.CHEMINS).some((k) => /^tennis_/.test(k)), 'CHEMINS (football, NHL, coupes…) ne porte aucune cle tennis : `releve` ne lit jamais le tennis');
+      let vus = 0;
+      const t = await e.releve([{ id: 'tn', sport: 'tennis', domicile: 'Casper Ruud', exterieur: 'Learner Tien', debut: Date.parse('2026-10-12T04:00Z'),
+                                  source: { ligue: 'tennis_atp_shanghai_masters' } }], { prendre: async () => { vus++; return { ok: true, json: async () => ({ events: [] }) }; } });
+      eq(`${t.size}|${vus}`, '0|0', '`releve` (le verrou du football, le direct, le reglement) : une rencontre de tennis -> 0 requete, rien rendu');
+      const BT = JSON.parse(fs.readFileSync(path.join(__dirname, 'bancs_tennis_espn.json'), 'utf8'));
+      const lu = await e.releveTennisTableau([{ id: 'tn', sport: 'tennis', domicile: 'Learner Tien', exterieur: 'Casper Ruud', debut: Date.parse('2026-10-12T04:00Z'),
+                                               source: { ligue: 'tennis_atp_shanghai_masters' } }],
+                                             { prendre: async () => ({ ok: true, status: 200, json: async () => ({ events: BT.atp.events }) }) });
+      const s = lu.par.get('tn');
+      eq(`${s && s.etat}|${s && s.espn}|${s && new Date(s.quand).toISOString()}`, 'pre|184932|2026-10-12T04:00:00.000Z',
+         'le tableau atp reduit du 11/10 : Tien - Ruud appariee (ordre inverse), « pre », heure valide');
+    }
+
     console.log(`\nscores_espn.test.js : ${n} verifications OK`);
   });
 }

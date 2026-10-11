@@ -1,0 +1,736 @@
+{
+ "atp": {
+  "day": {
+   "date": "2026-10-11"
+  },
+  "events": [
+   {
+    "id": "959-2026",
+    "name": "China Open",
+    "date": "2026-09-27T04:00Z",
+    "endDate": "2026-10-12T03:59Z",
+    "groupings": [
+     {
+      "grouping": {
+       "slug": "womens-singles",
+       "displayName": "Women's Singles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "184356",
+        "date": "2026-10-11T11:35Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_FINAL",
+          "state": "post",
+          "shortDetail": "Final"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Mirra Andreeva"
+          },
+          "winner": false,
+          "linescores": [
+           {
+            "value": 5
+           },
+           {
+            "value": 4
+           }
+          ]
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Zheng Qinwen"
+          },
+          "winner": true,
+          "linescores": [
+           {
+            "value": 7
+           },
+           {
+            "value": 6
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "315-2026",
+    "name": "Rolex Shanghai Masters",
+    "date": "2026-10-05T04:00Z",
+    "endDate": "2026-10-19T03:59Z",
+    "groupings": [
+     {
+      "grouping": {
+       "slug": "mens-singles",
+       "displayName": "Men's Singles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "184932",
+        "date": "2026-10-12T04:00Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/12 - 12:00 AM EDT"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Casper Ruud"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Learner Tien"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "184939",
+        "date": "2026-10-12T05:30Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/12 - 1:30 AM EDT"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Taylor Fritz"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Stefanos Tsitsipas"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "184948",
+        "date": "2026-10-13T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "TBD"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "TBD"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "184950",
+        "date": "2026-10-13T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Karen Khachanov"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Alex de Minaur"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "184951",
+        "date": "2026-10-13T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Jakub Mensik"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Arthur Gea"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "184957",
+        "date": "2026-10-15T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "TBD"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "TBD"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "grouping": {
+       "slug": "mens-doubles",
+       "displayName": "Men's Doubles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "184972",
+        "date": "2026-10-12T04:00Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/12 - 12:00 AM EDT"
+         }
+        },
+        "type": {
+         "slug": "mens-doubles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "team"
+         },
+         {
+          "homeAway": "home",
+          "type": "team"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "wta": {
+  "day": {
+   "date": "2026-10-11"
+  },
+  "events": [
+   {
+    "id": "959-2026",
+    "name": "China Open",
+    "date": "2026-09-27T04:00Z",
+    "endDate": "2026-10-12T03:59Z",
+    "groupings": [
+     {
+      "grouping": {
+       "slug": "mens-singles",
+       "displayName": "Men's Singles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "183468",
+        "date": "2026-10-06T11:10Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_RETIRED",
+          "state": "post",
+          "shortDetail": "Retired"
+         }
+        },
+        "type": {
+         "slug": "mens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Alex de Minaur"
+          },
+          "winner": false,
+          "linescores": [
+           {
+            "value": 6
+           },
+           {
+            "value": 1
+           }
+          ]
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Novak Djokovic"
+          },
+          "winner": true,
+          "linescores": [
+           {
+            "value": 7
+           },
+           {
+            "value": 0
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "381-2026",
+    "name": "Dongfeng Voyah Wuhan Open",
+    "date": "2026-10-09T04:00Z",
+    "endDate": "2026-10-19T03:59Z",
+    "groupings": [
+     {
+      "grouping": {
+       "slug": "womens-singles",
+       "displayName": "Women's Singles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "185314",
+        "date": "2026-10-12T03:00Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/11 - 11:00 PM EDT"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Sonay Kartal"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Anhelina Kalinina"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "185336",
+        "date": "2026-10-12T03:00Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/11 - 11:00 PM EDT"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Leylah Fernandez"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Ekaterina Alexandrova"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "185331",
+        "date": "2026-10-12T04:30Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/12 - 12:30 AM EDT"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Marie Bouzkova"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Clara Tauson"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "185334",
+        "date": "2026-10-12T11:30Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/12 - 7:30 AM EDT"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Wang Xinyu"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Wang Xiyu"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "185340",
+        "date": "2026-10-13T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Zhang Shuai"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Anna Kalinskaya"
+          }
+         }
+        ]
+       },
+       {
+        "wasSuspended": false,
+        "id": "185343",
+        "date": "2026-10-13T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Zheng Qinwen"
+          }
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Ann Li"
+          }
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "grouping": {
+       "slug": "womens-doubles",
+       "displayName": "Women's Doubles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "186393",
+        "date": "2026-10-12T03:00Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "10/11 - 11:00 PM EDT"
+         }
+        },
+        "type": {
+         "slug": "womens-doubles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "team"
+         },
+         {
+          "homeAway": "home",
+          "type": "team"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "1079-2026",
+    "name": "Lisboa Belem Open",
+    "date": "2026-10-11T04:00Z",
+    "endDate": "2026-10-19T03:59Z",
+    "groupings": [
+     {
+      "grouping": {
+       "slug": "womens-singles",
+       "displayName": "Women's Singles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "186436",
+        "date": "2026-10-11T14:20Z",
+        "timeValid": true,
+        "status": {
+         "type": {
+          "name": "STATUS_IN_PROGRESS",
+          "state": "in",
+          "shortDetail": "3rd"
+         }
+        },
+        "type": {
+         "slug": "womens-singles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Sarah Van Emst"
+          },
+          "linescores": [
+           {
+            "value": 2
+           },
+           {
+            "value": 6
+           },
+           {
+            "value": 1
+           }
+          ]
+         },
+         {
+          "homeAway": "home",
+          "type": "athlete",
+          "athlete": {
+           "displayName": "Raluka Serban"
+          },
+          "linescores": [
+           {
+            "value": 6
+           },
+           {
+            "value": 4
+           },
+           {
+            "value": 1
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "grouping": {
+       "slug": "womens-doubles",
+       "displayName": "Women's Doubles"
+      },
+      "competitions": [
+       {
+        "wasSuspended": false,
+        "id": "185422",
+        "date": "2026-10-12T04:00Z",
+        "timeValid": false,
+        "status": {
+         "type": {
+          "name": "STATUS_SCHEDULED",
+          "state": "pre",
+          "shortDetail": "TBD"
+         }
+        },
+        "type": {
+         "slug": "womens-doubles"
+        },
+        "competitors": [
+         {
+          "homeAway": "away",
+          "type": "team"
+         },
+         {
+          "homeAway": "home",
+          "type": "team"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

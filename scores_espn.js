@@ -17,13 +17,17 @@
  * cricket repondent. On prend donc les scores la, et l'on garde The Odds API
  * pour ce qu'elle seule sait faire.
  *
- * ---- CE QU'ELLE NE COUVRE PAS, ET IL FAUT LE DIRE ----
+ * ---- LE TENNIS : CE QUI ETAIT VRAI, ET CE QUI L'EST AUJOURD'HUI ----
  *
- * LE TENNIS. Son tableau ne rend que des TOURNOIS — « US Open », zero
- * rencontre dedans. Or le tennis est notre plus gros sport : quatre-vingt-
- * treize rencontres contre quarante-huit au football. Le tennis reste donc
- * sur The Odds API pour son reglement, et c'est tres bien : deux credits pour
- * UN sport au lieu de cinq, la depense est divisee par cinq quand meme.
+ * Au 18/09/2026, son tableau ne rendait que des TOURNOIS — « US Open », zero
+ * rencontre dedans — et le tennis restait sur The Odds API pour son reglement.
+ * Ce n'est plus vrai : releve du 11/10/2026, `tennis/atp/scoreboard` et
+ * `tennis/wta/scoreboard` repondent 200 (~0,9 et ~1,3 Mo, ~82 et ~104 Ko
+ * compresses) et chaque tournoi porte ses rencontres dans
+ * `groupings[].competitions[]` — Shanghai : 162 rencontres (125 finies, 37 a
+ * venir), avec l'etat pre/in/post, l'heure et les deux joueurs nommes. C'est
+ * le verrou d'heure reelle du tennis (`releveTennisTableau`, plus bas). Le
+ * reglement du tennis, lui, n'a pas change : `releveTennis` (API interne).
  *
  * ---- ET POURQUOI AUCUN RAPPROCHEMENT FLOU ----
  *
@@ -312,8 +316,37 @@ function refusDuJour(jourIso) {
   return out;
 }
 
-async function uneRequete(u, prendre) {
+/* ---- LES 403 ET 429, PAR TABLEAU, DEPUIS LE DEMARRAGE (relecture du 11/10/2026) ----
+ * Le signe qu'ESPN limite. Le verrou du tennis (tennis_verrou.js) ajoute un
+ * lecteur a 60 s, autant de requetes que la passe large du football : un 403
+ * ou 429 PAR ADRESSE degraderait le second verrou du football (qui protege
+ * l'argent vendu au marche) et le reglement gratuit — le risque qui a fait
+ * ecarter un troisieme lecteur au lot 7 (server.js, directSuivies). Le tennis
+ * lit donc ce compte, et recule des que N'IMPORTE QUEL tableau en prend un. */
+const BLOCAGES = new Map();
+/** { tableau: n } des 403/429 depuis le demarrage (ex. { 'soccer/esp.1': 1 }). */
+function blocages() { return Object.fromEntries(BLOCAGES); }
+
+/* `suivi` (facultatif, tennis du 11/10/2026) : ce que la requete a donne, pour
+   un appelant qui doit distinguer « ESPN muet » d'« aucune rencontre » —
+   { requetes, refus, illisibles, statuts: { 403: n }, dernier }. Sans lui, rien
+   ne change : un refus rend une liste vide, comme avant. AVEC lui, une
+   reponse sans `events` est aussi comptee comme un refus (illisible) : pour le
+   verrou du tennis, une forme inattendue doit fermer, jamais ouvrir. */
+async function uneRequete(u, prendre, suivi) {
   const f = prendre || fetch;
+  const s = suivi && typeof suivi === 'object' ? suivi : null;
+  const refuse = (pourquoi, statut) => {
+    compte(u, true, pourquoi);
+    if (statut === 403 || statut === 429) {
+      const m = /sports\/(.+?)\/scoreboard/.exec(String(u));
+      const k = m ? m[1] : '?';
+      BLOCAGES.set(k, (BLOCAGES.get(k) || 0) + 1);
+    }
+    if (s) { s.refus = (s.refus || 0) + 1; s.dernier = pourquoi; if (statut !== undefined) { s.statuts = s.statuts || {}; s.statuts[statut] = (s.statuts[statut] || 0) + 1; } }
+    return [];
+  };
+  if (s) s.requetes = (s.requetes || 0) + 1;
   /* Un tableau de scores n'est JAMAIS une raison de faire attendre le serveur.
      Huit secondes, puis on s'en passe : le calendrier vaut sans le direct, le
      direct ne vaut rien sans le calendrier. */
@@ -321,13 +354,13 @@ async function uneRequete(u, prendre) {
   const minuterie = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
   try {
     const rep = await f(u, ctl ? { signal: ctl.signal } : undefined);
-    if (!rep || !rep.ok) { compte(u, true, 'statut ' + ((rep && rep.status) || '?')); return []; }
+    if (!rep || !rep.ok) return refuse('statut ' + ((rep && rep.status) || '?'), (rep && rep.status) || '?');
     const j = await rep.json();
+    if (s && !Array.isArray(j && j.events)) { s.illisibles = (s.illisibles || 0) + 1; return refuse('reponse sans events'); }
     compte(u, false);
     return Array.isArray(j && j.events) ? j.events : [];
   } catch (e) {
-    compte(u, true, (e && e.name === 'AbortError') ? 'abandon a 8 s' : String((e && e.message) || e).slice(0, 80));
-    return [];
+    return refuse((e && e.name === 'AbortError') ? 'abandon a 8 s' : String((e && e.message) || e).slice(0, 80));
   } finally { if (minuterie) clearTimeout(minuterie); }
 }
 
@@ -553,9 +586,11 @@ async function releve(matchs, opts) {
 /*
  * ==================== LE TENNIS ====================
  *
- * Le tableau de scores d'ESPN ne rend que des TOURNOIS pour le tennis, sans
- * les rencontres — c'est ecrit en tete de ce fichier, et c'etait exact. Son
- * API INTERNE, elle, les porte : un tournoi y arrive avec ses trois cent
+ * Le tableau de scores d'ESPN ne rendait que des TOURNOIS pour le tennis, sans
+ * les rencontres — c'etait exact au 18/09/2026 ; depuis (releve du 11/10), il
+ * les porte, et le verrou d'heure reelle le lit (`releveTennisTableau`, apres
+ * cette fonction). Le REGLEMENT reste ici, sur l'API INTERNE, qui les porte
+ * aussi : un tournoi y arrive avec ses trois cent
  * vingt-trois rencontres, chacune avec ses deux joueurs NOMMES et un
  * `winner` — donc le resultat, sans une requete de plus.
  *
@@ -665,6 +700,311 @@ async function releveTennis(matchs, opts) {
   return out;
 }
 
+/*
+ * ========== LE TENNIS AU TABLEAU PUBLIC : LE VERROU D'HEURE REELLE (11/10/2026) ==========
+ *
+ * ---- pourquoi ----
+ * Le tennis ne se vend pas au prix du marche sans second verrou de fermeture
+ * (prix_ligues.venteImpossible, decision du 09/10/2026) : l'heure annoncee d'un
+ * match de tennis est approximative — les matchs s'enchainent sur un court —
+ * et sans signal « commence » un parieur parierait sur un match deja en cours
+ * au prix d'avant-match. Ce bloc lit ce signal ; tennis_verrou.js decide quand
+ * le lire et ce qu'on en fait (eteint par defaut).
+ *
+ * ---- ce que le tableau rend (releve du 11/10/2026, copies reduites dans tennis_verrou.test.js) ----
+ *  - `events[]` = les TOURNOIS ; chaque rencontre dans
+ *    `events[].groupings[].competitions[]` (et `events[].competitions[]` est lu
+ *    aussi : un tournoi qui les porterait a plat n'est pas perdu), avec
+ *    `date`, `timeValid`, `status.type.state` (pre/in/post), `type.slug`
+ *    (mens-singles, womens-doubles…) et `competitors[].athlete.displayName` ;
+ *  - un tournoi MIXTE (China Open) est sur les DEUX tableaux, hommes et femmes :
+ *    le circuit se lit donc sur le SIMPLE (`mens-singles` pour atp,
+ *    `womens-singles` pour wta), jamais sur le tableau seul — et un double
+ *    n'est jamais une rencontre de The Odds API ;
+ *  - `timeValid: false` : 151 simples sur 151 a 04:00Z (copies du 11/10) —
+ *    minuit a New York du jour LOCAL du tournoi (Wuhan, Chine : catalogue
+ *    02:00Z le 13/10, ESPN 2026-10-13T04:00Z, cinq rencontres). C'est une
+ *    DATE, pas une heure : elle sert a l'appariement, jamais au verrou ;
+ *  - `dates=AAAAMMJJ` rend les tournois en cours ce jour-la, chacun AVEC TOUTES
+ *    ses rencontres (Shanghai : 131 simples, avec ou sans `dates`). Une
+ *    requete par jour et par circuit, comme les autres tableaux (`uneRequete` :
+ *    abandon a 8 s, refus comptes par tableau). Poids releve le 11/10/2026 a
+ *    17:15Z (en-tetes `content-length`, gzip) : une journee A VENIR ~36 Ko
+ *    (atp 35 916, wta 36 738 octets) ; la journee EN COURS rend le tableau
+ *    entier, tournois qui finissent compris : atp 81 961 et wta 104 345 octets
+ *    (~0,9 et ~1,3 Mo de JSON). Une passe a trois journees par circuit pese
+ *    donc ~330 Ko : a 60 s (verrou `actif`), ~8 640 requetes et ~480 Mo par
+ *    jour — autant de requetes que la passe large du football (~80 par quart
+ *    d'heure, server.js). D'ou le recul du tennis sur un 403/429 de N'IMPORTE
+ *    QUEL tableau (`blocages`, plus haut ; tennis_verrou.js).
+ */
+const CHEMINS_TENNIS = Object.freeze({ atp: 'tennis/atp', wta: 'tennis/wta' });
+const SIMPLE_DU_TOUR = Object.freeze({ atp: 'mens-singles', wta: 'womens-singles' });
+
+/* ---- LES JOURS DEMANDES ----
+ * ESPN range un tournoi sous des journees de New York (`date` a 04:00Z,
+ * `endDate` a 03:59Z le lendemain de la finale). Une rencontre est donc sous le
+ * jour de New York de son heure (UTC - 4 ou 5 h) ou sous son jour LOCAL (le
+ * jour UTC pour l'Asie et l'Europe — Wuhan ci-dessus). On demande les deux :
+ * jour(debut) et jour(debut - 6 h). La passe ne suit que les rencontres de
+ * [-6 h ; +36 h] autour de maintenant (tennis_verrou : HORIZON_MS devant,
+ * APRES_MS derriere, pour la mesure seule) : les jours demandes couvrent donc
+ * au plus [maintenant - 12 h ; maintenant + 36 h], 48 h, soit TROIS journees
+ * UTC au plus (il en faudrait plus de 48 h pour en toucher quatre). Exemple :
+ * 01:00Z le 11 -> le 10, le 11, le 12 (verifie heure par heure dans
+ * tennis_verrou.test.js). TENNIS_JOURS_MAX = 4 n'est qu'un plafond de garde,
+ * jamais atteint par la passe ; s'il l'etait, les journees les plus lointaines
+ * tomberaient (leurs rencontres non appariees : fermees, jamais ouvertes). */
+const TENNIS_JOURS_MAX = 4;
+function joursTennis(debuts) {
+  const s = new Set();
+  for (const d of debuts || []) {
+    if (!isFinite(d)) continue;
+    s.add(jour(d)); s.add(jour(d - 6 * 3600000));
+  }
+  return [...s].sort().slice(0, TENNIS_JOURS_MAX);
+}
+
+/* ---- LES NOMS DES JOUEURS ----
+ * Sans les mots de bruit du football (BRUIT retire « de », « as »… : « Alex de
+ * Minaur »). Accents par NFKD ; les lettres que NFKD ne decompose pas (ł, ø, đ,
+ * æ, ß…) par une table FIXE de translitteration — ecrite, pas devinee. */
+const TRANSLIT = { 'ł': 'l', 'Ł': 'L', 'ø': 'o', 'Ø': 'O', 'đ': 'd', 'Đ': 'D', 'ð': 'd', 'Ð': 'D', 'þ': 'th', 'Þ': 'Th',
+                   'æ': 'ae', 'Æ': 'Ae', 'œ': 'oe', 'Œ': 'Oe', 'ß': 'ss', 'ı': 'i' };
+function normaliseJoueur(nom) {
+  return String(nom || '')
+    .replace(/[łŁøØđĐðÐþÞæÆœŒßı]/g, (c) => TRANSLIT[c] || c)
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+/* ---- LES ALIAS DU TENNIS : RELEVES, JAMAIS DEVINES ----
+ * A gauche le nom normalise que donne The Odds API, a droite celui d'ESPN.
+ * AUCUNE ligne au 11/10/2026 : les 11 rencontres de tennis ouvertes du
+ * calendrier public (16:09 UTC, WTA Wuhan 9, ATP Shanghai 2) s'apparient
+ * toutes sur les tableaux du meme instant, l'ordre inverse (« Qinwen Zheng »
+ * contre « Zheng Qinwen ») compris. Une ligne s'ajoute ici, avec sa date,
+ * seulement depuis `/paris/import` -> `tennis.passe.nonAppariees` (les noms
+ * ESPN du meme jour qui partagent un joueur), quand les deux noms sont, a
+ * l'oeil, la meme personne le meme jour. Jamais par ressemblance : « Wang
+ * Xinyu » et « Wang Xiyu » sont deux joueuses, et elles se rencontraient a
+ * Wuhan le 12/10 (rencontre ESPN 185334). */
+const ALIAS_TENNIS = Object.freeze({});
+const aliasTennis = (s) => (Object.prototype.hasOwnProperty.call(ALIAS_TENNIS, s) ? ALIAS_TENNIS[s] : null);
+/* Les memes jetons, dans n'importe quel ordre (« Zheng Qinwen » = « Qinwen
+   Zheng ») ; ou des INITIALES d'un cote (« C. Ruud » = « Casper Ruud ») : chaque
+   jeton complet du nom court se retrouve tel quel dans le long, et les jetons
+   restants du long sont exactement autant que les initiales, chacun commencant
+   par l'une d'elles. Rien d'autre : un prenom manquant (« Joelle Steur » contre
+   « Joelle Lilly Sophie Steur ») ne s'apparie pas — il passe par ALIAS_TENNIS. */
+function parInitiales(court, long) {
+  const ini = court.filter((x) => x.length === 1), pleins = court.filter((x) => x.length > 1);
+  /* au moins un jeton complet (le nom) : une initiale seule ne vaut personne */
+  if (!ini.length || !pleins.length) return false;
+  const reste = long.slice();
+  for (const p of pleins) { const i = reste.indexOf(p); if (i < 0) return false; reste.splice(i, 1); }
+  /* autant de jetons restants que d'initiales, chacun par sa lettre (memes chaines triees) */
+  return ini.slice().sort().join('') === reste.map((x) => x[0]).sort().join('');
+}
+function memesJetons(x, y) {
+  if (!x.length || !y.length) return false;
+  if (x.slice().sort().join(' ') === y.slice().sort().join(' ')) return true;
+  return parInitiales(x, y) || parInitiales(y, x);
+}
+/** Le meme joueur, des deux cotes ? Memes jetons (ordre libre), initiales, ou une ligne d'ALIAS_TENNIS. */
+function memeJoueur(a, b) {
+  const x = normaliseJoueur(a), y = normaliseJoueur(b);
+  if (!x || !y) return false;
+  const vx = [x, aliasTennis(x)].filter(Boolean), vy = [y, aliasTennis(y)].filter(Boolean);
+  for (const p of vx) for (const q of vy) if (memesJetons(p.split(' '), q.split(' '))) return true;
+  return false;
+}
+
+/* Les jeux deja joues : la somme des `linescores[].value` des deux joueurs
+   (jeux gagnes par manche), null s'il n'y en a aucun. Une rencontre « pre »
+   n'en porte jamais (copies du 11/10/2026, ci-dessous) ; au premier « in »
+   vu, c'est ce que la porte T3 lit (un jeu deja joue = ESPN en retard d'un jeu
+   au moins). */
+function jeuxJoues(competitors) {
+  let n = null;
+  for (const x of competitors || []) {
+    for (const l of (x && Array.isArray(x.linescores)) ? x.linescores : []) {
+      const v = l && typeof l.value === 'number' ? l.value : NaN;
+      if (isFinite(v) && v >= 0) n = (n || 0) + v;
+    }
+  }
+  return n;
+}
+/* Une rencontre de tennis du tableau : les deux joueurs NOMMES (un « TBD »
+   n'est personne), le simple, l'etat, la date et si elle est une heure. Un
+   etat qui n'est pas pre/in/post reste '' : jamais lu comme « pas commence ».
+   ---- « pre » SEULEMENT QUAND RIEN NE DIT LE CONTRAIRE (relecture du 11/10/2026) ----
+   `status.type.state` seul ne suffit pas : une rencontre interrompue (pluie)
+   ou retardee pourrait revenir « pre » sous un autre statut, avec un score —
+   et un redemarrage efface le « in » deja vu (HEURES_REELLES est en memoire) :
+   elle se serait rouverte au prix d'avant-match. « pre » n'est donc lu que
+   sous `STATUS_SCHEDULED`, sans aucun jeu au tableau (`linescores`) et sans
+   `wasSuspended` ; sinon l'etat est '' — FERME pour le tennis vendu, sans
+   effet sur l'Elo (paris.ouvert). Mesure : 13 copies des deux tableaux, prises
+   a 16:04, 16:09, 17:15 et 17:19 UTC le 11/10, 1 585 lignes « pre » (258
+   rencontres distinctes, dont 183 simples) : TOUTES sous STATUS_SCHEDULED,
+   0 linescore, 0 wasSuspended — la regle ne ferme rien de ce qu'on a vu.
+   `gagnant` : 'a' ou 'b' quand un seul joueur porte `winner: true` (a la fin),
+   sinon null. */
+function lisTennis(c, slugGroupe) {
+  if (!c || typeof c !== 'object' || !Array.isArray(c.competitors) || c.competitors.length !== 2) return null;
+  const nom = (x) => {
+    const a = x && x.athlete;
+    const n = a && (a.displayName || a.fullName);
+    return n ? String(n).trim() : '';
+  };
+  const a = nom(c.competitors[0]), b = nom(c.competitors[1]);
+  if (!a || !b || /^tbd$/i.test(a) || /^tbd$/i.test(b)) return null;
+  const st = (c.status && c.status.type) || {};
+  const jeux = jeuxJoues(c.competitors);
+  let etat = ['pre', 'in', 'post'].indexOf(st.state) >= 0 ? st.state : '';
+  if (etat === 'pre' && (st.name !== 'STATUS_SCHEDULED' || c.wasSuspended === true || jeux !== null)) etat = '';
+  const wa = c.competitors[0] && c.competitors[0].winner === true, wb = c.competitors[1] && c.competitors[1].winner === true;
+  const quand = Date.parse(c.date);
+  return { id: c.id !== undefined && c.id !== null ? String(c.id) : null,
+           simple: String((c.type && c.type.slug) || slugGroupe || ''),
+           a, b, quand: isFinite(quand) ? quand : 0, heureValide: c.timeValid === true && isFinite(quand),
+           etat, statut: String(st.name || ''), detail: String(st.shortDetail || st.detail || ''),
+           jeux, gagnant: wa && !wb ? 'a' : wb && !wa ? 'b' : null };
+}
+/* Le rang d'un etat : quand deux journees rendent la meme rencontre, la plus
+   avancee gagne (un etat inconnu passe devant « pre ») — fermer, jamais ouvrir. */
+const RANG_ETAT = { pre: 0, '': 1, in: 2, post: 3 };
+/** Les simples du circuit `tour` (atp|wta) dans une liste de tournois, une fois chacun. */
+function rencontresTennis(evs, tour) {
+  const simple = SIMPLE_DU_TOUR[tour];
+  const parCle = new Map();
+  const prend = (c, slug, tournoi) => {
+    let r = null;
+    try { r = lisTennis(c, slug); } catch (e) { r = null; }
+    if (!r || !simple || r.simple !== simple) return;
+    r.tournoi = tournoi;
+    const k = r.id !== null ? 'id:' + r.id : r.a + '|' + r.b + '|' + r.quand;
+    const deja = parCle.get(k);
+    if (!deja || RANG_ETAT[r.etat] > RANG_ETAT[deja.etat]) parCle.set(k, r);
+  };
+  for (const ev of Array.isArray(evs) ? evs : []) {
+    try {
+      const tournoi = String((ev && (ev.name || ev.shortName)) || '');
+      for (const g of Array.isArray(ev && ev.groupings) ? ev.groupings : []) {
+        const slug = g && g.grouping && g.grouping.slug;
+        for (const c of Array.isArray(g && g.competitions) ? g.competitions : []) prend(c, slug, tournoi);
+      }
+      for (const c of Array.isArray(ev && ev.competitions) ? ev.competitions : []) prend(c, null, tournoi);
+    } catch (e) { /* un tournoi illisible n'emporte que lui */ }
+  }
+  return [...parCle.values()];
+}
+
+/* ---- LE MEME JOUR ----
+ * Heure valide : a 12 h pres. Mesure du 11/10/2026 sur Wuhan le 12/10, catalogue
+ * contre ESPN : 0, 20, 40 et 40 min d'ecart ; 12 h est la tolerance de ce
+ * fichier hors football et tennis, et un programme decale de plus d'une
+ * demi-journee change de jour. Date seule (`timeValid: false`, minuit a New
+ * York du jour local) : notre heure de [-8 h ; +30 h] autour d'elle — heure
+ * locale de 10:00 a 01:00 le lendemain, decalage de UTC-7 (Indian Wells) a
+ * UTC+11 (Melbourne), minuit de New York a 04:00Z ou 05:00Z, plus 2 h pour une
+ * heure du catalogue elle-meme approximative. Wuhan, 13/10 : -2 h. Au-dela,
+ * un autre jour : jamais apparie. */
+const TENNIS_HEURE_MS = 12 * 3600000;
+const TENNIS_DATE_AVANT_MS = 8 * 3600000, TENNIS_DATE_APRES_MS = 30 * 3600000;
+function memeJourTennis(debut, r) {
+  if (!isFinite(debut) || !r || !(r.quand > 0)) return false;
+  const d = debut - r.quand;
+  return r.heureValide ? Math.abs(d) <= TENNIS_HEURE_MS
+                       : (d >= -TENNIS_DATE_AVANT_MS && d <= TENNIS_DATE_APRES_MS);
+}
+/**
+ * Une rencontre de NOTRE catalogue contre les simples du tableau : les deux
+ * joueurs, dans n'importe quel ordre, le meme jour. Un SEUL candidat, ou rien :
+ * deux candidats (homonymes, initiales qui couvrent deux joueuses), ou une
+ * rencontre qui s'apparie dans les deux sens, c'est `ambigu` — pas
+ * d'appariement. Rend null, { ambigu, n } ou { r }.
+ */
+function apparieTennis(m, rencontres) {
+  const cands = [];
+  for (const r of rencontres || []) {
+    if (!memeJourTennis(m.debut, r)) continue;
+    const droit = memeJoueur(m.domicile, r.a) && memeJoueur(m.exterieur, r.b);
+    const croise = memeJoueur(m.domicile, r.b) && memeJoueur(m.exterieur, r.a);
+    if (droit && croise) return { ambigu: true, n: cands.length + 1 };
+    if (droit || croise) cands.push(r);
+  }
+  if (!cands.length) return null;
+  if (cands.length > 1) return { ambigu: true, n: cands.length };
+  return { r: cands[0] };
+}
+
+/**
+ * LA RELEVE DU VERROU. `matchs` : les rencontres de tennis du catalogue (cle
+ * tennis_atp_* / tennis_wta_*). Pour chaque circuit, les journees utiles,
+ * chacune une requete. Rendu :
+ *   par        : Map id -> { quand (heure ESPN si elle est valide, sinon 0),
+ *                etat, heureValide, dateEspn, statut, detail, espn, tournoi,
+ *                jeux (deja joues, ou null), vainqueur ('1' notre domicile,
+ *                '2' notre exterieur, null tant que rien n'est fini) }
+ *                pour les SEULES rencontres appariees sans doute ;
+ *   rencontres : une ligne par rencontre du lot : resultat 'apparie' |
+ *                'ambigu' | 'sans' | 'panne', et pour 'sans' les rencontres
+ *                ESPN du meme jour qui partagent un joueur (`proches`, pour
+ *                relever un alias a l'oeil) ;
+ *   tours      : par circuit, { jours, requetes, refus, illisibles, statuts, dernier, lues }.
+ * ECHOUE FERME : une seule journee refusee (statut, abandon a 8 s, reponse
+ * sans `events`) et TOUT le circuit est 'panne' pour cette passe — aucun
+ * appariement : un candidat manquant ferait passer pour unique celui qui
+ * reste.
+ */
+async function releveTennisTableau(matchs, opts) {
+  const o = opts || {};
+  const par = new Map(), lignes = [], tours = {};
+  const parTour = { atp: [], wta: [] };
+  for (const m of matchs || []) {
+    const tour = tourDe(m && m.source && m.source.ligue);
+    if (!tour || !isFinite(m.debut)) continue;
+    parTour[tour].push(m);
+  }
+  for (const tour of ['atp', 'wta']) {
+    const lot = parTour[tour];
+    if (!lot.length) continue;
+    const s = { jours: joursTennis(lot.map((m) => m.debut)), requetes: 0, refus: 0, illisibles: 0, statuts: {}, dernier: null, lues: 0 };
+    tours[tour] = s;
+    const lots = await Promise.all(s.jours.map((j) =>
+      uneRequete(`${BASE}/${CHEMINS_TENNIS[tour]}/scoreboard?dates=${j}`, o.prendre, s)));
+    const lus = s.refus ? [] : rencontresTennis([].concat(...lots), tour);
+    s.lues = lus.length;
+    for (const m of lot) {
+      const l = { id: m.id, ligue: m.source.ligue, tour, debut: m.debut, dom: m.domicile, ext: m.exterieur };
+      if (s.refus) { l.resultat = 'panne'; lignes.push(l); continue; }
+      const x = apparieTennis(m, lus);
+      if (!x) {
+        l.resultat = 'sans';
+        l.proches = lus.filter((r) => memeJourTennis(m.debut, r)
+          && [r.a, r.b].some((n) => memeJoueur(m.domicile, n) || memeJoueur(m.exterieur, n)))
+          .slice(0, 3).map((r) => r.a + ' v ' + r.b);
+      } else if (x.ambigu) {
+        l.resultat = 'ambigu'; l.candidats = x.n;
+      } else {
+        const r = x.r;
+        l.resultat = 'apparie'; l.etat = r.etat; l.heureValide = r.heureValide;
+        /* le sens de l'appariement (unique : les deux sens a la fois sont `ambigu`) */
+        const droit = memeJoueur(m.domicile, r.a) && memeJoueur(m.exterieur, r.b);
+        const vainqueur = r.gagnant === 'a' ? (droit ? '1' : '2') : r.gagnant === 'b' ? (droit ? '2' : '1') : null;
+        par.set(m.id, { quand: r.heureValide ? r.quand : 0, etat: r.etat, heureValide: r.heureValide, dateEspn: r.quand,
+                        statut: r.statut, detail: r.detail, espn: r.id, tournoi: r.tournoi, dom: m.domicile, ext: m.exterieur,
+                        jeux: r.jeux, vainqueur });
+      }
+      lignes.push(l);
+    }
+  }
+  return { par, rencontres: lignes, tours };
+}
+
 /** Les rencontres FINIES, au format que `reglementAuto` attend deja. */
 async function finies(matchs, opts) {
   const vus = await releve(matchs, opts);
@@ -732,6 +1072,10 @@ async function reprise(ligues, opts) {
   return tot;
 }
 
-module.exports = { CHEMINS, ALIAS, normalise, meme, lis, faitsDe, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour,
+module.exports = { CHEMINS, ALIAS, normalise, meme, lis, faitsDe, tableau, requetes, JOURS_MAX, FOOT_REGLEMENTAIRE, refusDuJour, blocages,
                    releve, finies, reprise, americaine,
-                   releveTennis, tourDe };
+                   releveTennis, tourDe,
+                   /* le verrou d'heure reelle du tennis (11/10/2026) : le tableau public atp/wta */
+                   CHEMINS_TENNIS, SIMPLE_DU_TOUR, TENNIS_JOURS_MAX, joursTennis, normaliseJoueur, ALIAS_TENNIS, memeJoueur,
+                   jeuxJoues, lisTennis, rencontresTennis, TENNIS_HEURE_MS, TENNIS_DATE_AVANT_MS, TENNIS_DATE_APRES_MS, memeJourTennis,
+                   apparieTennis, releveTennisTableau };

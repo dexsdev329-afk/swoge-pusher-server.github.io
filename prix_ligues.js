@@ -112,8 +112,42 @@ function refusee(cle) { return REFUSEE.test(String(cle || '')); }
  * SUSPENDUES (le resultat d'avant ce lot, ou aucun livre a deux prix n'etait
  * retenu), jamais vendues au marche ni rendues a l'Elo — et c'est dit au
  * demarrage. Lever ce verrou demande du CODE (un chemin ESPN du tennis, puis
- * retirer cette regle), pas une variable. */
+ * retirer cette regle), pas une variable.
+ *
+ * ---- LE CODE EXISTE DEPUIS LE 11/10/2026 : PARIS_TENNIS_VERROU ----
+ * Le tableau public d'ESPN porte les rencontres de tennis (scores_espn,
+ * `releveTennisTableau`) et tennis_verrou.js pose leur etat et leur heure
+ * reelle au second verrou (paris.poseHeuresReelles), comme au football. Une
+ * variable, VIDE par defaut — vide, rien ne change a cette regle :
+ *   (vide)    aucune requete ; le tennis vendu reste SUSPENDU (ci-dessus) ;
+ *   observe   les tableaux atp/wta toutes les 15 min, la couverture comptee
+ *             (etatImport.tennis) ; rien n'est pose ni vendu de plus ;
+ *   actif     toutes les 60 s : fermee des qu'ESPN voit la rencontre en jeu ou
+ *             finie, et a l'heure ESPN (si elle est valide) moins 60 s — pour
+ *             TOUT le tennis, Elo compris ; et le tennis VENDU au marche
+ *             (cle tennis_atp_* / tennis_wta_* dans PARIS_PRIX_LIGUES) n'est
+ *             plus `venteImpossible`, mais reste FERME sans appariement ESPN
+ *             « pre » de moins de paris.TENNIS_APPARIEMENT_MAX_MS.
+ * Toute autre valeur est IGNOREE (= vide) et dite au demarrage. Seuls les
+ * circuits ATP et WTA ont un tableau : une autre cle tennis_* vendue reste
+ * impossible a vendre, meme verrou actif. Ne poser `actif` ET une cle tennis
+ * dans PARIS_PRIX_LIGUES qu'apres la porte d'EXPLOITATION 8.8nonies bis. */
 const SANS_VERROU_REEL = /^tennis_/;
+const TENNIS_VERROUILLABLE = /^tennis_(atp|wta)_/;
+const MODES_VERROU_TENNIS = Object.freeze(['observe', 'actif']);
+function verrouTennisBrut() {
+  const v = process.env.PARIS_TENNIS_VERROU;
+  return v === undefined || v === null ? '' : String(v).trim().toLowerCase();
+}
+/** '' (eteint, le defaut), 'observe' ou 'actif'. Une valeur inconnue vaut ''. */
+function verrouTennis() { const v = verrouTennisBrut(); return MODES_VERROU_TENNIS.indexOf(v) >= 0 ? v : ''; }
+/** La valeur ecrite et ignoree (ni vide, ni observe, ni actif), ou null. */
+function verrouTennisInvalide() { const v = verrouTennisBrut(); return v && MODES_VERROU_TENNIS.indexOf(v) < 0 ? v : null; }
+function verrouTennisActif() { return verrouTennis() === 'actif'; }
+/** Le verrou actif leve-t-il l'interdiction de cette cle ? (ATP/WTA seulement) */
+function verrouLeve(cle) { return verrouTennisActif() && TENNIS_VERROUILLABLE.test(String(cle || '')); }
+/** Tennis VENDU au marche sous verrou actif : paris.ouvert exige un appariement ESPN frais. */
+function tennisSousVerrou(cle) { return verrouLeve(cle) && vendue(cle); }
 /** L'ensemble `ens` couvre-t-il `cle` ? En clair, ou par un joker permis. */
 function couvre(ens, cle) {
   const k = String(cle || '');
@@ -128,8 +162,9 @@ function couvre(ens, cle) {
 function vendue(cle) { return couvre(ligues(), cle); }
 /** Cette cle est-elle OBSERVEE (relevee sans etre vendue) ? Jamais le cricket. */
 function observee(cle) { return !vendue(cle) && !refusee(cle) && couvre(observees(), cle); }
-/** Vendue, mais sans verrou d'heure reelle (le tennis) : jamais relevee ni notee, donc suspendue. */
-function venteImpossible(cle) { return vendue(cle) && SANS_VERROU_REEL.test(String(cle || '')); }
+/** Vendue, mais sans verrou d'heure reelle (le tennis) : jamais relevee ni notee, donc suspendue.
+    Depuis le 11/10/2026 : sauf ATP/WTA quand PARIS_TENNIS_VERROU=actif. */
+function venteImpossible(cle) { return vendue(cle) && SANS_VERROU_REEL.test(String(cle || '')) && !verrouLeve(cle); }
 /** Ce qui est ecrit dans les deux listes et ne sera jamais releve : un joker
     autre que tennis_atp_* / tennis_wta_*, une cle cricket. Dit au demarrage. */
 function refusees() {
@@ -138,7 +173,8 @@ function refusees() {
     for (const e of ens) {
       if (e.indexOf('*') >= 0 && !JOKER_PERMIS.test(e)) out.push(nom + ' ' + e + ' (joker refuse : seuls tennis_atp_* et tennis_wta_*)');
       else if (refusee(e)) out.push(nom + ' ' + e + ' (cricket refuse : ni scores The Odds API, ni issue pour le nul)');
-      else if (nom === 'PARIS_PRIX_LIGUES' && SANS_VERROU_REEL.test(e)) out.push(nom + ' ' + e + ' (tennis : aucune vente au marche sans verrou d heure reelle — ses rencontres restent SUSPENDUES)');
+      else if (nom === 'PARIS_PRIX_LIGUES' && SANS_VERROU_REEL.test(e) && !verrouLeve(e)) out.push(nom + ' ' + e + ' (tennis : aucune vente au marche sans verrou d heure reelle'
+        + (TENNIS_VERROUILLABLE.test(e) ? ' — PARIS_TENNIS_VERROU=actif le leve' : ' — seuls tennis_atp_* et tennis_wta_* ont un tableau ESPN') + ' ; ses rencontres restent SUSPENDUES)');
     }
   }
   return out;
@@ -314,6 +350,8 @@ function prolongationPossibleLigue(cle) {
 }
 
 module.exports = { LIGUES_DEFAUT, decoupe, ligues, observees, JOKER_PERMIS, couvre, vendue, observee, refusee, refusees, venteImpossible, SANS_VERROU_REEL,
+                   /* le verrou d'heure reelle du tennis (11/10/2026), vide par defaut */
+                   TENNIS_VERROUILLABLE, MODES_VERROU_TENNIS, verrouTennis, verrouTennisInvalide, verrouTennisActif, verrouLeve, tennisSousVerrou,
                    TOTAUX_PERMIS, totauxLigues, totauxObservees, totalVendu, totalObserve, totauxARelever, totauxRefusees,
                    TOTAUX_AGE_MAX_H, totauxAgeMaxH, totauxAgeMaxMs,
                    /* les coupes (lot 6, 11/10/2026) : la liste fermee, l'observation, la vente (vide), la prolongation */

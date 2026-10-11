@@ -79,6 +79,7 @@ const path = require('path');
 const paris = require('./paris');
 const cotes = require('./cotes');
 const prixMarche = require('./prix_marche');
+const prixLigues = require('./prix_ligues');   /* le verrou du tennis (11/10/2026) : la raison dite */
 
 const MIN = 60000, H = 3600000, JOUR = 86400000;
 const FOURNISSEUR = 'DraftKings';
@@ -491,7 +492,19 @@ function conclusion(s, b, st, t) {
   }
   const raisons = [];
   let bascule;
-  if (tennis) { bascule = false; raisons.push('no real-time lock for tennis: it cannot be switched'); }
+  /* Le tennis ne bascule JAMAIS par cette porte. Depuis le 11/10/2026, le verrou
+     d'heure reelle existe (PARIS_TENNIS_VERROU=actif, tennis_verrou.js) ; P4 et
+     P5 restent non mesurables gratuitement (aucun moneyline sur le tableau ESPN
+     du tennis : 0 champ `odds` sur 777 rencontres distinctes — 1 000 lignes,
+     le China Open etant sur les deux tableaux —, copies du 11/10) : la
+     porte du tennis est ecrite a part (EXPLOITATION 8.8nonies bis) et la
+     raison le dit. */
+  if (tennis) {
+    bascule = false;
+    raisons.push(prixLigues.verrouTennisActif()
+      ? 'tennis: real-time lock on (ESPN), but P4 and P5 cannot be measured for free: the tennis gate is written apart (EXPLOITATION 8.8nonies bis)'
+      : 'no real-time lock for tennis: it cannot be switched');
+  }
   else if (!P1.ok) { bascule = null; raisons.push('not enough games yet (' + b.rencontres + '/' + PORTE.P1.rencontres + ')' + (joursObs < PORTE.P1.jours ? ', ' + Math.floor(joursObs) + ' of 7 days' : '')); }
   else {
     const conds = [['P3', P3.ok], ['P4', P4.ok], ['P5', P5.ok]];

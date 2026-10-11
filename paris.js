@@ -556,6 +556,17 @@ function demandePrix(m) { if (m && m.source && m.source.ligue) DEMANDES.add(m.so
 /** Les championnats demandes depuis le dernier appel (la liste se vide). */
 function prixDemandes() { const a = [...DEMANDES]; DEMANDES.clear(); return a; }
 const GARDE_REELLE_MS = 12 * 3600000;
+/* ---- L'AGE MAXIMAL DE L'APPARIEMENT D'UN TENNIS VENDU AU MARCHE (11/10/2026) ----
+ * 150 s. La passe du tennis (tennis_verrou.CADENCE_ACTIF_MS) part toutes les
+ * 60 s et chaque requete abandonne a 8 s : 2 x 68 = 136 s tolere UNE passe
+ * ratee, jamais deux. Ce que ca laisse au pire, une fois la rencontre lancee :
+ * le retard d'ESPN a passer « in » (45 s au football, EXPLOITATION 8.12 ; au
+ * tennis, borne par la porte T3 a la resolution du tableau gratuit — un jeu,
+ * 5 min — et pas en dessous, 8.8nonies bis) plus 150 s si une passe tombe,
+ * 68 s sinon. Plus court
+ * fermerait le tennis vendu a chaque abandon isole ; plus long laisse plus de
+ * jeu au prix d'avant-match. */
+const TENNIS_APPARIEMENT_MAX_MS = 150000;
 let HEURES_REELLES = new Map();
 /** `lot` : Map id -> { quand (ms), etat ('pre'|'in'|'post') }. Fusionne. */
 function poseHeuresReelles(lot, now) {
@@ -605,6 +616,19 @@ function ouvert(m, now) {
    * ferme. */
   if (m.cotesGenerees && m.source && m.source.ligue && prixLigues.vendue(m.source.ligue)
       && (!m.prixMarche || prixLigues.venteImpossible(m.source.ligue))) return false;
+  /* ---- LE TENNIS VENDU AU MARCHE : UN APPARIEMENT ESPN FRAIS, OU FERME (11/10/2026) ----
+   * PARIS_TENNIS_VERROU=actif leve `venteImpossible` pour tennis_atp_* et
+   * tennis_wta_* : leur heure annoncee est approximative, et le seul signal
+   * « commence » est l'etat ESPN, que tennis_verrou.js pose ici toutes les 60 s.
+   * Une rencontre VENDUE au marche n'est donc ouverte que si ESPN l'a vue
+   * « pre » il y a moins de TENNIS_APPARIEMENT_MAX_MS. Sans appariement
+   * (noms, jour, ambiguite), ESPN muet ou illisible, redemarrage : FERMEE.
+   * Toute cote, fabriquee ou relevee a la main. Verrou vide ou `observe` :
+   * rien ne change ici (`tennisSousVerrou` est faux). */
+  if (m.source && m.source.ligue && prixLigues.tennisSousVerrou(m.source.ligue)) {
+    const a = HEURES_REELLES.get(m.id);
+    if (!a || a.etat !== 'pre' || !(t - (Number(a.vu) || 0) <= TENNIS_APPARIEMENT_MAX_MS)) return false;
+  }
   const r = HEURES_REELLES.get(m.id);
   if (r) {
     if (r.etat === 'in' || r.etat === 'post') return false;
@@ -734,7 +758,7 @@ function vue(m, now) {
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
   COTE_MIN, COTE_MAX, MARGE_MIN,
-  charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS,
+  charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS, TENNIS_APPARIEMENT_MAX_MS,
   aLElo, eloEngagementMax,
   AGE_PRIX_MS, prixTropVieux, demandePrix, prixDemandes, PRES_MS, FRAIS_MS,
   rapport, vue, marge, margeDe, valide,
