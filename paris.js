@@ -311,6 +311,32 @@ function probasDuMarche(p, iss) {
   return v;
 }
 
+/* ---- L'ETIQUETTE DU PLAFOND DE L'ELO AU PRIX DU MARCHE (11/10/2026) ----
+ * Posee par l'import (paris_import.plafonneAuMarche) sur une rencontre cotee
+ * a l'Elo dont au moins une issue a ete BAISSEE au prix du marche observe :
+ * de quel prix (t, ref, p) et l'Elo BRUT d'avant le plafond (elo). Elle n'est
+ * PAS `prixMarche` : la rencontre reste cotee a l'Elo (aLElo), donc ni le
+ * plafond d'engagement Elo, ni la fermeture par age du prix, ni la CLV ne
+ * changent. L'observation (prix_observe.eloDe, paris_import.ecartAuMarche)
+ * juge l'Elo BRUT qu'elle porte : sans elle, ces mesures jugeraient la cote
+ * plafonnee avec le prix meme qui l'a plafonnee (battables nulles par
+ * construction). Elle ne quitte jamais le serveur : `vue()` ne la recopie
+ * pas. Gardee seulement si chaque issue du sport a une proba dans ]0 ; 1[ et
+ * une cote Elo dans les bornes ; sinon null (l'observation lit alors la cote
+ * vendue, comme avant). */
+function plafondDuMarche(x, iss) {
+  if (!x || typeof x !== 'object') return null;
+  const p = probasDuMarche(x.p, iss);
+  if (!p || !x.elo || typeof x.elo !== 'object') return null;
+  const elo = {};
+  for (const i of iss) {
+    const c = Number(x.elo[i]);
+    if (!(isFinite(c) && c >= COTE_MIN && c <= COTE_MAX)) return null;
+    elo[i] = c;
+  }
+  return { t: String(x.t || ''), ref: String(x.ref || ''), p, elo, repli: !!x.repli };
+}
+
 function valide(brut) {
   if (!brut || !Array.isArray(brut.matchs) || !Array.isArray(brut.sports))
     throw new Error('paris : le catalogue doit porter `sports` et `matchs`');
@@ -375,6 +401,9 @@ function valide(brut) {
     if (!marches[MARCHE_BASE])
       throw new Error(`paris : « ${id} » n a pas de marche « ${MARCHE_BASE} »`);
     const mg = marches[MARCHE_BASE].marge;
+    /* l'etiquette n'a de sens que sur une cote fabriquee sans prix du marche
+       (aLElo) ; ailleurs elle est jetee */
+    const plafond = (m.plafondMarche && m.cotesGenerees && !m.prixMarche) ? plafondDuMarche(m.plafondMarche, issues(m.sport)) : null;
 
     return {
       id, sport: String(m.sport),
@@ -450,6 +479,11 @@ function valide(brut) {
         ligne: isFinite(Number(m.butsMarche.ligne)) && m.butsMarche.ligne !== null ? Number(m.butsMarche.ligne) : null,
         grille: Number(m.butsMarche.grille) > 0 && isFinite(Number(m.butsMarche.grille)) ? Number(m.butsMarche.grille) : null,
       } : null,
+      /* Le plafond de l'Elo au prix du marche (11/10/2026), voir
+         `plafondDuMarche`. La cle n'existe que si l'etiquette est valide :
+         sans plafond (la variable vide, le defaut), la rencontre validee est
+         exactement celle d'avant. */
+      ...(plafond ? { plafondMarche: plafond } : {}),
     };
   });
 
@@ -485,13 +519,31 @@ function fichier() {
   return FICHIER_DEPOT;
 }
 
-let CAT = null;
+/* ---- UN CATALOGUE RECHARGE QUI A CHANGE SE DIT (11/10/2026) ----
+ * Le serveur vend la cote du catalogue EN MEMOIRE au moment du pari ; la page
+ * ne redemandait `parisListe` qu'a la connexion. Apres un import qui change
+ * une cote (retarif, et surtout le plafond de l'Elo au prix du marche :
+ * Siniakova 3,51 -> 1,95), une page ouverte montrait l'ancienne cote et le
+ * ticket portait la nouvelle — relecture du 11/10. `surChange` laisse le
+ * serveur repousser la liste aux pages qui la montrent. On ne previent que si
+ * le TEXTE du fichier a change (la passe des scores recharge sans rien
+ * changer : aucun bruit), jamais au premier chargement, et un ecouteur qui
+ * leve ne casse ni le rechargement ni les autres ecouteurs. Sans ecouteur
+ * (tous les essais hors serveur), rien ne change. */
+let CAT = null, TEXTE_CAT = null;
+const ECOUTEURS_CAT = [];
 function charge(f0) {
   const f = f0 || fichier();
-  CAT = valide(JSON.parse(fs.readFileSync(f, 'utf8')));
+  const texte = fs.readFileSync(f, 'utf8');
+  CAT = valide(JSON.parse(texte));
+  const change = TEXTE_CAT !== null && texte !== TEXTE_CAT;
+  TEXTE_CAT = texte;
+  if (change) for (const fn of ECOUTEURS_CAT) { try { fn(CAT); } catch (e) { /* jamais bloquant */ } }
   return CAT;
 }
 function catalogue() { return CAT || charge(); }
+/** Appeler `fn(catalogue)` apres chaque rechargement dont le fichier a change. */
+function surChange(fn) { if (typeof fn === 'function') ECOUTEURS_CAT.push(fn); }
 
 /** Un match par son identifiant, ou null. */
 function match(id) { return catalogue().parId.get(String(id)) || null; }
@@ -758,7 +810,7 @@ function vue(m, now) {
 module.exports = {
   ISSUES, ISSUES_PAR_SPORT, SPORTS_EQUIPE, SPORTS, sportConnu, issues,
   COTE_MIN, COTE_MAX, MARGE_MIN,
-  charge, catalogue, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS, TENNIS_APPARIEMENT_MAX_MS,
+  charge, catalogue, surChange, match, ouverts, ouvert, poseHeuresReelles, AVANCE_REELLE_MS, TENNIS_APPARIEMENT_MAX_MS,
   aLElo, eloEngagementMax,
   AGE_PRIX_MS, prixTropVieux, demandePrix, prixDemandes, PRES_MS, FRAIS_MS,
   rapport, vue, marge, margeDe, valide,

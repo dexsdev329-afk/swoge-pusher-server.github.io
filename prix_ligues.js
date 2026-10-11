@@ -180,6 +180,61 @@ function refusees() {
   return out;
 }
 
+/* ---- LE PLAFOND DE L'ELO AU PRIX DU MARCHE OBSERVE (11/10/2026) ----
+ * Demande du proprietaire (11/10, ~19 h UTC) : « baisse les cotes pour le
+ * tennis en attendant les resultats » — en attendant que la vente au marche
+ * passe sa porte (verrou d'heure reelle, EXPLOITATION 8.8nonies bis).
+ * Mesure (journal du 11/10, lignes « [odds] observe tennis_* » ecrites par
+ * l'observation, 0 credit de plus) : 06:47 UTC, WTA Wuhan 10 rencontres, 7
+ * issues battables sur 20, esperance moyenne +18,0 %, pire Siniakova v
+ * Samsonova issue 1 a 3,51 contre 46,2 % au marche (+62,1 %) ; China Open
+ * Zheng v Andreeva 3,32 contre 38,1 % (+26,6 %) ; Shanghai 0/4. 18:55 UTC :
+ * Wuhan 7/20, +12,1 %, Siniakova 3,51 contre 47,3 % (+66 %) ; Shanghai 1/4,
+ * de Minaur v Khachanov 1,93 contre 56,8 % (+9,7 %). Environ 13 rencontres
+ * distinctes, et la ligne [obs] dit « aucune conclusion sous 40 » : la regle
+ * ne se justifie PAS par une conclusion statistique, mais parce qu'elle ne
+ * peut que BAISSER une cote (aucun risque ajoute a aujourd'hui).
+ * Ce n'est pas une marge plus haute : l'erreur est celle de l'Elo sur UN
+ * joueur (3,51 la ou le marche dit 46 %), une marge uniforme ne la corrige pas.
+ * La regle (paris_import.plafonneAuMarche) : chaque issue d'une rencontre
+ * cotee a l'Elo = min(cote Elo, cote que le chemin du marche produirait sur
+ * le prix OBSERVE de cette meme rencontre).
+ * PARIS_ELO_PLAFOND_MARCHE : meme syntaxe que PARIS_PRIX_LIGUES (virgule,
+ * point-virgule, espaces ; jokers tennis_atp_* et tennis_wta_* seulement),
+ * VIDE par defaut — rien ne change. Une cle n'est plafonnee que si elle est
+ * OBSERVEE (`observee` : dans PARIS_PRIX_OBSERVE, ni vendue, ni cricket, ni
+ * coupe) : le plafond lit le prix que l'observation a DEJA paye, il ne
+ * declenche jamais une requete. Toute autre cle ne plafonne rien et se dit au
+ * demarrage (`plafondsEloRefuses`). Le sport (deux issues, le seul marche
+ * 1n2) est verifie a l'import, ou il est connu. */
+/** Les cles ecrites dans PARIS_ELO_PLAFOND_MARCHE (vide par defaut). Ne pas modifier l'ensemble rendu. */
+function plafondsElo() { return lue('PARIS_ELO_PLAFOND_MARCHE', []); }
+/** Les cotes Elo de cette cle sont-elles plafonnees au prix du marche observe ? */
+function plafondElo(cle) { return couvre(plafondsElo(), cle) && observee(cle); }
+/* Un motif (cle en clair ou joker permis) est-il couvert par un ensemble ?
+   Pour un joker : le meme joker, ou une cle en clair de son circuit. */
+function couvreMotif(ens, e) {
+  if (!JOKER_PERMIS.test(e)) return couvre(ens, e);
+  if (ens.has(e)) return true;
+  const pre = e.slice(0, -1);
+  for (const k of ens) if (k.indexOf('*') < 0 && k.startsWith(pre) && !/_winner$/.test(k)) return true;
+  return false;
+}
+/** Ce qui est ecrit dans PARIS_ELO_PLAFOND_MARCHE et ne plafonnera rien, avec la raison. Dit au demarrage. */
+function plafondsEloRefuses() {
+  const out = [];
+  const nom = 'PARIS_ELO_PLAFOND_MARCHE';
+  for (const e of plafondsElo()) {
+    if (e.indexOf('*') >= 0 && !JOKER_PERMIS.test(e)) out.push(nom + ' ' + e + ' (joker refuse : seuls tennis_atp_* et tennis_wta_*)');
+    else if (refusee(e)) out.push(nom + ' ' + e + ' (cricket refuse : jamais observe)');
+    else if (estCoupe(e)) out.push(nom + ' ' + e + ' (coupe : jamais au catalogue, jamais a l Elo)');
+    else if (/_winner$/.test(e)) out.push(nom + ' ' + e + ' (classement : aucune rencontre)');
+    else if (couvreMotif(ligues(), e)) out.push(nom + ' ' + e + ' (vendue au prix du marche, PARIS_PRIX_LIGUES : jamais a l Elo, aucun plafond)');
+    else if (!couvreMotif(observees(), e)) out.push(nom + ' ' + e + ' (non observee, absente de PARIS_PRIX_OBSERVE : aucun prix, aucun plafond, jamais une requete)');
+  }
+  return out;
+}
+
 /* ---- LE PLUS/MOINS 2,5 AU PRIX DES TOTAUX DU MARCHE (lot 5, 10/10/2026) ----
  * Deux listes de plus, sur le meme decoupage et le meme memo, VIDES par
  * defaut : un deploiement ne releve rien, ne paie rien, ne change rien de ce
@@ -352,6 +407,8 @@ function prolongationPossibleLigue(cle) {
 module.exports = { LIGUES_DEFAUT, decoupe, ligues, observees, JOKER_PERMIS, couvre, vendue, observee, refusee, refusees, venteImpossible, SANS_VERROU_REEL,
                    /* le verrou d'heure reelle du tennis (11/10/2026), vide par defaut */
                    TENNIS_VERROUILLABLE, MODES_VERROU_TENNIS, verrouTennis, verrouTennisInvalide, verrouTennisActif, verrouLeve, tennisSousVerrou,
+                   /* le plafond de l'Elo au prix du marche observe (11/10/2026), vide par defaut */
+                   plafondsElo, plafondElo, plafondsEloRefuses,
                    TOTAUX_PERMIS, totauxLigues, totauxObservees, totalVendu, totalObserve, totauxARelever, totauxRefusees,
                    TOTAUX_AGE_MAX_H, totauxAgeMaxH, totauxAgeMaxMs,
                    /* les coupes (lot 6, 11/10/2026) : la liste fermee, l'observation, la vente (vide), la prolongation */

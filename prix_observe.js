@@ -178,7 +178,16 @@ const pct = (x) => (x === null || x === undefined ? null : Math.round(x * 10000)
 /** Nos cotes Elo d'une rencontre (1-N-2 de base), si elle est cotee a l'Elo. */
 function eloDe(m) {
   if (!paris.aLElo(m)) return null;
-  const c = (m.marches && m.marches[paris.MARCHE_BASE] && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
+  /* ---- L'ELO BRUT, MEME PLAFONNE AU MARCHE (11/10/2026) ----
+   * Une rencontre plafonnee (PARIS_ELO_PLAFOND_MARCHE, paris_import.
+   * plafonneAuMarche) vend min(Elo, cote du marche) ; jugee ici, sa cote
+   * vendue donnerait des issues battables nulles par construction, et P1/P2
+   * mesureraient le plafond, pas l'Elo. L'etiquette `plafondMarche.elo`
+   * (validee par paris.valide) porte l'Elo d'avant le plafond : c'est lui
+   * qu'on note, exactement comme avant le plafond. Sans etiquette (variable
+   * vide, le defaut), rien ne change. */
+  const brut = m.plafondMarche && m.plafondMarche.elo;
+  const c = brut || (m.marches && m.marches[paris.MARCHE_BASE] && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
   if (!c || !(Number(c[1]) > 1 && Number(c[2]) > 1)) return null;
   return { 1: Number(c[1]), 2: Number(c[2]) };
 }

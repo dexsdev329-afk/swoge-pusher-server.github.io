@@ -409,6 +409,19 @@ function pour(evenement, now) {
   /* une COPIE : la lecture est partagee entre toutes les rencontres */
   return (now || Date.now()) - e.t <= AGE_MAX_MS ? Object.assign({}, e, { p: Object.assign({}, e.p) }) : null;
 }
+/* ---- LE DERNIER PRIX NOTE, SANS PORTE D'AGE (plafond de l'Elo, 11/10/2026) ----
+ * Le plafond de l'Elo au prix du marche observe (paris_import.plafonneAuMarche)
+ * ne VEND pas ce prix : il ne fait que BAISSER une cote Elo. Un prix vieux ne
+ * peut donc que baisser une cote par rapport a aujourd'hui (l'Elo seul) :
+ * aucune porte d'age n'est inventee ici — `pour` coupe a 36 h parce qu'il
+ * VEND le prix, et trois refus de classe 3 de suite (journee chargee)
+ * leveraient alors le plafond. Le carnet borne deja l'age (purge a 10 jours,
+ * effacement quand le marche est retire, `note`). L'appelant garde l'age
+ * (`t`) et le montre. Une COPIE, comme `pour`. */
+function dernierPrix(evenement) {
+  const e = luPourVendre().evenements[String(evenement || '')];
+  return e ? Object.assign({}, e, { p: Object.assign({}, e.p) }) : null;
+}
 /** Quand ce championnat a ete releve pour la derniere fois (0 si jamais) —
     la date ecrite, ou celle gardee en memoire si l'ecriture a echoue. */
 function derniere(ligue) {
@@ -421,4 +434,6 @@ module.exports = { LIGUES_DEFAUT, ligues, observees, aRelever, releveMs, AGE_MAX
                    apresNote, lotDuLivre, sansMarge, BOURSE,
                    /* les deux issues (lot 3, 10/10/2026) : la liste vendue / observee avec le joker du tennis, la cadence
                       d'une cle observee, et les issues d'une cle (la meme regle pour le carnet, la releve et le journal) */
-                   vendue, observee, refusee, venteImpossible, observeMs, cadenceDe, issuesDe, ISSUES };
+                   vendue, observee, refusee, venteImpossible, observeMs, cadenceDe, issuesDe, ISSUES,
+                   /* le plafond de l'Elo (11/10/2026) : le dernier prix note, sans porte d'age */
+                   dernierPrix };

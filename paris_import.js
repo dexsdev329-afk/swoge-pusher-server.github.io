@@ -701,6 +701,11 @@ function etatImport() {
     observation: (() => { try { return prixObserve.bilan(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     /* Le plafond d'engagement des rencontres cotees a l'Elo (vide = rien ne change). */
     eloEngagement: paris.eloEngagementMax(),
+    /* Le plafond de l'Elo au prix du marche observe (11/10/2026) : la
+       variable, ce qu'elle ignore, et par cle au dernier import ecrit les
+       rencontres plafonnees, les issues baissees, les sans prix, l'ecart
+       moyen, l'age du prix, l'Elo brut battable (vide = rien ne change). */
+    eloPlafondMarche: (() => { try { return etatPlafondElo(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     /* Le journal des releves payees (lot 1, 10/10/2026) : fichiers, octets,
        lignes par cause LUES SUR LE DISQUE, echecs, illisibles. Aucun verdict :
        la mesure se fait hors serveur (outils/age_prix.js). */
@@ -1057,6 +1062,9 @@ async function importeMatchs() {
      et de perdre tout l'import pour un match. Un seul Alcaraz contre un
      qualifie suffirait sinon a vider le calendrier. */
   const habilles = [], ecartes = [];
+  /* le plafond de l'Elo au prix du marche observe (11/10/2026), par cle :
+     vide tant que PARIS_ELO_PLAFOND_MARCHE l'est */
+  const statsPlafond = {};
   for (const m of [...vus.values()].sort((a, b) => Date.parse(a.debut) - Date.parse(b.debut))) {
     let h;
     try { h = cotes.habille(avecButs(avecPrix(m))); }
@@ -1075,6 +1083,10 @@ async function importeMatchs() {
       }
       ecartes.push(`${m.domicile} – ${m.exterieur} : ${e.message.split('— ')[1] || e.message}`); continue;
     }
+    /* HORS du try de `habille` : le plafond ne leve jamais, et une erreur du
+       plafond ne doit jamais ecarter une rencontre (elle sortirait du
+       catalogue avec ses paris) — l'Elo de cet import est garde, compte */
+    h = plafonneAuMarche(h, Date.now(), statsPlafond);
     habilles.push({ id: h.id, sport: h.sport, competition: h.competition, pays: h.pays,
                     domicile: h.domicile, exterieur: h.exterieur,
                     paysDomicile: h.paysDomicile || null, paysExterieur: h.paysExterieur || null,
@@ -1091,6 +1103,9 @@ async function importeMatchs() {
                     /* lot 5 : le total du marche des totaux, seulement s'il a fait le prix
                        (cotes.avecTotalServi ; jamais pose par defaut) */
                     butsMarche: h.butsMarche || undefined,
+                    /* le plafond de l'Elo au prix du marche (11/10/2026) : de quel prix,
+                       et l'Elo brut pour l'observation ; seulement si une issue a baisse */
+                    plafondMarche: h.plafondMarche || undefined,
                     suspendu: h.suspendu || undefined, suspenduRaison: h.suspendu ? h.suspenduRaison : undefined });
   }
   if (ecartes.length) {
@@ -1218,7 +1233,10 @@ async function importeMatchs() {
              refaite, ou devenue incotable, ne le porte pas */
           g = sansButs(mp);
           if (mp.cotesGenerees) {
-            try { g = cotes.habille(mp); }
+            /* le plafond (11/10/2026) ne se pose que sur l'Elo que `habille`
+               vient de refaire : jamais sur une cote gardee telle quelle */
+            let refaite = false;
+            try { g = cotes.habille(mp); refaite = true; }
             catch (e) {
               /* devenue incotable : on la garde telle quelle plutot que de la
                  faire disparaitre avec ses paris — mais SUSPENDUE si elle est
@@ -1226,6 +1244,7 @@ async function importeMatchs() {
               if (mp.prixMarche) g = Object.assign({}, g, { prixMarche: undefined, suspendu: true,
                 suspenduRaison: 'trop desequilibre au prix du marche' });
             }
+            if (refaite) g = plafonneAuMarche(g, Date.now(), statsPlafond);
           }
           /* ---- UNE COUPE NON VENDUE DEJA AU CATALOGUE EST SUSPENDUE (lot 6) ----
            * L'import n'en fait plus entrer aucune (plus haut), mais une
@@ -1286,6 +1305,24 @@ async function importeMatchs() {
   try { fs.mkdirSync(path.dirname(FICHIER_CAT), { recursive: true }); } catch (e) {}
   fs.writeFileSync(FICHIER_CAT, JSON.stringify(catalogue, null, 1) + '\n');
   console.log(`[odds] catalogue ecrit : ${habilles.length} rencontre(s), 0 credit depense`);
+  /* Le plafond de l'Elo au prix du marche (11/10/2026) : une ligne par cle
+     plafonnee, a chaque import ECRIT — sa propre ligne d'audit, l'Elo brut
+     compris (la mesure qui a fonde la regle ne disparait pas du journal).
+     Rien tant que PARIS_ELO_PLAFOND_MARCHE est vide. */
+  {
+    const parLigue = {};
+    for (const [l, S] of Object.entries(statsPlafond)) {
+      parLigue[l] = resumePlafond(S);
+      console.log(`[odds] plafond Elo au marche ${l} : ${JSON.stringify(parLigue[l])}`);
+    }
+    PLAFOND_ELO = { t: new Date().toISOString(), parLigue };
+    /* une cle en clair prise sans aucune rencontre a venir : mal ecrite, ou
+       tournoi fini — dit a chaque import ecrit, jamais bloquant */
+    try {
+      const sr = plafondsEloSansRencontre(plafondsEloIgnores());
+      if (sr.length) console.log(`[odds] plafond Elo au marche : aucune rencontre a venir pour ${sr.join(', ')} (cle mal ecrite, ou tournoi fini : rien n est plafonne)`);
+    } catch (e) { /* jamais bloquant */ }
+  }
   /* Les suspensions se DISENT : par championnat, et fort quand il l'est en
      entier — la page n'affiche que l'ouvert, la Premier League disparaitrait
      sans un mot. */
@@ -1896,6 +1933,228 @@ function avecPrix(m, now) {
     prixMarche: { ref: r.ref, t: new Date(r.t).toISOString(), livres: r.livres, p: r.p } });
 }
 
+/* ============ LE PLAFOND DE L'ELO AU PRIX DU MARCHE OBSERVE (11/10/2026) ============
+ *
+ * ---- pourquoi ----
+ * Demande du proprietaire (11/10/2026, ~19 h UTC) : « baisse les cotes pour le
+ * tennis en attendant les resultats ». Le tennis reste vendu a l'Elo tant que
+ * sa vente au marche n'a pas passe sa porte (EXPLOITATION 8.8nonies bis), et
+ * cet Elo est trop genereux sur certains joueurs. Mesure (journal du 11/10,
+ * lignes « [odds] observe tennis_* » de l'observation, PARIS_PRIX_OBSERVE) :
+ *   06:47 UTC  WTA Wuhan, 10 rencontres (10 avec prix) : 7 issues battables
+ *              sur 20, esperance moyenne +18,0 %, pire Siniakova v Samsonova
+ *              issue 1 a 3,51 contre 46,2 % au marche (+62,1 %) ; China Open,
+ *              Zheng v Andreeva issue 1 a 3,32 contre 38,1 % (+26,6 %) ;
+ *              ATP Shanghai, 2 rencontres, 0/4, -3,8 %.
+ *   18:55 UTC  Wuhan 7/20, +12,1 %, Siniakova 3,51 contre 47,3 % (+66 %) ;
+ *              Shanghai 1/4, +3,0 %, de Minaur v Khachanov 1,93 contre
+ *              56,8 % (+9,7 %). Ligne [obs] tennis : 3 rencontres jugees,
+ *              « aucune conclusion sous 40 rencontres ».
+ * Environ 13 rencontres distinctes : un echantillon petit, mais des ecarts
+ * d'un facteur deux sur une issue. La regle se justifie parce qu'elle ne peut
+ * que BAISSER une cote (aucun risque ajoute a aujourd'hui), pas par une
+ * conclusion statistique. Calcule avec ce code sur ces prix (11/10) : Siniakova
+ * 3,51 -> 1,95 puis 1,91, Zheng 3,32 -> 2,29, de Minaur 1,93 -> 1,63 :
+ * esperance du parieur -7 a -13 % au lieu de +10 a +66 %.
+ *
+ * ---- la regle ----
+ * Pour une rencontre COTEE A L'ELO (paris.aLElo), a venir, ni suspendue ni
+ * fermee, d'une cle couverte par PARIS_ELO_PLAFOND_MARCHE ET observee
+ * (prix_ligues.plafondElo), d'un sport a deux issues dont le seul marche est
+ * le 1n2 (au football, plafonner le 1-N-2 en laissant dc, ou25, score a
+ * l'Elo ouvrirait un arbitrage entre marches de la meme rencontre) : chaque
+ * issue = min(cote Elo, cote que le chemin du marche produirait sur le prix
+ * OBSERVE de cette meme rencontre). Le chemin du marche, c'est
+ * `cotes.marchesDuMarche` — la fonction meme du chemin vendu, sans marge
+ * passee (MARGE_DEFAUT 10 % par l'exposant, puis le rabot MARGE_ISSUE_MIN
+ * 6 % par issue), comme l'import l'appelle. Au-dela d'environ 96,2 % de
+ * proba (premier null mesure a 0,962), elle rend null : repli sur
+ * `cotes.raboteIssues` (6 % par issue, plancher COTE_PLANCHER 1,03) — du code
+ * et une marge existants, rien d'invente. Un MIN, jamais un remplacement :
+ * l'autre issue ne MONTE jamais a la cote du marche.
+ *
+ * ---- ce qu'elle ne touche pas ----
+ * `prixMarche` n'est JAMAIS pose : la rencontre reste aLElo, donc
+ * PARIS_ELO_ENGAGEMENT_MAX (game.plafondEngagement), la fermeture par age du
+ * prix (paris.prixTropVieux), la CLV (clv.aLaVente) et la porte de vente ne
+ * changent pas. Ni rencontre commencee, ni cote relevee a la main, ni
+ * rencontre au prix du marche, ni autre cle, ni autre sport. Aucune requete :
+ * le prix est celui que l'observation a deja paye (prix_marche.dernierPrix,
+ * sans porte d'age — un prix vieux ne peut que baisser une cote ; son age est
+ * compte et montre).
+ *
+ * ---- l'appariement ----
+ * Par l'identifiant d'evenement du fournisseur (m.source.evenement, la cle du
+ * carnet), puis, PLUS strictement que la mesure : r.dom ET r.ext non vides,
+ * egaux a domicile / exterieur du catalogue, et de la meme cle. Un carnet sans
+ * equipes (entree ancienne), inverse ou d'une autre rencontre : pas de
+ * plafond, et c'est compte. Jamais d'appariement par noms approches.
+ *
+ * ---- la source unique ----
+ * La cote plafonnee est ECRITE au catalogue, avant paris.valide : la page
+ * (paris.vue) et la vente (game.parieCombine -> paris.coteDe) lisent la meme
+ * entree, et un pari pris garde sa cote (fige dans la jambe). L'Elo brut reste
+ * sur l'entree (`plafondMarche.elo`) pour l'observation, jamais chez le
+ * joueur. Elle repart TOUJOURS de l'Elo que `habille` vient de refaire :
+ * l'etiquette d'un import precedent est effacee, un plafond ne se cumule
+ * jamais. Elle ne leve jamais : sur une erreur, l'Elo de cet import, compte. */
+let PLAFOND_ELO = { t: null, parLigue: {} };
+function nouveauPlafond() {
+  return { rencontres: 0, elo: 0, plafonnees: 0, issues: 0, deuxIssues: 0, sansPrix: 0, sansEquipes: 0, inverse: 0, autre: 0,
+           invalide: 0, sportExclu: 0, repli: 0, erreurs: 0, direct: 0, issuesJugees: 0, eloBattables: 0, venduesBattables: 0,
+           ecarts: [], ages: [], marges: [] };
+}
+function plafonne(h, t, S) {
+  const ligue = h.source && h.source.ligue;
+  /* commencee : jamais touchee (ses paris sont poses a la cote affichee) */
+  if (!(Date.parse(h.debut) > t)) return h;
+  S.rencontres++;
+  if (!paris.aLElo(h) || h.suspendu || isFinite(Date.parse(h.ferme))) return h;
+  const iss = paris.sportConnu(h.sport) ? paris.issues(h.sport) : null;
+  const mk = paris.marchesDuSport(h.sport);
+  if (!iss || iss.length !== 2 || mk.length !== 1 || mk[0] !== paris.MARCHE_BASE) { S.sportExclu++; return h; }
+  const lot = h.marches && h.marches[paris.MARCHE_BASE] && h.marches[paris.MARCHE_BASE].cotes;
+  if (!lot || !iss.every((i) => Number(lot[i]) >= paris.COTE_MIN && Number(lot[i]) <= paris.COTE_MAX)) { S.invalide++; return h; }
+  S.elo++;
+  const r = prixMarche.dernierPrix(h.source.evenement);
+  if (!r) { S.sansPrix++; return h; }
+  if (!r.dom || !r.ext) { S.sansEquipes++; return h; }
+  if (r.dom === h.exterieur && r.ext === h.domicile) { S.inverse++; return h; }
+  if (r.dom !== h.domicile || r.ext !== h.exterieur || (r.ligue && r.ligue !== ligue)) { S.autre++; return h; }
+  const p = r.p || {};
+  if (p.N !== undefined || !iss.every((i) => Number(p[i]) > 0 && Number(p[i]) < 1)) { S.invalide++; return h; }
+  /* l'heure du prix : un nombre qui fait une date (comme `pour`, qui coupe sur
+     e.t) — sinon ni age ni etiquette, et rien n'est compte « plafonnee » alors
+     que l'Elo est vendu (relecture du 11/10 : t = chaine ISO comptait
+     plafonnees 1 ET erreurs 1, Elo vendu) */
+  const tp = Number(r.t);
+  if (!(isFinite(tp) && tp > 0 && isFinite(new Date(tp).getTime()))) { S.invalide++; return h; }
+  const q = {}, elo = {};
+  for (const i of iss) { q[i] = Number(p[i]); elo[i] = Number(lot[i]); }
+  const mm = cotes.marchesDuMarche(h.sport, q, undefined, ligue);
+  let cap = mm && mm[paris.MARCHE_BASE] && mm[paris.MARCHE_BASE].cotes;
+  const repli = !cap;
+  if (repli) cap = cotes.raboteIssues(elo, q, iss);
+  const sortie = {};
+  let baisses = 0;
+  for (const i of iss) {
+    let v = Math.min(elo[i], Number(cap[i]));
+    /* la sortie se controle : un nombre fini, dans les bornes, jamais au-dessus de l'Elo */
+    if (!(isFinite(v) && v >= paris.COTE_MIN && v <= elo[i])) v = elo[i];
+    sortie[i] = v;
+    if (v < elo[i]) baisses++;
+  }
+  /* baisser une cote ne fait que monter la marge : ceci ne devrait jamais
+     arriver, mais un catalogue refuse arreterait TOUS les imports */
+  if (!(paris.margeDe(sortie, iss, 1) >= paris.MARGE_MIN)) throw new Error('marge du lot plafonne sous MARGE_MIN');
+  /* la rencontre rendue est construite AVANT tout compte : ce qui leverait ici
+     (l'etiquette) part au catch de l'appelant sans qu'aucun compteur ne dise
+     « plafonnee » pour un Elo vendu */
+  const base = h.marches[paris.MARCHE_BASE];
+  const rendue = !baisses ? h : Object.assign({}, h, {
+    marches: Object.assign({}, h.marches, { [paris.MARCHE_BASE]: Object.assign({}, base, { cotes: Object.assign({}, base.cotes, sortie) }) }),
+    plafondMarche: { t: new Date(tp).toISOString(), ref: String(r.ref || ''), p: q, elo, repli: repli || undefined },
+  });
+  /* la mesure, avec son echantillon : l'age du prix, l'Elo brut et la cote vendue
+     contre ce meme prix (le reste battable apres plafond : les extremes) */
+  S.ages.push(Math.max(0, t - tp));
+  if (Number(r.debut) > 0 && tp >= Number(r.debut)) S.direct++;
+  S.issuesJugees += iss.length;
+  for (const i of iss) { if (elo[i] * q[i] > 1) S.eloBattables++; if (sortie[i] * q[i] > 1) S.venduesBattables++; }
+  if (repli) S.repli++;
+  if (!baisses) return h;
+  S.plafonnees++; S.issues += baisses;
+  if (baisses === iss.length) S.deuxIssues++;
+  for (const i of iss) if (sortie[i] < elo[i]) S.ecarts.push((elo[i] - sortie[i]) / elo[i]);
+  S.marges.push(paris.margeDe(sortie, iss, 1));
+  return rendue;
+}
+/** Plafonner une rencontre que `habille` vient de coter. Ne leve jamais ; rend
+    l'objet recu (meme identite) quand rien ne change. `stats` : par cle. */
+function plafonneAuMarche(h, now, stats) {
+  if (!h || typeof h !== 'object') return h;
+  /* commencee : rien ne bouge, ni la cote ni son etiquette (ses paris sont
+     poses a la cote affichee, et l'observation garde l'Elo brut qui allait avec) */
+  try { if (!(Date.parse(h.debut) > (Number(now) || Date.now()))) return h; } catch (e) { return h; }
+  let base = h;
+  /* l'etiquette d'un import precedent ne survit jamais a des cotes refaites */
+  if (h.plafondMarche !== undefined) { base = Object.assign({}, h); delete base.plafondMarche; }
+  let ligue = null;
+  try {
+    ligue = base.source && base.source.ligue;
+    if (!ligue || !prixLigues.plafondElo(ligue)) return base;
+  } catch (e) { return base; }
+  const S = stats ? (stats[ligue] || (stats[ligue] = nouveauPlafond())) : nouveauPlafond();
+  try { return plafonne(base, Number(now) || Date.now(), S); }
+  catch (e) {
+    S.erreurs++;
+    console.log('[odds] plafond Elo au marche ' + ligue + ' : ' + (base.domicile || '?') + ' v ' + (base.exterieur || '?') + ' — Elo garde (' + (e.message || e) + ')');
+    return base;
+  }
+}
+/* Le resume d'une cle, avec ses echantillons : rien ne se conclut sans n. */
+function resumePlafond(S) {
+  const med = (v) => { if (!v.length) return null; const s = v.slice().sort((a, b) => a - b), k = Math.floor(s.length / 2); return s.length % 2 ? s[k] : (s[k - 1] + s[k]) / 2; };
+  const r3 = (x) => (x === null || !isFinite(x) ? null : Math.round(x * 1000) / 1000);
+  const h1 = (ms) => (ms === null ? null : Math.round(ms / 360000) / 10);
+  const out = {};
+  for (const k of ['rencontres', 'elo', 'plafonnees', 'issues', 'deuxIssues', 'sansPrix', 'sansEquipes', 'inverse', 'autre', 'invalide', 'sportExclu', 'repli', 'erreurs', 'direct']) out[k] = S[k];
+  out.ecartMoyen = S.ecarts.length ? r3(S.ecarts.reduce((a, b) => a + b, 0) / S.ecarts.length) : null;
+  out.ageMedianH = h1(med(S.ages)); out.ageMaxH = S.ages.length ? h1(Math.max(...S.ages)) : null;
+  out.margeMediane = r3(med(S.marges)); out.margeMax = S.marges.length ? r3(Math.max(...S.marges)) : null;
+  /* contre le MEME prix : l'Elo brut (la mesure qui a fonde la regle) et ce
+     qui reste battable apres le plafond (les extremes, au plancher 1,03) */
+  out.eloBrut = { battables: S.eloBattables, issues: S.issuesJugees };
+  out.vendue = { battables: S.venduesBattables, issues: S.issuesJugees };
+  return out;
+}
+/* ---- CE QUE LA VARIABLE IGNORE : UNE SEULE LISTE (relecture du 11/10) ----
+ * Les refus de prix_ligues (non observee, vendue, cricket, coupe, joker,
+ * `_winner`) et, pour une cle en clair, son sport (inconnu, ou plusieurs
+ * marches : le football). La ligne de demarrage ET /paris/import lisent
+ * celle-ci : avant, une cle de football n'etait dite ignoree qu'au demarrage. */
+function plafondsEloIgnores() {
+  const ign = prixLigues.plafondsEloRefuses();
+  for (const e of prixLigues.plafondsElo()) {
+    if (e.indexOf('*') >= 0 || ign.some((x) => x.indexOf(' ' + e + ' ') >= 0)) continue;
+    const s = sportDeLaCle(e);
+    if (!s || !paris.sportConnu(s)) ign.push('PARIS_ELO_PLAFOND_MARCHE ' + e + ' (sport inconnu : jamais plafonnee)');
+    else if (paris.issues(s).length !== 2 || paris.marchesDuSport(s).length !== 1) ign.push('PARIS_ELO_PLAFOND_MARCHE ' + e + ' (' + s + ' : plusieurs marches, jamais plafonnee)');
+  }
+  return ign;
+}
+/* Les cles prises (ni ignorees, ni jokers) : celles qui DOIVENT apparaitre au
+   compte d'un import. */
+function plafondsEloPrisEnClair(ign) {
+  return [...prixLigues.plafondsElo()].filter((e) => e.indexOf('*') < 0 && !ign.some((x) => x.indexOf(' ' + e + ' ') >= 0));
+}
+/* ---- UNE CLE EN CLAIR SANS AUCUNE RENCONTRE SE DIT (relecture du 11/10) ----
+ * Une cle mal ecrite mais couverte par le joker de PARIS_PRIX_OBSERVE
+ * (tennis_atp_shanghai pour tennis_atp_shanghai_masters) passe toutes les
+ * portes du demarrage — qui ne connait pas les tournois sans requete — et ne
+ * plafonnerait jamais rien sans un mot. Apres un import ecrit, une cle en
+ * clair prise qui n'a donne AUCUNE rencontre a venir est dite : mal ecrite,
+ * ou tournoi fini. */
+function plafondsEloSansRencontre(ign) {
+  if (!PLAFOND_ELO.t) return [];
+  return plafondsEloPrisEnClair(ign).filter((e) => !Object.prototype.hasOwnProperty.call(PLAFOND_ELO.parLigue, e));
+}
+/** Ce que le plafond a fait au dernier import ecrit, et ce que la variable dit. */
+function etatPlafondElo() {
+  const ign = plafondsEloIgnores();
+  return { variable: [...prixLigues.plafondsElo()], ignorees: ign, sansRencontre: plafondsEloSansRencontre(ign),
+           dernierImport: PLAFOND_ELO.t ? { t: PLAFOND_ELO.t, parLigue: PLAFOND_ELO.parLigue } : null };
+}
+/** La ligne de demarrage : toujours dite, meme vide. */
+function lignePlafondElo() {
+  const v = [...prixLigues.plafondsElo()];
+  if (!v.length) return '[paris] PARIS_ELO_PLAFOND_MARCHE : vide — aucune cote Elo plafonnee, rien ne change';
+  const ign = plafondsEloIgnores();
+  const pris = v.filter((e) => !ign.some((x) => x.indexOf(' ' + e + ' ') >= 0));
+  return '[paris] PARIS_ELO_PLAFOND_MARCHE : ' + (pris.length ? pris.join(', ') + ' — cotes Elo plafonnees au prix du marche observe (min, jamais plus haut), effet au prochain import'
+    : 'aucune cle prise — rien ne change') + (ign.length ? ' ; ignoree(s) : ' + ign.join(' ; ') : '');
+}
+
 /* Relever le prix d'une liste de championnats : 1 credit chacun, sous le
    garde-fou de la part du jour (`appel`). Rend le nombre de championnats
    VENDUS releves : c'est lui qui decide de refaire le calendrier (`planifie`). */
@@ -2039,16 +2298,32 @@ function ecartAuMarche(ligue, now) {
   const t = now || Date.now();
   const out = { rencontres: 0, avecPrix: 0, issues: 0, battables: 0, esperanceMoyenne: null, pire: null };
   let somme = 0;
+  /* ---- L'ELO BRUT, ET LA COTE VENDUE A COTE (plafond, 11/10/2026) ----
+   * Une rencontre plafonnee au prix du marche (PARIS_ELO_PLAFOND_MARCHE)
+   * porte l'Elo d'avant le plafond (`plafondMarche.elo`) : les chiffres
+   * ci-dessus jugent TOUJOURS l'Elo brut — la mesure qui a fonde la regle, et
+   * celle de la porte de la vente au marche. La cote VENDUE est jugee a part
+   * (`vendue`), seulement quand au moins une rencontre de la cle est
+   * plafonnee : contre le prix qui l'a plafonnee, elle n'est battable qu'aux
+   * extremes ; contre un prix plus neuf, c'est la fuite residuelle. Sans
+   * plafond (la variable vide), la sortie est exactement celle d'avant.
+   * `vendue.pire` (relecture du 11/10) : la pire issue de ce qui est
+   * REELLEMENT offert — lu seul, `pire` (l'Elo brut, Siniakova 3,51) laissait
+   * croire que 3,51 etait encore vendu apres la pose du plafond. */
+  const vendue = { issues: 0, battables: 0, esperanceMoyenne: null, pire: null };
+  let sommeV = 0, plafonnees = 0;
   try {
     for (const m of paris.catalogue().matchs) {
       if (!m.source || m.source.ligue !== ligue || !paris.ouvert(m, t)) continue;
       out.rencontres++;
       const r = prixMarche.pour(m.source.evenement, t);
       if (!r || !r.p || (r.dom && (r.dom !== m.domicile || r.ext !== m.exterieur))) continue;
-      const c = (m.marches && m.marches[paris.MARCHE_BASE] && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
+      const cv = (m.marches && m.marches[paris.MARCHE_BASE] && m.marches[paris.MARCHE_BASE].cotes) || m.cotes;
+      const c = (m.plafondMarche && m.plafondMarche.elo) || cv;
       if (!c) continue;
+      if (m.plafondMarche && m.plafondMarche.elo) plafonnees++;
       out.avecPrix++;
-      let meilleure = -1;
+      let meilleure = -1, meilleureV = -1;
       /* les issues du SPORT (lot 3) : deux au hockey, a la NFL, a la NBA, au tennis */
       for (const i of (paris.sportConnu(m.sport) ? paris.issues(m.sport) : ['1', 'N', '2'])) {
         if (!(Number(c[i]) > 1) || !(r.p[i] > 0)) continue;
@@ -2057,11 +2332,23 @@ function ecartAuMarche(ligue, now) {
         if (e > 0) out.battables++;
         if (e > meilleure) meilleure = e;
         if (!out.pire || e > out.pire.esperance) out.pire = { rencontre: m.domicile + ' v ' + m.exterieur, issue: i, cote: Number(c[i]), marche: Math.round(r.p[i] * 1000) / 1000, esperance: Math.round(e * 1000) / 1000 };
+        if (cv && Number(cv[i]) > 1) {
+          const ev = Number(cv[i]) * r.p[i] - 1;
+          vendue.issues++;
+          if (ev > 0) vendue.battables++;
+          if (ev > meilleureV) meilleureV = ev;
+          if (!vendue.pire || ev > vendue.pire.esperance) vendue.pire = { rencontre: m.domicile + ' v ' + m.exterieur, issue: i, cote: Number(cv[i]), marche: Math.round(r.p[i] * 1000) / 1000, esperance: Math.round(ev * 1000) / 1000 };
+        }
       }
       somme += meilleure;
+      sommeV += meilleureV;
     }
   } catch (e) { /* catalogue illisible */ }
   if (out.avecPrix) out.esperanceMoyenne = Math.round(somme / out.avecPrix * 1000) / 1000;
+  if (plafonnees) {
+    if (out.avecPrix) vendue.esperanceMoyenne = Math.round(sommeV / out.avecPrix * 1000) / 1000;
+    out.vendue = Object.assign({ plafonnees }, vendue);
+  }
   return out;
 }
 /* ---- UNE CLE MAL ECRITE SE DIT, MEME AVEC LE JOKER (09/10/2026) ----
@@ -3203,6 +3490,10 @@ function planifie(signale, aRegler, expositionDe) {
     const pe = paris.eloEngagementMax();
     console.log('[paris] PARIS_ELO_ENGAGEMENT_MAX : ' + (pe.valeur !== null ? pe.valeur + ' $SWOGEBET par rencontre cotee a l Elo'
       : pe.invalide ? 'IGNORE (« ' + pe.brut + ' » n est pas un nombre strictement positif) — plafond global seul' : 'vide — plafond global seul'));
+    /* Le plafond des cotes Elo au prix du marche observe (11/10/2026) : vide =
+       rien ne change ; une cle non observee, vendue, un joker refuse, un
+       sport a plusieurs marches sont IGNORES et dits ici. */
+    try { console.log(lignePlafondElo()); } catch (e) { /* jamais bloquant */ }
     try { console.log(prixObserve.ligneDemarrage()); } catch (e) { /* jamais bloquant */ }
     ditLaPorte('demarrage');
     /* Le journal des releves : actif ou coupe, ce qu'il garde. Lire son etat
@@ -3382,4 +3673,6 @@ module.exports = { LIGUES, LIGUES_DEFAUT, liguesEnService, importeMatchs, import
                    TOTAUX_AVANT_MS, TOTAUX_ECART_MS, TOTAUX_ESSAIS_MAX, TOTAUX_PLAFOND_MOIS, TOTAUX_CLOTURE_ECART_MS, CLOTURE_AVANT,
                    TOTAUX_TIC_PREMIER_MS, CLOTURE_TIC_DECALAGE_MS, sansButs,
                    /* les coupes (lot 6, 11/10/2026) : inventaire, observation a 48 h, releve forcee, rien de vendu */
-                   coupesPerimees, coupesAvantMatch, NOMS_COMPET, NOM_COMPET, COUPES_ESPN_PREMIER_MS };
+                   coupesPerimees, coupesAvantMatch, NOMS_COMPET, NOM_COMPET, COUPES_ESPN_PREMIER_MS,
+                   /* le plafond de l'Elo au prix du marche observe (11/10/2026), vide par defaut */
+                   plafonneAuMarche, etatPlafondElo, lignePlafondElo };

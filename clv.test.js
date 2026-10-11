@@ -796,9 +796,18 @@ function lance(port, cle, dossier, extra) {
     /* l'etat du §5 (tickets figes) et l'index de cloture, tels que le volume les garde */
     fs.writeFileSync(path.join(dossier, 'state.json'), JSON.stringify(G5.serialize()));
     const CLE = 'cle-clv-essai-7c1e';
-    const s = await lance(8797, CLE, dossier);
+    /* ---- UN PORT LIBRE, PAS 8797 (11/10/2026) ----
+     * Le port fixe faisait echouer l'essai (« TypeError: fetch failed ») quand
+     * deux copies du depot le lancaient en meme temps (verification par
+     * mutations, quatre copies en parallele) : le second serveur ne pouvait
+     * pas ecouter, son /health repondait par le PREMIER, qui etait tue au
+     * milieu des requetes du second. Un port pris au systeme : chaque essai
+     * parle a SON serveur. Rien de ce qui est verifie ne change. */
+    const port = await new Promise((r) => { const sv = require('net').createServer(); sv.listen(0, '127.0.0.1', () => { const q = sv.address().port; sv.close(() => r(q)); }); });
+    const U = 'http://127.0.0.1:' + port;
+    const s = await lance(port, CLE, dossier);
     try {
-      const r = await fetch('http://127.0.0.1:8797/paris/clv', { headers: { 'x-admin-key': CLE } });
+      const r = await fetch(U + '/paris/clv', { headers: { 'x-admin-key': CLE } });
       eq(r.status, 200, 'GET /paris/clv avec la cle dans l en-tete : 200');
       /* elle nomme des joueurs et leurs mises : aucun cache ne doit la garder */
       eq(r.headers.get('cache-control'), 'no-store', 'cache-control: no-store');
@@ -809,13 +818,13 @@ function lance(port, cle, dossier, extra) {
       ok(Array.isArray(j.adresses) && j.adresses.some((x) => x.addr === A && x.verdict === null && x.moyenne === null), 'l adresse est listee, sans chiffre ni verdict');
       ok(j.horsMesure && j.population && j.comparaisons && j.porte4 && j.limites, 'population, comparaisons, porte 4, hors mesure, limites');
       ok(!('detail' in j), 'sans addr : pas de detail');
-      const r2 = await fetch('http://127.0.0.1:8797/paris/clv?addr=' + A.toUpperCase(), { headers: { 'x-admin-key': CLE } });
+      const r2 = await fetch(U + '/paris/clv?addr=' + A.toUpperCase(), { headers: { 'x-admin-key': CLE } });
       const j2 = await r2.json();
       ok(j2.detail && j2.detail.addr === A && j2.detail.jambes.length === N5, '?addr= (casse ignoree) : le detail des ' + N5 + ' jambes collectees');
-      const j3 = await (await fetch('http://127.0.0.1:8797/paris/clv?addr=0x' + 'a'.repeat(5000), { headers: { 'x-admin-key': CLE } })).json();
+      const j3 = await (await fetch(U + '/paris/clv?addr=0x' + 'a'.repeat(5000), { headers: { 'x-admin-key': CLE } })).json();
       ok(j3.detail && j3.detail.addr.length === 100 && j3.detail.jambes.length === 0, '?addr= de 5 002 caracteres : borne a 100, aucun detail');
-      eq(await (await fetch('http://127.0.0.1:8797/paris/clv')).status, 401, 'sans la cle : 401');
-      eq(await (await fetch('http://127.0.0.1:8797/paris/clv', { headers: { 'x-admin-key': CLE + 'x' } })).status, 401, 'une cle presque juste : 401');
+      eq(await (await fetch(U + '/paris/clv')).status, 401, 'sans la cle : 401');
+      eq(await (await fetch(U + '/paris/clv', { headers: { 'x-admin-key': CLE + 'x' } })).status, 401, 'une cle presque juste : 401');
     } finally { try { s.p.kill('SIGKILL'); } catch (e) {} fs.rmSync(dossier, { recursive: true, force: true }); }
   }
   ok(/'\/paris\/clv'/.test(fs.readFileSync(path.join(__dirname, 'acces.test.js'), 'utf8')), 'acces.test.js la compte parmi les portes privees (503 sans ADMIN_KEY, 401 sans cle)');

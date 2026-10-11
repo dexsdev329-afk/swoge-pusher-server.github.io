@@ -1444,6 +1444,51 @@ function entSienne(ws, id) {
 function toAddr(addr, obj) { const set = byAddr.get(addr); if (set) for (const ws of set) send(ws, obj); }
 function broadcast(obj) { const s = JSON.stringify(obj); for (const ws of clients) if (ws.readyState === 1) ws.send(s); }
 
+/* ==================== LA LISTE DES PARIS, ET SA MISE A JOUR ====================
+ *
+ * UN SEUL ENDROIT construit `parisListe` : la reponse a la demande de la page,
+ * et la liste repoussee quand le catalogue change. `commun` (tout sauf les
+ * paris du joueur) se calcule une fois pour toutes les sockets.
+ *
+ * ---- POURQUOI LA REPOUSSER (11/10/2026) ----
+ * Le serveur vend la cote du catalogue en memoire au moment du pari ; la page
+ * ne demandait la liste qu'a la connexion. Apres un import qui change une
+ * cote, une page ouverte montrait l'ancienne et le ticket portait la nouvelle.
+ * Le plafond de l'Elo au prix du marche (PARIS_ELO_PLAFOND_MARCHE) rend
+ * l'ecart grand : relecture du 11/10, 3,51 montre et 1,95 vendu, des la pose
+ * de la variable (les pages se reconnectent en 3 s et lisent le catalogue
+ * d'avant l'import). Quand le TEXTE du catalogue recharge a change
+ * (`paris.surChange` : l'import periodique, celui du demarrage, POST
+ * /paris/import), la liste repart vers chaque socket qui l'a demandee — les
+ * pages de paris (swogebet.html, swogesports.js) traitent deja une liste
+ * qu'elles n'ont pas demandee, et le bulletin suit ses cotes. Une socket qui
+ * ne l'a jamais demandee (les autres jeux) ne recoit rien. Il reste la
+ * latence d'un message entre le rechargement et l'ecran : le ticket dit
+ * toujours la cote vendue. */
+function parisListeCommun(t) {
+  return { type: 'parisListe',
+           sports: paris.catalogue().sports,
+           matchs: avecDirect(game.parisOuverts(t)),
+           /* Ce qui se joue MAINTENANT : ferme aux paris, mais
+              c'est justement l'instant ou le score compte. */
+           directs: enDirect(t),
+           /* Quand un sport sans rencontre revient. Un onglet
+              vide sans un mot se lit comme un site casse. */
+           reprises: directCache.reprises,
+           min: cfg.PARI_MIN, max: cfg.PARI_MAX,
+           jambesMax: cfg.PARI_JAMBES_MAX, gainMax: cfg.PARI_GAIN_MAX };
+}
+function parisListePour(ws, commun) {
+  return Object.assign({}, commun, { mesParis: ws.addr ? game.mesParis(ws.addr, 40) : [] });
+}
+paris.surChange(() => {
+  let commun = null;
+  for (const ws of clients) {
+    if (!ws.parisListe || ws.readyState !== 1) continue;
+    try { send(ws, parisListePour(ws, commun || (commun = parisListeCommun(Date.now())))); } catch (e) { /* jamais bloquant */ }
+  }
+});
+
 /* ================== LE CONTRAT DE FIL DES SALLES A ECRAN ==================
  *
  * UN SEUL ENDROIT construit ce qui part aux pages, et le `hello` s'en sert
@@ -7292,18 +7337,10 @@ wss.on('connection', (ws) => {
          menu. Poser un pari, en revanche, est de l'autre cote de la porte. */
       // ---- les paris sportifs ----
       if (m.type === 'parisListe') {
-        return send(ws, { type: 'parisListe',
-                          sports: require('./paris').catalogue().sports,
-                          matchs: avecDirect(game.parisOuverts(Date.now())),
-                          /* Ce qui se joue MAINTENANT : ferme aux paris, mais
-                             c'est justement l'instant ou le score compte. */
-                          directs: enDirect(Date.now()),
-                          /* Quand un sport sans rencontre revient. Un onglet
-                             vide sans un mot se lit comme un site casse. */
-                          reprises: directCache.reprises,
-                          min: cfg.PARI_MIN, max: cfg.PARI_MAX,
-                          jambesMax: cfg.PARI_JAMBES_MAX, gainMax: cfg.PARI_GAIN_MAX,
-                          mesParis: ws.addr ? game.mesParis(ws.addr, 40) : [] });
+        /* cette socket montre les cotes : elle recevra la liste a nouveau
+           quand le catalogue change (`parisListeCommun`, 11/10/2026) */
+        ws.parisListe = true;
+        return send(ws, parisListePour(ws, parisListeCommun(Date.now())));
       }
 
       if (!ws.addr) return send(ws, { type: 'error', error: 'login required' });
