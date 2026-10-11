@@ -211,6 +211,8 @@ const cfg = require('./config');
       /* Le controle des pattes (vision) : avant la branche image, car les deux sont chez openai. */
       if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false, "why": "furry dog paws"}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG-factice').toString('base64') }], usage: { output_tokens: 6893 } });
+      /* Le second regard (seconde relecture du 11/10) : un oui franc, et il ne compte pas comme un texte. */
+      if (/anthropic/.test(u) && corps.system === x.SYSTEME_JUGE) return rep(200, { content: [{ type: 'text', text: '{"ok": true, "claim": ""}' }] });
       if (/anthropic/.test(u)) {
         nTexte++;
         const nom = (/PRODUCT: (.+?) \(name it/.exec(corps.messages[0].content) || [])[1] || 'SWOGE';
@@ -264,7 +266,8 @@ const cfg = require('./config');
     r = await x.tache({ maintenant: MIDI + 600000, prendre: faux, signale: (s) => { signale = s; } });
     eq(r.etat, 'poste', 'au tour suivant, poste');
     eq(appels.filter((a) => /images\/generations/.test(a.u)).length, 2, 'deux images payees en tout : 10 h, midi — pas une de plus pour la reprise');
-    eq(appels.filter((a) => /anthropic/.test(a.u)).length, 2, 'deux textes');
+    eq(appels.filter((a) => /anthropic/.test(a.u) && a.corps.system !== x.SYSTEME_JUGE).length, 2, 'deux textes');
+    eq(appels.filter((a) => /anthropic/.test(a.u) && a.corps.system === x.SYSTEME_JUGE).length, 2, 'et deux seconds regards, un par texte ecrit (la reprise de midi reprend le texte deja relu)');
     const j = x.litJournal();
     ok(j.jours['2026-09-19#10:00'].scene !== j.jours['2026-09-19#12:00'].scene, 'deux scenes differentes le meme jour : ' + j.jours['2026-09-19#10:00'].scene + ' puis ' + j.jours['2026-09-19#12:00'].scene);
     ok(j.jours['2026-09-19#10:00'].texte !== j.jours['2026-09-19#12:00'].texte, 'et deux textes differents');
@@ -648,7 +651,11 @@ const cfg = require('./config');
     const FAUX = [/\$SWOGE Bet\b/, /odds (are )?on[- ]?chain/i, /no sign[- ]?up/i, /\b13 (AI )?agents\b/i, /keys stay on your device/i, /\b285\b/, /Uniswap v4/i,
       /* « paid in $SWOGE » etait faux pour les PARIS (ils se jouent en $SWOGEBET) ; les videos de SWOGE
          Agents, elles, se paient bien en $SWOGE (swoge_agents.html:1579). */
-      /\b70%|\b30%/, /instantly on DexScreener/i, /(SWOGE Bet|\bbet(s|ting)?\b|sportsbook)[^.]*\bpaid (in|with) \$SWOGE\b/i, /ownership renounced/i, /SWOGE Nexus:/];
+      /\b70%|\b30%/, /instantly on DexScreener/i, /(SWOGE Bet|\bbet(s|ting)?\b|sportsbook)[^.]*\bpaid (in|with) \$SWOGE\b/i, /ownership renounced/i, /SWOGE Nexus:/,
+      /* Seconde relecture du 11/10 : l observatoire lit un echantillon (pas « every new token ») ; le tableau
+         LIVE NOW retire (l appat du pari en direct) ; la graine client n est pas au joueur ; un miroir LIVE
+         existe (pas « Paper only ») ; le tennis ne passe pas par ESPN (reglement, fermeture). */
+      /every new token/i, /LIVE NOW/, /your client seed/i, /\bPaper only\b|\bSWOGE AI is paper trading\b/i, /final score is in from ESPN/, /Betting on a match on SWOGE Bet closes/];
     const faux = textes.filter((s) => FAUX.some((r) => r.test(s)));
     ok(faux.length === 0, 'aucune phrase relevee fausse le 11/10 (nom, cotes sur la chaine, 13 agents, cles « sur l appareil », v4, 70/30, 285 chaines)' + (faux.length ? ' — ' + faux[0].slice(0, 80) : ''));
     ok(!P('world').faits.some((f) => /cinema|movie|TV\b|channels/i.test(f.texte)), 'SWOGE World : ni cinema (vide depuis le 27/09) ni chaines de TV (non garanties)');
@@ -719,7 +726,17 @@ const cfg = require('./config');
       'Copa del Rey', 'Coppa Italia', 'Coupe de France', 'guaranteed', 'price target', 'beat the bookies', '+EV', 'positive EV', 'easy money', 'free money', 'risk-free',
       'a sure thing', 'you can\'t lose', 'passive income', 'get rich', 'APR', 'APY', 'yield', 'staking', 'instant payout', 'final whistle', 'best odds', 'sharp odds',
       'zero margin', 'no margin', 'same odds', 'play-to-earn', 'P2E', 'NFT', 'Uniswap v4', 'SWOGE +18', 'SWOGE FLIX', 'manga', 'bet on live matches', 'live sports wagers',
-      'wager during the game', 'odds move live', 'win big', 'earn real', 'profits', 'cash out your winnings', 'best payouts', 'better odds', 'swoleeswoge.dog']
+      'wager during the game', 'odds move live', 'win big', 'earn real', 'profits', 'cash out your winnings', 'best payouts', 'better odds', 'swoleeswoge.dog',
+      /* Seconde relecture du 11/10 : les coupes hors liste, la vitesse, les gains dits autrement, le domaine
+         a deux lettres (mutation D03 : « x.ai » passait avec [a-z]{3,}) ou colle derriere « _ », le nom du
+         site sous toute forme, l audit et la licence, l invulnerable, l appli et les bonus, un concurrent,
+         un superlatif, « any chain », les centimes. */
+      'Carabao', 'Libertadores', 'Sudamericana', 'Community Shield', 'knockout rounds', 'in seconds', 'right away', 'immediately',
+      'gains', 'payday', 'make bank', 'stack bags', 'cash in', 'double your stack', 'x.ai', 'link: _pump.fun', 'swoleeswoge . dog',
+      'audited', 'licensed', 'regulated', 'no KYC', 'anonymous', 'house edge', 'low edge', 'can\'t be rugged', 'impossible', 'immune', 'unstoppable', 'unruggable',
+      'rug-proof', 'never get rugged again', 'mobile app', 'cashback', 'rakeback', 'welcome bonus', 'free bets', 'deposit bonus', 'airdrop', 'giveaway', 'DraftKings',
+      'the first sportsbook', '#1', 'number one', 'any chain', 'pennies', 'cents', 'never misses', 'soon', 'coming', 'upcoming', 'tomorrow', 'next week',
+      'stay tuned', 'roadmap', 'we\'ll', 'we will', 'insured', 'insurance fund', 'backed by', 'IPFS', 'Arweave', 'decentralized']
       .map((m) => 'SWOGE AI Cinema: ' + m + ' 🐕');                 /* le cinema : ses interdits ne croisent aucun de ces termes */
     const sujetCine = x.sujetDe({ produit: 'cinema', fait: 'ouvert' }, {});
     const cg = couverture(x.MOTS_INTERDITS, GLOBAUX, (t) => x.verifieTexte(t, sujetCine), applicablesDe('cinema'));
@@ -727,27 +744,57 @@ const cfg = require('./config');
        + (cg.manques.length ? ' — sans temoin : ' + cg.manques.join(' ; ') : '') + (cg.passent.length ? ' — passe : ' + cg.passent.join(' | ') : '') + (cg.ambigus.length ? ' — ambigus : ' + cg.ambigus.join(' | ') : ''));
     const TEMOINS = {
       bet: ['SWOGE Bet has the best football slate', '$SWOGE Bet is here', 'SWOGE Bet is provably fair', 'SWOGE Bet has on-chain odds', 'SWOGE Bet odds are on-chain',
-        'SWOGE Bet, no sign-up', 'SWOGE Bet max stake', 'SWOGE Bet: up to 500 $SWOGEBET a slip', 'SWOGE Bet odds copied', 'SWOGE Bet odds straight from the book',
+        'SWOGE Bet, no sign-up', 'SWOGE Bet max stake', 'SWOGE Bet: up to 500 $SWOGEBET a slip', 'SWOGE Bet odds copied', 'SWOGE Bet odds straight from the book', 'SWOGE Bet fair odds', 'SWOGE Bet: Betfair minus',
         'every bet is posted on SWOGE Bet', 'SWOGE Bet in-running', 'SWOGE Bet lets you cash out', 'SWOGE Bet scores refreshed', 'SWOGE Bet scores updates every minute',
-        'SWOGE Bet scores every few seconds'],
-      world: ['SWOGE World has a cinema', 'SWOGE World movies', 'SWOGE World films', 'SWOGE World series', 'SWOGE World +18 zone', 'SWOGE World: earn while you play',
+        'SWOGE Bet scores every few seconds',
+        /* seconde relecture du 11/10 : le direct paraphrase, le prix du marche etendu, le paiement */
+        'SWOGE Bet: scores live', 'SWOGE Bet is live wagering', 'SWOGE Bet real-time scores', 'SWOGE Bet halftime picks', 'SWOGE Bet next goal', 'SWOGE Bet after kickoff',
+        'SWOGE Bet: matches under way', 'SWOGE Bet: matches in progress', 'SWOGE Bet second half', 'SWOGE Bet while you watch', 'SWOGE Bet as the action unfolds',
+        'SWOGE Bet streams matches', 'SWOGE Bet: over/under priced off Betfair', 'SWOGE Bet: Pinnacle prices for tennis', 'SWOGE Bet pays when the whistle blows',
+        'SWOGE Bet pays to your wallet', 'SWOGE Bet odds identical', 'SWOGE Bet props', 'SWOGE Bet same-game', 'SWOGE Bet esports', 'SWOGE Bet F1', 'SWOGE Bet UFC',
+        'SWOGE Bet MMA', 'SWOGE Bet boxing', 'SWOGE Bet horse racing', 'SWOGE Bet markets on tennis', 'SWOGE Bet: tennis on ESPN', 'SWOGE Bet: ESPN tennis',
+        'SWOGE Bet pays the moment it ends', 'SWOGE Bet pays within a day', 'SWOGE Bet after the first goal', 'SWOGE Bet paid out in ETH', 'SWOGE Bet doubles it',
+        'SWOGE Bet triples it', 'SWOGE Bet worldwide', 'SWOGE Bet globally', 'SWOGE Bet is legal', 'SWOGE Bet in every state', 'SWOGE Bet in every country'],
+      world: ['SWOGE World has a cinema', 'SWOGE World movies', 'SWOGE World films', 'SWOGE World series', 'SWOGE World +18 zone',
         'SWOGE World AI agents', 'SWOGE World with Pepe', 'SWOGE World with Andy', 'SWOGE World with Brett', 'SWOGE World with Landwolf', 'SWOGE World with Optimus',
-        'SWOGE World meets Street Fighter', 'SWOGE World has thousands of players', 'SWOGE World for millions', 'SWOGE World is provably fair', 'SWOGE World exclusive', 'SWOGE World premium'],
-      casino: ['the SWOGE casino RTP', 'the SWOGE casino house edge', 'the SWOGE casino return to player', 'the SWOGE casino is fair on-chain', 'the SWOGE casino: on-chain fair',
-        'the SWOGE casino is verified on the blockchain', 'choose your client seed in the SWOGE casino', 'pick your seed in the SWOGE casino', 'set your own seed in the SWOGE casino',
-        'the SWOGE casino welcome bonus', 'free SWOGE at the SWOGE casino', 'the SWOGE casino weekly', 'the SWOGE casino every week', 'the SWOGE casino max bet', 'the SWOGE casino min bet'],
-      wallet: ['SWOGE Wallet v4 pools', 'SWOGE Wallet instant swaps', 'the SWOGE launchpad is audited', 'the SWOGE launchpad buybacks', 'the SWOGE launchpad funds itself',
-        'SWOGE Wallet: Face ID protects it', 'SWOGE Wallet: sign with Face ID', 'SWOGE Wallet protects your funds', 'SWOGE Wallet keys stay on your device', 'SWOGE Wallet blocks scams',
-        'SWOGE Wallet stops honeypots', 'SWOGE Wallet is honeypot-proof', 'SWOGE Wallet sends any Solana token', 'SWOGE Wallet trades for you', 'SWOGE Wallet executes trades',
-        'the SWOGE launchpad: renounced', 'the SWOGE launchpad volume bench'],
-      ai: ['SWOGE AI win rate', 'SWOGE AI P&L', 'SWOGE AI PnL', 'SWOGE AI makes money', 'SWOGE AI: the AI wins', 'SWOGE AI beats the market', 'SWOGE AI gains',
-        'SWOGE AI mirror', 'SWOGE AI with real money', 'SWOGE Agents uncensored', 'SWOGE Agents on Venice', 'SWOGE Agents via OpenRouter', 'SWOGE Agents with DeepSeek',
+        'SWOGE World meets Street Fighter', 'SWOGE World has thousands of players', 'SWOGE World for millions', 'SWOGE World player base', 'SWOGE World keeps growing',
+        'SWOGE World is provably fair', 'SWOGE World exclusive', 'SWOGE World premium',
+        'SWOGE World: withdraw your gold', 'SWOGE World: cash out your gold', 'SWOGE World: trade your loot', 'SWOGE World: sell your loot', 'SWOGE World prize pool',
+        'SWOGE World real prizes', 'SWOGE World: tradable loot', 'SWOGE World: get paid', 'SWOGE World pays', 'SWOGE World on-chain', 'SWOGE World permanent death',
+        'SWOGE World permadeath', 'SWOGE World: lose everything'],
+      casino: ['the SWOGE casino RTP', 'the SWOGE casino return to player', 'the SWOGE casino is fair on-chain', 'the SWOGE casino: on-chain fair',
+        'the SWOGE casino is verified on the blockchain', 'the SWOGE casino client seed', 'pick your seed in the SWOGE casino', 'the SWOGE casino: your own seed',
+        'free SWOGE at the SWOGE casino', 'the SWOGE casino weekly', 'the SWOGE casino every week', 'the SWOGE casino max bet', 'the SWOGE casino min bet', 'verify every spin in the SWOGE casino', 'every spin is verifiable in the SWOGE casino', 'SWOGE Poker rakeless', 'the SWOGE casino cheats', 'the SWOGE casino rigged', 'the SWOGE casino manipulates',
+        'SWOGE Poker tournaments', 'the SWOGE casino jackpot hits',
+        'the SWOGE casino is provably fair', 'SWOGE Blackjack is provably fair, like Crash', 'Blackjack and every game in the SWOGE casino are provably fair'],
+      wallet: ['SWOGE Wallet v4 pools', 'the SWOGE launchpad buybacks', 'the SWOGE launchpad agent is buying back', 'the SWOGE launchpad funds itself',
+        'SWOGE Wallet: Face ID protects it', 'SWOGE Wallet: sign with Face ID', 'SWOGE Wallet protects your funds', 'SWOGE Wallet: keys never leave your device',
+        'SWOGE Wallet keys stay on your device', 'SWOGE Wallet is self-custodial', 'SWOGE Wallet is non-custodial', 'SWOGE Wallet blocks scams',
+        'SWOGE Wallet stops honeypots', 'SWOGE Wallet sends any Solana token', 'SWOGE Wallet trades for you', 'SWOGE Wallet executes trades', 'the SWOGE launchpad agent pumps it',
+        'the SWOGE launchpad: renounced', 'the SWOGE launchpad volume bench', 'SWOGE Wallet simulates every send', 'SWOGE Wallet: bridge ETH from BNB Chain',
+        'SWOGE Wallet: from Polygon, bring ETH', 'every token on the SWOGE launchpad', 'the SWOGE launchpad on Solana: liquidity locked',
+        'SWOGE Wallet swaps automatically', 'SWOGE Wallet works while you sleep', 'SWOGE Wallet MEV', 'SWOGE Wallet front-running', 'SWOGE Wallet sandwich',
+        'SWOGE Wallet recovery', 'SWOGE Wallet restore', 'SWOGE Wallet backup', 'SWOGE Wallet: lose your phone', 'the SWOGE launchpad launches on Base',
+        'the SWOGE launchpad on Raydium', 'the SWOGE launchpad graduates', 'the SWOGE launchpad agent shills', 'the SWOGE launchpad promotes',
+        'the SWOGE launchpad agent markets your token'],
+      ai: ['SWOGE AI P&L', 'SWOGE AI PnL', 'SWOGE AI makes money', 'SWOGE AI beats the control', 'SWOGE AI outperforms', 'SWOGE AI is crushing it',
+        'SWOGE AI mirror', 'SWOGE AI with real money', 'SWOGE AI paper trades for real', 'SWOGE AI paper vs real trades', 'SWOGE AI paper and live trading', 'copy SWOGE AI',
+        'SWOGE Agents uncensored', 'SWOGE Agents on Venice', 'SWOGE Agents via OpenRouter', 'SWOGE Agents with DeepSeek',
         'SWOGE Agents with Mistral', 'SWOGE Agents over Tor', 'SWOGE Agents reads the .onion web', 'SWOGE Agents bug bounty', 'SWOGE AI martingale', 'SWOGE AI paroli',
         'SWOGE Agents blackjack mode', 'SWOGE Agents restyle', 'agents already paying SWOGE Agents', 'agents are paying us at SWOGE Agents', 'SWOGE Agents revenue',
-        'SWOGE Agents eSIM', 'SWOGE Agents can launch a token'],
-      cinema: ['SWOGE AI Cinema: 100% original', 'SWOGE AI Cinema original characters', 'SWOGE AI Cinema: none licensed', 'SWOGE AI Cinema: no licensed faces',
-        'SWOGE AI Cinema with Pepe', 'SWOGE AI Cinema with Brett', 'SWOGE AI Cinema: vote now', 'SWOGE AI Cinema season 3', 'SWOGE AI Cinema new episodes',
-        'SWOGE AI Cinema coming soon', 'SWOGE AI Cinema views', 'SWOGE AI Cinema viewers watched', 'SWOGE AI Cinema made with SwoleMind', 'SWOGE AI Cinema same tools'],
+        'SWOGE Agents eSIM', 'SWOGE Agents can launch a token', 'SWOGE AI paper trades for you', 'SWOGE Agents can buy it', 'SWOGE Agents paper buys tokens for you',
+        'SWOGE AI: paper, then on-chain trading', 'SWOGE AI tokens scanned', 'SWOGE AI scanned the tokens', 'SWOGE AI: 500 tokens', 'No $SWOGE needed on SWOGE Agents',
+        'No $SWOGE needed for chat or videos on SWOGE Agents', 'SWOGE Agents: USDC for videos', 'SWOGE Agents videos in USDC', 'SWOGE Agents: everything paid',
+        'Agent Passport is verified on-chain', 'SWOGE Agents: an on-chain ID', 'SWOGE Agents Autopilot runs for hours', 'SWOGE AI buys tokens', 'SWOGE AI calls', 'SWOGE Security on Solana',
+        'SWOGE Agents logs in', 'SWOGE Agents passwords', 'SWOGE Agents uses your accounts', 'SWOGE Agents shops', 'SWOGE Agents purchases'],
+      cinema: ['SWOGE AI Cinema: 100% original', 'SWOGE AI Cinema original characters',
+        'SWOGE AI Cinema with Pepe', 'SWOGE AI Cinema with Brett', 'SWOGE AI Cinema with Wojak', 'SWOGE AI Cinema with Andy', 'SWOGE AI Cinema with Landwolf',
+        'SWOGE AI Cinema with Bonk', 'SWOGE AI Cinema: vote now', 'SWOGE AI Cinema season 3', 'SWOGE AI Cinema new episodes',
+        'SWOGE AI Cinema: more episodes', 'SWOGE AI Cinema views', 'SWOGE AI Cinema every week', 'SWOGE AI Cinema weekly', 'SWOGE AI Cinema daily',
+        'SWOGE AI Cinema in 4K', 'SWOGE AI Cinema in HD', 'SWOGE AI Cinema award',
+        'SWOGE AI Cinema viewers watched', 'SWOGE AI Cinema made with SwoleMind', 'SWOGE AI Cinema same tools', 'SWOGE AI Cinema: you decide',
+        'SWOGE AI Cinema: the community chooses', 'SWOGE AI Cinema: fans chose this', 'SWOGE AI Cinema: the story follows your lead', 'SWOGE AI Cinema: your choice',
+        'SWOGE AI Cinema: what happens next', 'SWOGE AI Cinema: shape the story', 'SWOGE AI Cinema on-chain'],
     };
     const trousP = [];
     for (const p of x.PRODUITS) {
@@ -768,6 +815,17 @@ const cfg = require('./config');
     const rx = x.verifieTexte('SWOGE Bet also lets you play the SWOGE World cinema.', sujetBet);
     ok(!rx.ok && rx.raison === 'mot interdit ' + String(P('world').interdits[0]), 'un autre produit nomme dans le texte apporte ses interdits : ici ceux de SWOGE World (' + rx.raison + ')');
     ok(!P('ai').motsCles.test('SWOGE AI Cinema is live') && P('ai').motsCles.test('SWOGE AI reads tokens'), '« SWOGE AI Cinema » ne compte pas comme « SWOGE AI » : un tweet du cinema ne nomme pas la colonie');
+    /* Mutation H05 (seconde relecture du 11/10) : DEUX autres produits nommes, et seul l interdit du
+       second (le portefeuille) touche le texte — chaque produit nomme apporte les siens, pas le premier seul. */
+    const tH = 'Your SWOGE Bet balance plays in the SWOGE casino, and SWOGE Wallet tokens are renounced 🐕';
+    const rH = x.verifieTexte(tH, sujetBet);
+    ok(!rH.ok && rH.raison === 'mot interdit ' + String(P('wallet').interdits.find((r) => /renounced/.test(r.source))) && !P('casino').interdits.some((r) => r.test(tH)),
+       'deux autres produits nommes (casino, puis portefeuille) : les interdits du SECOND s appliquent aussi (' + rH.raison + ')');
+    /* Mutation V08 : chacun des quinze noms colles au ticker est rendu juste, pas seulement « Bet ». */
+    const NOMS15 = ['Bet', 'World', 'Wallet', 'AI', 'Agents', 'Blackjack', 'Spin', 'Smash', 'Bonanza', 'Kennel', 'Poker', 'Games', 'Security', 'casino', 'launchpad'];
+    const malNommes = NOMS15.filter((nm) => x.corrigeNoms('$SWOGE ' + nm + ' x') !== 'SWOGE ' + nm + ' x');
+    ok(malNommes.length === 0 && x.corrigeNoms('$SWOGE is live, $SWOGE holders') === '$SWOGE is live, $SWOGE holders',
+       'corrigeNoms rend les quinze faux noms (« $SWOGE World », « $SWOGE launchpad »…) et laisse le cashtag seul' + (malNommes.length ? ' — restent : ' + malNommes.join(', ') : ''));
     /* Un domaine nu (« name.dog », « name.fun ») : X en fait un lien, facture comme tel. La liste de
        l ESSAI, independante du module : les TLD de twitter-text les plus courants. */
     const DOMAINE = /\b[a-z0-9-]+\.(dog|fun|com|io|xyz|ai|net|org|app|gg|tv|me|co|so|fi|bet|games?|world|sh|dev|to|cc|us|uk|fr|de|link|site|online|club|vip|pro|info|biz|lol|wtf|html)\b/i;
@@ -780,7 +838,8 @@ const cfg = require('./config');
     const r2 = x.verifieTexte('Stack up to 12 picks on SWOGE Bet 🧾', sujet8);
     ok(!r2.ok && /12/.test(r2.raison), 'un nombre absent des faits est refuse : ' + r2.raison);
     ok(!x.verifieTexte('10,000 bettors already on SWOGE Bet 🔥', sujet8).ok, 'un compte de joueurs invente aussi');
-    eq(x.nombres('about 1 in every 1,200 kills, 9:16, 0.0001 ETH, 250x').join(' '), '1 1200 9 16 0.0001 250', 'les nombres se lisent sans separateur de milliers');
+    eq(x.nombres('about 1 in every 1,200 kills, 9:16, 0.0001 ETH, 250x, 6x5').join(' '), '1 1200 9 16 0.0001 250x 6 5',
+       'les nombres se lisent sans separateur de milliers ; « 250x » est un nombre a part (seconde relecture du 11/10), « 6x5 » deux nombres');
     const sujetOeufs = x.sujetDe({ produit: 'world', fait: 'oeufs' }, {});
     ok(x.verifieTexte('One egg every 1200 kills in SWOGE World 🥚', sujetOeufs).ok && x.verifieTexte('One egg every 1,200 kills in SWOGE World 🥚', sujetOeufs).ok,
        '« 1,200 » et « 1200 » sont le meme nombre');
@@ -796,6 +855,72 @@ const cfg = require('./config');
     const sujetMise = x.sujetDe({ produit: 'bet', fait: 'combines' }, {});
     const duVoisin = x.nombres(sujetMise.autres.join(' ')).find((k) => !x.nombres(sujetMise.lead).includes(k));
     ok(duVoisin && x.verifieTexte('SWOGE Bet: ' + duVoisin + ' and counting 🧾', sujetMise).ok, 'un nombre d un fait voisin passe (' + duVoisin + ', donne dans « Other true facts »)');
+    /* Mutations W02-*, W07 (seconde relecture du 11/10) : chaque mot-nombre a SON temoin, refuse avec son
+       chiffre quand il manque aux faits, et permis quand le fait l ecrit en chiffres. La liste est celle de
+       l ESSAI : un mot ajoute au module sans temoin ici fait tomber l essai (sixty a ninety manquaient). */
+    const MOTS_N = { zero: '0', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12',
+      thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17', eighteen: '18', nineteen: '19', twenty: '20', thirty: '30', forty: '40',
+      fifty: '50', sixty: '60', seventy: '70', eighty: '80', ninety: '90', hundred: 'hundred', thousand: 'thousand', million: 'million', billion: 'billion', dozen: 'dozen' };
+    const sujetNu = (lead) => ({ nom: 'SWOGE Bet', motsCles: P('bet').motsCles, interdits: [], lead, autres: [], vivants: [] });
+    const motsKo = Object.keys(MOTS_N).filter((m) => {
+      const r = x.verifieTexte('SWOGE Bet reasons: ' + m + ' 🏟️', sujetNu('SWOGE Bet is our sportsbook.'));
+      const permis = x.verifieTexte('SWOGE Bet reasons: ' + m + ' 🏟️', sujetNu('SWOGE Bet has ' + (/^\d/.test(MOTS_N[m]) ? MOTS_N[m] : m) + ' of them.'));
+      return !(!r.ok && r.raison === 'nombre absent des faits : ' + MOTS_N[m] && permis.ok);
+    });
+    const sansTemoinN = Object.keys(x.MOTS_NOMBRES).filter((m) => !(m in MOTS_N));
+    ok(motsKo.length === 0 && sansTemoinN.length === 0, Object.keys(MOTS_N).length + ' mots-nombres : chacun refuse avec SON chiffre s il manque aux faits, permis s il y est ; aucun mot du module sans temoin'
+       + (motsKo.length ? ' — faux : ' + motsKo.join(', ') : '') + (sansTemoinN.length ? ' — sans temoin : ' + sansTemoinN.join(', ') : ''));
+    /* Un nombre et ce qu il compte vont ensemble : « 8 sports » ne s appuie pas sur « 8 selections », ni
+       « 40 players » sur « 40 characters ». */
+    const sComb = x.sujetDe({ produit: 'bet', fait: 'combines' }, {});
+    const r8s = x.verifieTexte('SWOGE Bet: 8 sports, one slip 🏟️', sComb);
+    ok(!r8s.ok && r8s.raison === 'compte absent des faits : 8 sport' && x.verifieTexte('SWOGE Bet: up to 8 selections on one slip 🧾', sComb).ok,
+       '« 8 sports » est refuse quand le fait dit « 8 selections », qui passe : ' + r8s.raison);
+    const s40 = x.sujetDe({ produit: 'world', fait: 'monde' }, x.instantane({ game: { classementMonde: () => ({ vivants: 40 }), boulierPotStr: () => '0' } }, Date.now()));
+    const r40 = x.verifieTexte('40 players online in SWOGE World right now 🎮', s40);
+    ok(!r40.ok && r40.raison === 'compte absent des faits : 40 player' && x.verifieTexte('40 characters alive in SWOGE World right now 🎮', s40).ok,
+       '« 40 players » est refuse quand le chiffre vivant compte 40 personnages, « 40 characters » passe');
+    /* Un suffixe K, M, B ou x fait un nombre a part : « 1M » ne s appuie pas sur « 1% », ni « 250K » sur « 250x ». */
+    const suff = [['wallet', 'lp-partage', 'Over 1M tokens launched on the SWOGE launchpad 🚀', '1m'], ['wallet', 'lp-partage', 'SWOGE launchpad: 1B volume and counting 🚀', '1b'],
+      ['casino', 'smash', 'SWOGE Smash: 250K players smashed the gem 💎', '250k'], ['bet', 'combines', 'SWOGE Bet: 8-leg parlays for a 100x 🧾', '100x']];
+    const suffKo = suff.filter(([c, f, t, n]) => { const r = x.verifieTexte(t, x.sujetDe({ produit: c, fait: f }, {})); return r.ok || r.raison !== 'nombre absent des faits : ' + n; });
+    ok(suffKo.length === 0 && x.verifieTexte('SWOGE Smash: the top prize is 250x the bet 💎', x.sujetDe({ produit: 'casino', fait: 'smash' }, {})).ok,
+       '« 1M », « 1B », « 250K », « 100x » sont des nombres a part, refuses s ils manquent aux faits ; « 250x » du fait passe' + (suffKo.length ? ' — passent : ' + suffKo.map((c) => c[2]).join(' | ') : ''));
+    /* Les mots qui affirment : permis seulement si les faits donnes les ecrivent. */
+    const rEv = x.verifieTexte('SWOGE Bet: every market, one book 🏟️', sujetBet);
+    const rNo = x.verifieTexte('SWOGE Bet: no limits 🏟️', sujetBet);
+    ok(!rEv.ok && rEv.raison === 'affirmation absente des faits : every' && !rNo.ok && rNo.raison === 'affirmation absente des faits : no limits'
+       && x.verifieTexte('One egg in every 1,200 kills in SWOGE World 🥚', sujetOeufs).ok && x.verifieTexte('Y\'all, SWOGE Bet has real fixtures 🏟️', sujetBet).ok,
+       '« every » et « no limits » absents des faits sont refuses ; « every » d un fait passe, « y\'all » n affirme rien');
+    /* Chaque mot qui affirme a SON temoin (mutations A06, A07, A11, A12) : refuse s il manque aux faits,
+       permis s il y est. La liste est celle de l ESSAI : un mot retire du module fait tomber l essai. */
+    const AFFIRME = ['every', 'everyone', 'everybody', 'everything', 'everywhere', 'all', 'any', 'anyone', 'anybody', 'anything', 'anywhere', 'anytime', 'always',
+      'forever', 'unlimited', 'endless', 'only', 'first', 'free', 'best', 'biggest', 'fastest', 'cheapest', 'lowest', 'highest', 'largest', 'safest', 'safer', 'safe',
+      'secure', 'secured', 'securely', 'sharpest', 'greatest', 'smartest', 'top', 'leading', 'than', 'beat', 'beats', 'beating', 'outperform', 'outperforms',
+      'outperformed', 'outperforming', 'fully', 'completely', 'totally', 'entirely'];
+    const affKo = AFFIRME.filter((m) => {
+      const r = x.verifieTexte('SWOGE Bet: ' + m + ' 🏟️', sujetNu('SWOGE Bet is our sportsbook.'));
+      return !(!r.ok && r.raison === 'affirmation absente des faits : ' + m && x.verifieTexte('SWOGE Bet: ' + m + ' 🏟️', sujetNu('SWOGE Bet is ' + m + '.')).ok);
+    });
+    ok(affKo.length === 0, AFFIRME.length + ' mots qui affirment : chacun refuse s il manque aux faits, permis s il y est' + (affKo.length ? ' — faux : ' + affKo.join(', ') : ''));
+    /* Chaque chose comptee a SON temoin (mutations U-*) : « 7 X » refuse quand les faits ont 7 sans X,
+       permis quand ils disent « 7 X ». Liste de l ESSAI ; une unite du module sans temoin fait tomber l essai. */
+    const COMPTES = [['sport', 'sports'], ['league', 'leagues'], ['competition', 'competitions'], ['market', 'markets'], ['match', 'matches'], ['game', 'games'],
+      ['player', 'players'], ['user', 'users'], ['holder', 'holders'], ['bettor', 'bettors'], ['member', 'members'], ['follower', 'followers'], ['token', 'tokens'],
+      ['agent', 'agents'], ['chain', 'chains'], ['country', 'countries'], ['model', 'models'], ['episode', 'episodes'], ['series', 'series'], ['character', 'characters'],
+      ['creator', 'creators'], ['trader', 'traders'], ['wallet', 'wallets'], ['kill', 'kills'], ['level', 'levels'], ['second', 'seconds'], ['minute', 'minutes'],
+      ['hour', 'hours'], ['day', 'days'], ['week', 'weeks'], ['month', 'months']];
+    const sujetCine7 = (lead) => ({ nom: 'SWOGE AI Cinema', motsCles: P('cinema').motsCles, interdits: P('cinema').interdits, lead, autres: [], vivants: [] });
+    const cptKo = COMPTES.filter(([u, pl]) => {
+      const r = x.verifieTexte('SWOGE AI Cinema: 7 ' + pl + ' 🎬', sujetCine7('SWOGE AI Cinema has 7 of them.'));
+      return !(!r.ok && r.raison === 'compte absent des faits : 7 ' + u && x.verifieTexte('SWOGE AI Cinema: 7 ' + pl + ' 🎬', sujetCine7('SWOGE AI Cinema has 7 ' + pl + '.')).ok);
+    });
+    const unitesSansTemoin = x.UNITES.filter((u) => !COMPTES.some(([v]) => v === u));
+    ok(cptKo.length === 0 && unitesSansTemoin.length === 0, COMPTES.length + ' choses comptees : « 7 X » refuse sans « 7 X » dans les faits, permis avec ; aucune unite du module sans temoin'
+       + (cptKo.length ? ' — faux : ' + cptKo.map((c) => c[0]).join(', ') : '') + (unitesSansTemoin.length ? ' — sans temoin : ' + unitesSansTemoin.join(', ') : ''));
+    /* La consigne (mutation FA8) : la Ligue des champions est offerte, pas les coupes nationales ni l Europa. */
+    ok(/no domestic cups and no Europa or Conference League \(the Champions League is offered\)/.test(x.SYSTEME) && !/no cup competitions/.test(x.SYSTEME),
+       'la consigne dit que la Ligue des champions est offerte (le fait prix-marche la nomme) et refuse les coupes nationales, l Europa et la Conference League');
 
     console.log('   10d. les reserves');
     const tags = { ticker: true, hashtag: true };
@@ -995,6 +1120,22 @@ const cfg = require('./config');
     const sansMarche = simule('2026-12-01', 14);
     ok(!v.bet.sixGrands && !sansMarche.some((c) => c.fait === 'prix-marche') && !simule('2026-10-12', 5).some((c) => /^bet-marche/.test(c.nouveaute || '')),
        'variable vide (retour a l Elo partout) : aucun fait ni aucune nouveaute de prix au marche');
+    /* Mutation L21 (seconde relecture du 11/10) : liste vide, aucun « 0 soccer leagues … ». */
+    ok(!v.bet.faits.some((f) => /^0\b/.test(f)), 'variable vide : aucun chiffre vivant « 0 … » sur les championnats' + (v.bet.faits.length ? ' — ' + v.bet.faits.join(' | ') : ''));
+    /* Le singulier (seconde relecture du 11/10 : « 1 matches … across 1 sports »), et rien sous deux matchs. */
+    {
+      const paris = require('./paris'); const ouv = paris.ouverts;
+      process.env.PARIS_PRIX_LIGUES = 'soccer_epl';
+      paris.ouverts = () => [{ sport: 'foot', competition: 'EPL', prixMarche: true }];
+      const v1 = x.instantane(null, Date.now());
+      paris.ouverts = () => [{ sport: 'foot', competition: 'EPL', prixMarche: true }, { sport: 'foot', competition: 'EPL' }];
+      const v2 = x.instantane(null, Date.now());
+      paris.ouverts = ouv; process.env.PARIS_PRIX_LIGUES = '';
+      ok(!v1.bet.faits.some((f) => /matches are open/.test(f)) && v1.bet.faits.includes('1 of the matches open on SWOGE Bet right now is priced off the betting market.')
+         && v1.bet.faits.includes('1 soccer league on SWOGE Bet is priced off the betting market right now.')
+         && v2.bet.faits.includes('2 matches are open right now on SWOGE Bet across 1 sport (soccer) and 1 competition.'),
+         'au singulier : « 1 soccer league … is », « 1 sport », « 1 competition » ; un seul match ouvert n est pas annonce');
+    }
     if (ancien === undefined) delete process.env.PARIS_PRIX_LIGUES; else process.env.PARIS_PRIX_LIGUES = ancien;
     process.env.PARIS_AUTO = '0';
     ok(!simule('2026-12-01', 21).some((c) => c.fait === 'reglement') && simule('2026-12-01', 21).some((c) => c.produit === 'bet'), 'PARIS_AUTO=0 : le reglement automatique n est plus annonce');
@@ -1014,12 +1155,19 @@ const cfg = require('./config');
       const v17 = x.instantane(null, Date.now());
       ok(v17.bet.sixGrands && !v17.bet.dixSept && simule('2026-10-12', 1)[0].nouveaute !== 'bet-marche-17',
          '17 cles dont ONZE autres que celles que la nouveaute nomme (Championship, Serie B, MLS, Liga MX…) : « 17 » n est pas dit');
+      /* Mutation L06 (seconde relecture du 11/10) : 17 cles dont DIX des onze secondaires — sans Liga MX,
+         que la nouveaute nomme. « some » au lieu de « every » la ferait partir. */
+      process.env.PARIS_PRIX_LIGUES = prixLigues.LIGUES_DEFAUT.concat(x.SECONDAIRES.filter((k) => k !== 'soccer_mexico_ligamx'), ['soccer_brazil_campeonato']).join(',');
+      const v17b = x.instantane(null, Date.now());
+      ok(v17b.bet.sixGrands && !v17b.bet.dixSept && simule('2026-10-12', 1)[0].nouveaute !== 'bet-marche-17',
+         '17 cles dont dix des onze secondaires (sans Liga MX, que la nouveaute nomme) : « 17 » n est pas dit');
       /* U03 : un fait dont la condition est fausse n arrive pas non plus comme VOISIN. */
       process.env.PARIS_PRIX_LIGUES = ''; process.env.PARIS_AUTO = '0';
       const vVide = x.instantane(null, Date.now());
       const cond = P('bet').faits.filter((f) => f.condition).map((f) => f.texte);
-      const fuitesCond = P('bet').faits.filter((f) => { const s = x.sujetDe({ produit: 'bet', fait: f.id }, vVide); return cond.includes(s.lead) || s.autres.some((t) => cond.includes(t)); });
-      ok(cond.length >= 2 && fuitesCond.length === 0, 'variable vide et PARIS_AUTO=0 : ni le prix au marche ni le reglement automatique, en fait vedette comme en voisin, quel que soit le fait demande'
+      /* Mutation U03c (seconde relecture du 11/10) : ni comme RESERVE non plus — elle part sans relecture. */
+      const fuitesCond = P('bet').faits.filter((f) => { const s = x.sujetDe({ produit: 'bet', fait: f.id }, vVide); return cond.includes(s.lead) || s.autres.some((t) => cond.includes(t)) || s.reserves.some((t) => cond.includes(t)); });
+      ok(cond.length >= 2 && fuitesCond.length === 0, 'variable vide et PARIS_AUTO=0 : ni le prix au marche ni le reglement automatique, en fait vedette, en voisin ou en reserve, quel que soit le fait demande'
          + (fuitesCond.length ? ' — ' + fuitesCond.map((f) => f.id).join(', ') : ''));
       /* N22 : un creneau repris dont la nouveaute n est plus vraie revient au produit. */
       const repris = x.sujetDe({ produit: 'bet', nouveaute: 'bet-marche-17', fait: 'bet-marche-17' }, vVide);
@@ -1035,6 +1183,12 @@ const cfg = require('./config');
       const avec = simule('2026-12-01', 28).filter((c) => c.produit === 'world').map((c) => c.fait);
       cfg.PRIX_MONDE_GOLD = g;
       ok(!sans.includes('classement') && avec.includes('classement'), 'PRIX_MONDE_GOLD a 0 : le prix mensuel du classement n est pas annonce ; pose, il l est');
+      /* Mutation U03c : ni en voisin ni en reserve. */
+      cfg.PRIX_MONDE_GOLD = 0;
+      const tClass = P('world').faits.find((f) => f.id === 'classement').texte;
+      const fuitesW = P('world').faits.filter((f) => { const s = x.sujetDe({ produit: 'world', fait: f.id }, {}); return s.lead === tClass || s.autres.includes(tClass) || s.reserves.includes(tClass); });
+      cfg.PRIX_MONDE_GOLD = g;
+      ok(fuitesW.length === 0, 'PRIX_MONDE_GOLD a 0 : le prix du classement n arrive ni en fait vedette, ni en voisin, ni en reserve' + (fuitesW.length ? ' — ' + fuitesW.map((f) => f.id).join(', ') : ''));
     }
     /* L11 : `planifie` garde le jeu et la colonie MEME quand les posts sont eteints (sans eux les
        chiffres vivants se taisent sans bruit). Cles retirees le temps de l appel : rien ne s arme. */
@@ -1071,7 +1225,7 @@ const cfg = require('./config');
     fs.readdirSync(VOL).forEach((f) => { if (f === 'x_posts.json') fs.unlinkSync(path.join(VOL, f)); });
     Object.assign(process.env, { X_CONSUMER_KEY: 'ck', X_CONSUMER_SECRET: 'cs', X_ACCESS_TOKEN: 'at', X_ACCESS_SECRET: 'as', OPENAI_API_KEY: 'ok', ANTHROPIC_API_KEY: 'ak',
                                  X_HEURES: H4.join(','), X_FUSEAU: 'America/New_York', X_ANNONCE: '0' });
-    const demandes = [], tweets = []; let k = 0; let kDollar = -1;
+    const demandes = [], tweets = [], juges = []; let k = 0; let kDollar = -1;
     /* Trois creneaux recoivent un texte fautif : un mot interdit, un nombre invente, un texte qui ne nomme rien.
        Un quatrieme (relecture du 11/10, mutation V07), sur un creneau qui porte $SWOGE : le faux nom
        « $SWOGE Bet » / « $SWOGE World », qui doit partir corrige. Les autres textes portent deux mots
@@ -1083,6 +1237,7 @@ const cfg = require('./config');
       const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
       if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false, "why": "paws"}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG').toString('base64') }] });
+      if (/anthropic/.test(u) && corps.system === x.SYSTEME_JUGE) { juges.push(corps.messages[0].content); return rep(200, { content: [{ type: 'text', text: '{"ok": true, "claim": ""}' }] }); }
       if (/anthropic/.test(u)) {
         const d = corps.messages[0].content; demandes.push(d);
         const nom = (/^PRODUCT: (.+?) \(name it/m.exec(d) || [])[1];
@@ -1118,6 +1273,12 @@ const cfg = require('./config');
     ok(refuses.every((e) => e.via === 'reserve' && !/live betting|777|built different/.test(e.texte) && P(e.produit).motsCles.test(e.texte)),
        'a leur place part une reserve vraie du meme produit');
     ok(entrees.filter((e) => !e.refus).every((e) => e.via === 'modele'), 'les autres textes du modele partent tels quels (nettoyes)');
+    /* Le second regard (seconde relecture du 11/10) : chaque texte qui a passe les listes est relu, avec
+       les MEMES faits que l auteur, et tel qu il partira ; un texte refuse par les listes ne l est pas. */
+    const relus = entrees.filter((e) => !e.refus);
+    ok(juges.length === relus.length && relus.every((e, i) => juges[i].endsWith('\n\nPOST:\n' + e.texte)
+       && juges[i].includes('\nFACTS:\n- ' + ((/^LEAD FACT \(the post is built on this one\): (.+)$/m.exec(demandes[entrees.indexOf(e)]) || [])[1] || '\u0000'))),
+       'chaque texte du modele qui a passe les listes est relu une fois (' + juges.length + '), avec le fait vedette de sa demande et tel qu il part');
     ok(!demandes.some((d) => /characters are alive|Boulier progressive jackpot/.test(d)), 'trois personnages vivants, une cagnotte vide : rien de vivant dans les demandes');
     const DOMAINE = /\b[a-z0-9-]+\.(dog|fun|com|io|xyz|ai|net|org|app|gg|tv|me|co|so|fi)\b/i;
     ok(tweets.every((t) => !/https?:/.test(t) && !DOMAINE.test(t)), 'aucun lien sans X_LIEN, ni adresse ni domaine nu (X en ferait un lien)');
@@ -1195,6 +1356,7 @@ const cfg = require('./config');
       const rep = (statut, jj) => ({ ok: statut < 300, status: statut, json: async () => jj });
       if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG').toString('base64') }] });
+      if (/anthropic/.test(u) && corps.system === x.SYSTEME_JUGE) return rep(200, { content: [{ type: 'text', text: '{"ok": true}' }] });
       if (/anthropic/.test(u)) { const nom = (/^PRODUCT: (.+?) \(name it/m.exec(corps.messages[0].content) || [])[1]; return rep(200, { content: [{ type: 'text', text: nom + ' says gm 🐕' }] }); }
       if (/media\/upload/.test(u)) return rep(200, { data: { id: 'm1' } });
       if (/2\/tweets/.test(u)) return rep(201, { data: { id: '9001' } });
@@ -1218,6 +1380,71 @@ const cfg = require('./config');
     ok(r2.etat === 'poste' && e2.produit === 'cinema' && e2.fait === 'episodes' && e2.rang === 7 && r2.texte === 'SWOGE AI Cinema has 14 episodes across 3 series 🍿'
        && e2.scene === 'popcorn' && e2.angle === x.TONS_PRODUIT[0].a,
        'un creneau rate puis repris garde son sujet (produit, fait, rang), sa scene meme sans image encore faite, son ton et son texte : le journal decide, pas le choix du moment');
+  }
+
+  console.log('   10l. le second regard, et les textes faux connus (seconde relecture du 11/10)');
+  {
+    const avant = { a: process.env.ANTHROPIC_API_KEY, j: process.env.X_JUGE, l: process.env.X_LIEN };
+    process.env.ANTHROPIC_API_KEY = 'ak'; delete process.env.X_JUGE; delete process.env.X_LIEN;
+    const sB = x.sujetDe({ produit: 'bet', fait: 'carnet' }, {});
+    const tags = x.etiquettes('k', x.env().heures);
+    const VRAI = 'SWOGE Bet: real fixtures, odds locked when you tap. Built different 🐕';
+    /* Un faux modele : l auteur ecrit `texte`, le juge repond `verdict` (un texte, un statut HTTP ou une panne). */
+    const essai = async (verdict, texte) => {
+      const vus = [];
+      const f = async (u, req) => {
+        const c = JSON.parse(req.body); vus.push(c);
+        if (c.system === x.SYSTEME_JUGE) {
+          if (verdict instanceof Error) throw verdict;
+          if (typeof verdict === 'number') return { ok: false, status: verdict, json: async () => ({}) };
+          return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: verdict }] }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: texte || VRAI }] }) };
+      };
+      return { r: await x.ecritTexte([], { scene: { prompt: 's' }, cle: 'k', sujetProduit: sB, postes: [] }, f), vus };
+    };
+    const estReserve = (r) => r.via === 'reserve' && sB.reserves.some((t) => x.nettoie(t, false, tags) === r.texte);
+    let e = await essai('{"ok": true, "claim": ""}');
+    const dj = (e.vus[1] || { messages: [{}] }).messages[0].content || '';
+    ok(e.r.via === 'modele' && e.vus.length === 2 && e.vus[1].system === x.SYSTEME_JUGE && dj.includes('\nFACTS:\n- ' + sB.lead)
+       && sB.autres.every((t) => dj.includes('\n- ' + t)) && dj.endsWith('\n\nPOST:\n' + e.r.texte),
+       'un oui franc du second regard : le texte part, et le juge a vu les MEMES faits que l auteur et le texte tel qu il part');
+    const fuites = [];
+    for (const [nom, v] of [['un non', '{"ok": false, "claim": "the vault is insured"}'], ['un oui sans JSON', 'Yes, all good'], ['« true » en texte', '{"ok": "true"}'],
+      ['un JSON casse', '{"ok": tru'], ['HTTP 529', 529], ['une panne reseau', new Error('ECONNRESET')]]) {
+      e = await essai(v);
+      if (!estReserve(e.r) || !/^juge/.test(e.r.refus || '')) fuites.push(nom + ' : ' + e.r.via + ' ' + (e.r.refus || ''));
+    }
+    ok(fuites.length === 0, 'tout ce qui n est pas un oui franc (un non, un oui sans JSON, « true » en texte, un JSON casse, HTTP 529, une panne reseau) poste une reserve du produit, la raison commence par « juge »'
+       + (fuites.length ? ' — ' + fuites.join(' | ') : ''));
+    e = await essai('{"ok": false, "claim": "the vault is insured"}');
+    eq(e.r.refus, 'juge : the vault is insured', 'le journal garde ce que le juge a refuse');
+    e = await essai('{"ok": true}', 'SWOGE Bet now has live betting 🔥');
+    ok(estReserve(e.r) && e.vus.length === 1 && /mot interdit/.test(e.r.refus), 'un texte refuse par les listes ne va pas au juge (un appel de moins)');
+    process.env.X_JUGE = '0';
+    e = await essai('{"ok": false}');
+    ok(e.r.via === 'modele' && e.vus.length === 1, 'X_JUGE=0 eteint le second regard (les listes restent)');
+    delete process.env.X_JUGE;
+
+    /* Les textes faux connus : les 248 de la seconde relecture du 11/10 et 103 ecrits ensuite, sans les
+       5 qui n etaient pas faux ou que seul le juge attrape (une URL que nettoie retire ; « take the jackpot
+       home » et « free to play », vrais ; « extra time counts », un sens inverse, et « hold BTC and SOL »,
+       laisses au second regard). Chacun doit etre refuse par les listes SANS le juge ; et des textes
+       vrais du ton attendu doivent passer (7 de 63 etaient refuses le 11/10 : « every slip », « only »,
+       « top », « No surprises », « first » x2… — un refus de trop poste une reserve vraie, il ne ment pas). */
+    const vT = { bet: { sixGrands: true, dixSept: true, auto: true } };
+    const lit = (f) => JSON.parse(fs.readFileSync(path.join(__dirname, 'essais', 'x_post', f), 'utf8'));
+    const sujetCas = ([c, f]) => x.sujetDe(f.startsWith('N:') ? { produit: c, nouveaute: f.slice(2) } : { produit: c, fait: f }, vT);
+    const passe = (cas) => x.verifieTexte(x.nettoie(x.corrigeNoms(cas[2]), false, { ticker: false, hashtag: false }), sujetCas(cas)).ok;
+    const FAUX_CONNUS = lit('faux.json'), VRAIS_CONNUS = lit('vrais.json');
+    const fuitent = FAUX_CONNUS.filter(passe), refusesV = VRAIS_CONNUS.filter((c) => !passe(c));
+    ok(FAUX_CONNUS.length >= 346 && fuitent.length === 0, FAUX_CONNUS.length + ' textes faux connus, tous refuses par les listes, sans le second regard'
+       + (fuitent.length ? ' — passent : ' + fuitent.map((c) => c[2]).join(' | ') : ''));
+    ok(VRAIS_CONNUS.length >= 56 && refusesV.length === 0, VRAIS_CONNUS.length + ' textes vrais du ton attendu, tous acceptes : les listes ne refusent pas tout'
+       + (refusesV.length ? ' — refuses : ' + refusesV.map((c) => c[2] + ' (' + x.verifieTexte(x.nettoie(x.corrigeNoms(c[2]), false, { ticker: false, hashtag: false }), sujetCas(c)).raison + ')').join(' | ') : ''));
+    if (avant.a === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = avant.a;
+    if (avant.j !== undefined) process.env.X_JUGE = avant.j;
+    if (avant.l !== undefined) process.env.X_LIEN = avant.l;
   }
   delete process.env.X_ANNONCE;
 

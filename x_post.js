@@ -31,7 +31,8 @@
  *
  *  - l image : 6 893 jetons de sortie pour une 1536x1024 en qualite high
  *    avec gpt-image-1.5, a 32 $ le million → environ 0,22 $ ;
- *  - le texte : quelques centaines de jetons, moins d un centime ;
+ *  - le texte : quelques centaines de jetons, moins d un centime (deux appels
+ *    depuis le 11/10 : l auteur, puis le second regard, `jugeTexte`) ;
  *  - X, en paiement a l usage : « Post: Create » 0,015 $ SANS lien dans le
  *    texte, 0,200 $ AVEC (grille docs.x.com, meme jour). D ou `X_LIEN` : le
  *    lien ne part que si on le demande, c est treize fois le prix.
@@ -86,6 +87,7 @@ function env() {
     modeleImage: process.env.X_MODELE_IMAGE || 'gpt-image-1.5',
     modeleVision: process.env.X_MODELE_VISION || 'gpt-4o-mini',
     modeleTexte: process.env.X_MODELE_TEXTE || 'claude-sonnet-5',
+    modeleJuge: process.env.X_MODELE_JUGE || process.env.X_MODELE_TEXTE || 'claude-sonnet-5',
     compte: process.env.X_COMPTE || 'SwoleDogeSwoge',
     domaine: process.env.RAILWAY_PUBLIC_DOMAIN || '',
   };
@@ -439,7 +441,7 @@ const PRODUITS = [
         preuve: 'site whitepaper.html:2786-2790 (section 41 « Buying it buys $SWOGE first, even when the buyer pays in ETH »)' },
       { id: 'achat', texte: 'No $SWOGEBET yet? The SWOGE Bet page links its DexScreener pair on Robinhood Chain, so you can pick some up before your first bet.',
         preuve: 'site swogebet.html:2731-2732 (carte BUY $SWOGEBET), :2780 (dexscreener.com/robinhood/0xc129…924e)' },
-      { id: 'sports', texte: 'Seven sports have a tab on SWOGE Bet: soccer, tennis, NBA, NFL, cricket, NHL and MLB. A sport with no fixtures shows its return date or soon.',
+      { id: 'sports', texte: 'Seven sports have a tab on SWOGE Bet: soccer, tennis, NBA, NFL, cricket, NHL and MLB.',
         preuve: 'serveur paris.js:60-90 (SPORTS), paris_import.js:1263-1265 ; site swogebet.html:3457-3486' },
       { id: 'marches', texte: 'Soccer matches on SWOGE Bet carry six markets: match result, double chance, both teams to score, over/under 2.5 goals, handicap -1.5 and correct score.',
         preuve: 'serveur paris.js:169-252 (MARCHES) ; site swogebet.html:3333-3344, index.html:1179' },
@@ -452,15 +454,19 @@ const PRODUITS = [
         preuve: 'serveur prix_ligues.js:16-17 (LIGUES_DEFAUT), prix_marche.js:32-37 (ordre des references) ; commit d856863. Condition : les six cles dans prix_ligues.ligues()' },
       { id: 'elo', texte: 'SWOGE Bet prices tennis, NBA, NFL, NHL, MLB and cricket with its own Elo ratings, recalibrated every week.',
         preuve: 'serveur paris.js:631 (aLElo) ; EXPLOITATION.md:481 (etalonnage hebdomadaire de paris_notes.json)' },
-      { id: 'fermeture', texte: 'Betting on a match on SWOGE Bet closes at kickoff, checked against the real start time on ESPN, not just the schedule.',
-        preuve: 'serveur paris.js:506-511 (ouverts), :576-610 (ouvert : etat ESPN in/post, heure ESPN moins 60 s)' },
-      /* Sans cadence : la page ne redemande parisListe qu a hello, auth et :4105 (aucun setInterval),
-         et DIRECT_AGE (server.js:89) est l age maximal du cache ESPN, pas un rafraichissement. */
-      { id: 'direct', texte: 'A LIVE NOW board on SWOGE Bet shows the scores of matches under way, from ESPN. Scores only, no odds.',
-        preuve: 'site swogebet.html:3537-3552 (sbPeintDirect, « no odds and no button »), :4085, :4097, :4111 ; serveur server.js:191-235 (directFrais)' },
+      /* « soccer » (seconde relecture du 11/10) : le tennis n a ni tableau ESPN (paris_import.js:1430-1433)
+         ni verrou d heure reelle (paris.js:603-607) ; le football, lui, a un chemin ESPN pour chaque
+         championnat vendu (scores_espn.js:47, CHEMINS). */
+      { id: 'fermeture', texte: 'Betting on a soccer match on SWOGE Bet closes at kickoff, checked against the real start time on ESPN, not just the schedule.',
+        preuve: 'serveur paris.js:506-511 (ouverts), :576-610 (ouvert : etat ESPN in/post, heure ESPN moins 60 s), scores_espn.js:47-70 (CHEMINS, un tableau par championnat de football vendu)' },
+      /* Le tableau LIVE NOW (scores des matchs en cours) est RETIRE a la seconde relecture du 11/10 : vrai,
+         mais c est l appat du pari en direct, qui n est pas vendu (paris_en_jeu.js n est pas sur main) —
+         ses paraphrases (« real-time betting », « bet while you watch », « scores update live », faux
+         aussi : la page ne redemande parisListe qu a hello et auth, swogebet.html:4085-4105) passaient. */
+      /* Sans « from ESPN » : le tennis se regle par le /scores de The Odds API (paris_import.js:1430-1433). */
       { id: 'reglement', condition: (v) => !!v.auto,
-        texte: 'SWOGE Bet settles on its own: once the final score is in from ESPN and a safety delay has passed, winning slips are paid to your $SWOGEBET bet balance, no claim needed.',
-        preuve: 'serveur paris_import.js:1726-1730 (PARIS_AUTO, AUTO_DELAI_MIN 90) ; game.js:4320-4332. Condition : PARIS_AUTO different de 0 dans le processus' },
+        texte: 'SWOGE Bet settles on its own: once the final score is in and a safety delay has passed, winning slips are paid to your $SWOGEBET bet balance, no claim needed.',
+        preuve: 'serveur paris_import.js:1726-1730 (PARIS_AUTO, AUTO_DELAI_MIN 90) ; game.js:4320-4332, 4424-4426 (_crediteTicket : betBalance, pas le portefeuille). Condition : PARIS_AUTO different de 0 dans le processus' },
       { id: '90min', texte: 'Soccer bets on SWOGE Bet settle on the 90-minute score. Extra time and penalties don\'t count.',
         preuve: 'serveur scores_espn.js:255-257 (FOOT_REGLEMENTAIRE), commit 1a9dcd6' },
       { id: 'coffre', texte: 'The SWOGE Bet vault is its own on-chain contract, verified on Blockscout, and withdrawals are signed vouchers that you cash yourself.',
@@ -470,16 +476,36 @@ const PRODUITS = [
     ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
     reserves: [
       'SWOGE Bet: real fixtures, and your odds lock in the moment you place the bet. Nothing changes them after. 🏟️🐕',
-      'Seven sports, one sportsbook. SWOGE Bet covers soccer, tennis, NBA, NFL, cricket, NHL and MLB, all played in $SWOGEBET. ⚽🐕',
+      'Seven sports, one sportsbook. SWOGE Bet covers soccer, tennis, NBA, NFL, cricket, NHL and MLB, played in $SWOGEBET only. ⚽🐕',
     ],
     /* En anglais americain « football » est la NFL ; « $SWOGE Bet » est un faux nom ; le carnet n est
        pas « provably fair » (c est le vocabulaire du casino) ; les cotes ne sont pas sur la chaine ;
        aucune mise maximum (la page et le serveur se contredisent) ; jamais « copie du livre ».
        Relecture du 11/10 : le pari en jeu se dit aussi « in-game », « in-running » ; aucun cash-out
        (un pari reste jusqu au reglement) ; aucune cadence du tableau LIVE NOW (il ne se rafraichit pas seul). */
+    /* Seconde relecture du 11/10, 130 textes adverses :
+       - le pari en direct, paraphrase (« Real-time betting », « live wagering », « bet while you watch »,
+         « place your bets after kickoff », « halftime bets », « next goal markets », « matches already
+         under way ») : « live » n est permis que dans « is live » / « now live » (le produit est en ligne) ;
+       - le prix du marche etendu a ce qui ne l a pas : prix_marche.js ne releve que le h2h (:152), le
+         plus/moins au total des livres est en OBSERVATION (87528fc), le tennis est a l Elo ou suspendu
+         (paris.js:603-607) — refuse un marche, un sport ou « tous » dans la MEME phrase que le marche ;
+       - le paiement : la passe quotidienne attend jusqu a 24 h (paris_import.js:1737-1742) et le gain va
+         au solde des paris, pas au portefeuille (game.js:4424-4426). */
     interdits: [/\bfootball\b/i, /\$SWOGE Bet\b/, /provably fair/i, /on[- ]?chain odds|odds (are |live )?on[- ]?chain/i, /no sign[- ]?up/i,
-      /\bmax(imum)? (stake|bet)\b|\bup to [\d,]+ \$SWOGEBET/i, /copied|straight from the book/i, /every bet is (announced|posted)/i,
-      /\bin[- ](game|match|running)\b/i, /\bcash(es|ed|ing)?[- ]?out\b/i, /\brefresh\w*|\bupdates? every\b|\bevery \w+ seconds\b/i] },
+      /\bmax(imum)? (stake|bet)\b|\bup to [\d,]+ \$SWOGEBET/i, /copied|straight from\b|\b(fair|true|raw) odds\b|\bminus\b|\bidentical\b/i, /every bet is (announced|posted)/i,
+      /\bin[- ](game|match|running)\b/i, /\bcash(es|ed|ing)?[- ]?out\b/i, /\brefresh\w*|\bupdates? every\b|\bevery \w+ seconds\b/i,
+      /(?<!\b(?:is|are|went|goes|go|now) )\blive\b|\blive[\s-]+(?!(and|now|on|today|for|to|in|with)\b)[a-z]/i,
+      /\breal[- ]?time\b|\b(half|full)[- ]?time\b|\bnext goal\b|\bunder ?way\b|\bin progress\b|\bsecond[- ]half\b|\bwhile (you('re)? |u )?watch\w*|\bunfold\w*|\bstream\w*/i,
+      /\b(over|under|O\/U|goal lines?|total goals|handicaps?|correct score|both teams|BTTS|double chance|(every|all|each) (markets?|sports?|leagues?|matches|games)|tennis|NBA|NFL|NHL|MLB|cricket)\b[^.!?\n]*\b(\bmarket\b|Betfair|Pinnacle|exchange|the books)\b|\b(\bmarket\b|Betfair|Pinnacle|exchange|the books)\b[^.!?\n]*\b(over|under|O\/U|goal lines?|total goals|handicaps?|correct score|both teams|BTTS|double chance|(every|all|each) (markets?|sports?|leagues?|matches|games)|tennis|NBA|NFL|NHL|MLB|cricket)\b/i,
+      /\bwhistle\b|\b(to|into|in) your wallet\b/i,
+      /* Ce qui n est pas au carnet : props, combines du meme match (une selection par match), esport,
+         F1, UFC… ; un marche ou un sport dit d un autre ; le tennis sur ESPN ; un paiement « the moment »
+         ou « within the hour » ; paye en autre chose que $SWOGEBET ; « worldwide », « legal ». */
+      /\bprops?\b|\bsame[- ]game\b|\besports?\b|\bF1\b|\bUFC\b|\bMMA\b|\bboxing\b|\bhorse\w*/i,
+      /\bmarkets?\b[^.!?]{0,20}\b(tennis|NBA|NFL|NHL|MLB|cricket)\b|\btennis\b[^.!?]*\bESPN\b|\bESPN\b[^.!?]*\btennis\b/i,
+      /\bthe moment\b(?! you place)|\bwithin\b|\bafter\b[^.!?]{0,20}\b(goal|kick[- ]?off|start|whistle)\b|\bpaid (out )?(in|with) (?!\$?SWOGEBET)|\bdoubl(es|ed|ing)\b|\btripl\w*/i,
+      /\bworldwide\b|\bglobal(ly)?\b|\blegal\w*|\bstates?\b|\bcountr(y|ies)\b/i] },
 
   { cle: 'world', nom: 'SWOGE World', motsCles: /SWOGE World\b/i, lien: 'https://swoleeswoge.dog/nexus.html',
     scenes: ['nexus', 'oeuf', 'portail', 'mine'],
@@ -536,8 +562,13 @@ const PRODUITS = [
        play-to-earn, l or ne sort pas du jeu ; les objets ne sont pas des NFT ; personnages de tiers
        (Boy's Club) et monstre au nom de marque jamais nommes ; aucun chiffre de joueurs invente.
        (Les NFT, le manga et le play-to-earn sont refuses par MOTS_INTERDITS, pour tous les produits.) */
-    interdits: [/cinema|\bmovies?\b|\bfilms?\b|\bseries\b|\+18/i, /\bearn/i, /\bAI agents?\b/i,
-      /\bPepe\b|\bAndy\b|\bBrett\b|Landwolf|Optimus|Street Fighter/i, /thousands of players|\bmillions?\b/i, /provably fair|exclusive|premium/i] },
+    /* Seconde relecture du 11/10 : l or ne s echange contre rien (config.js:350-355) — ni retrait, ni
+       cash-out, ni echange, ni vente, ni « real prizes » ; « AI-driven NPCs » ; « a growing player base ».
+       (« earn » est refuse pour tous les produits, MOTS_INTERDITS.) */
+    interdits: [/cinema|\bmovies?\b|\bfilms?\b|\bseries\b|\+18/i, /\bAI\b/i,
+      /\bPepe\b|\bAndy\b|\bBrett\b|Landwolf|Optimus|Street Fighter/i, /thousands of players|\bmillions?\b|\bplayer ?base\b|\bgrowing\b/i, /provably fair|exclusive|premium/i,
+      /\bwithdraw\w*|\bcash(es|ed|ing)?[- ]?out\b|\btrad(e|es|ed|ing|able|eable)\b|\bsell\w*|\bprize pool\b|\breal (money|value|rewards?|prizes?)\b|\bpaid\b|\bpay(s|outs?)?\b|\bon[- ]?chain\b/i,
+      /\bpermanent\w*|\bpermadeath\b|\blose everything\b/i] },
 
   { cle: 'casino', nom: 'the SWOGE casino', motsCles: /SWOGE (casino|Games|Blackjack|Spin|Smash|Bonanza|Kennel|Poker)\b|DEAD SWOGE/i, lien: 'https://swoleeswoge.dog/games.html',
     scenes: ['table', 'casino', 'plinko'],
@@ -551,9 +582,12 @@ const PRODUITS = [
       /* Pas « every round » (relecture du 11/10) : Crash et le Boulier tirent d une chaine de hachage
          engagee d avance (crash.js:8-16, boulier_salle.js:63), le Poker a la graine de sa table
          (poker_room.js:45-58), les duels HMAC(graine, 'duel:id') sans graine client (game.js:10159).
-         Graine serveur + graine client + nonce : verifie jeu par jeu ci-dessous. */
-      { id: 'equitable', texte: 'Blackjack, Plinko, Mines and Hi-Lo in the SWOGE casino are provably fair: the server seed\'s SHA-256 hash is shown before you play, and each round is drawn with your client seed and a nonce.',
-        preuve: 'serveur game.js:5537-5540 (_rotateSeed), 6289 (blackjack), 6583 (hilo), 6691 (mines), 6766-6767 (plinko), casino.js:23-31 ; site swoge_blackjack.html:1931, swoge_casino.html:1904' },
+         Graine serveur + graine client + nonce : verifie jeu par jeu ci-dessous.
+         Sans « your client seed » (seconde relecture du 11/10) : la graine client est TIREE par le serveur
+         (game.js:5677, crypto.randomBytes) et aucune page du site n envoie setClientSeed (server.js:7344 ;
+         git grep vide sur le site 01d2818) — « your » laissait croire que le joueur la choisit. */
+      { id: 'equitable', texte: 'Blackjack, Plinko, Mines and Hi-Lo in the SWOGE casino are provably fair: the server seed\'s SHA-256 hash is shown before you play, and the seed itself is published when it rotates.',
+        preuve: 'serveur game.js:5537-5540 (_rotateSeed), 5585-5600 (tourneGraine, publie l ancienne), 6289 (blackjack), 6583 (hilo), 6691 (mines), 6766-6767 (plinko), casino.js:23-31 ; site swoge_blackjack.html:1931, swoge_casino.html:1904' },
       { id: 'graine', texte: 'When the SWOGE casino seed rotates, the old server seed is published so anyone can recompute every round played under it, and a rotation is refused while a hand is still open.',
         preuve: 'serveur game.js:5585-5600 (tourneGraine), 5551-5576 (partiesEnCours) ; site whitepaper.html:1482-1492' },
       { id: 'crash-chaine', texte: 'Crash in the SWOGE casino plays a pre-built hash chain backwards. The commitment is published before the first round, so the house cannot change a future round.',
@@ -599,8 +633,18 @@ const PRODUITS = [
     /* Aucun taux de retour ni avantage de la maison (plusieurs viennent de l env) ; l equite est un
        engagement du serveur, pas « sur la chaine » ; aucune page ne laisse choisir sa graine ; pas
        de bonus de bienvenue ; aucune promesse de gain. */
-    interdits: [/\bRTP\b|house edge|return to player/i, /fair on[- ]?chain|on[- ]?chain fair|verified on the blockchain/i,
-      /choose your (own )?(client )?seed|pick your (own )?seed|your own seed/i, /welcome bonus|free \$?SWOGE\b/i, /\bweekly\b|every week|\bmax(imum)? bet\b|\bmin(imum)? bet\b/i] },
+    /* Seconde relecture du 11/10 : « set / change / control your client seed » (aucune page ne le permet,
+       la graine client est tiree par le serveur, game.js:5677) ; « provably fair » seulement pour les
+       quatre jeux du fait (Blackjack, Plinko, Mines, Hi-Lo), jamais « every game » ni un autre jeu ;
+       « fairness verified on Robinhood Chain ». (« house edge », « welcome gift », « cashback »,
+       « instantly », « in seconds » : MOTS_INTERDITS, pour tous.) */
+    interdits: [/\bRTP\b|return to player/i, /\b(fair\w*|verif\w*|provabl\w*)\b[^.!?]{0,30}\b(on[- ]?chain|blockchain|Robinhood Chain)\b|\bon[- ]?chain fair/i,
+      /\bclient seeds?\b|\b(choose|chose|pick|set|change|control|enter|type|edit)\w*\b[^.!?]{0,25}\bseeds?\b|\byour own seed/i, /free \$?SWOGE\b/i,
+      /\bweekly\b|every week|\bmax(imum)? bet\b|\bmin(imum)? bet\b/i,
+      /\bverif\w*\b[^.!?]{0,25}\b(every|all|any|each)\b|\b(every|all|any|each)\b[^.!?]{0,25}\bverif\w*/i,
+      /\brake\w*|\bcheat\w*|\brigged\b|\bmanipulat\w*|\btournaments?\b|\bjackpot (hits|drops)\b/i,
+      /^(?![\s\S]*\b(Blackjack|Plinko|Mines|Hi-Lo)\b)[\s\S]*\bprovabl/i,
+      /\bprovabl\w*[^.!?]*\b(every|all|each|any|Bonanza|Kennel|Spin|Smash|DEAD SWOGE|Poker|Boulier|Three Card|Hold'?em|slots?|duels?|Crash)\b|\b(every|all|each|any|Bonanza|Kennel|Spin|Smash|DEAD SWOGE|Poker|Boulier|Three Card|Hold'?em|slots?|duels?|Crash)\b[^.!?]*\bprovabl/i] },
 
   { cle: 'wallet', nom: 'SWOGE Wallet', motsCles: /SWOGE Wallet\b|launchpad|SWOGE FUN\b/i, lien: 'https://swoleeswoge.dog/swoge_wallet.html',
     scenes: ['rampe', 'coffre', 'pont'],
@@ -668,9 +712,24 @@ const PRODUITS = [
        du papier ; Face ID est un verrou de confidentialite, pas une protection des fonds ; l apercu
        avertit, il ne garantit rien ; l assistant pre-remplit, il n execute pas. (« Uniswap v4 » est
        refuse par MOTS_INTERDITS, « renounced » couvre « ownership renounced ».) */
-    interdits: [/\bv4\b/i, /\binstant(ly)?\b/i, /\baudit(ed)?\b/i, /buy[- ]?backs?|fund(s|ed)? (it|them)sel(f|ves)/i,
-      /Face ID protects|sign with Face ID|protects? your (funds|money)/i, /keys stay on your device/i, /blocks scams|stops honeypots|honeypot[- ]proof/i,
-      /any Solana token/i, /trades for you|executes (trades|for you)/i, /\brenounced\b/i, /volume bench/i] },
+    /* Seconde relecture du 11/10 — les faux retires, sous leur FORME et plus sous une phrase exacte :
+       « keys never leave your device », « self-custodial » ; « every send / transaction is simulated » (un
+       envoi Solana ne l est pas) ; « blocks failed transactions » (l apercu « warns, never blocks ») ; « bridge
+       ETH from BNB Chain / Polygon / Avalanche » (on y envoie BNB, POL, AVAX : CHAINES_PONT) ; « every token
+       on the launchpad … locked forever » et les regles des pools dites avec Solana (courbe Pump.fun,
+       launchpad.html fiche Solana) ; l agent « buys back » / « trades for it » / « pumps » ; Face ID qui
+       « keeps your funds safe ». (« instant », « audited », « honeypot-proof » : MOTS_INTERDITS.) */
+    interdits: [/\bv4\b/i, /\bbuys?[- ]?backs?\b|\bbuying back\b|fund(s|ed)? (it|them)sel(f|ves)/i,
+      /\b(Face|Touch) ID\b[^.!?]{0,40}\b(funds?|money|safe\w*|secur\w*|protect\w*|guard\w*|assets?|sign\w*)\b|sign with (Face|Touch) ID|protects? your (funds|money)/i,
+      /\bkeys? (never|don'?t|do not) leave\b|\bkeys? stays?\b|\bself[- ]?custod\w*|\bnon[- ]?custod\w*/i,
+      /(?<!never )\bblock(s|ed|ing)?\b|\bstops? (scams?|honeypots?|rugs?|rug pulls?)\b/i,
+      /\btrades? for (you|it|them)\b|\bexecut\w*|\bpump(s|ed|ing)?\b|\bautomatic\w*|\bwhile you sleep\b/i, /\brenounced\b/i, /volume bench/i,
+      /\b(every|all|each) (sends?|transactions?|transfers?|swaps?|bridges?)\b(?! still needs)/i,
+      /\bETH\b[^.!?]{0,40}\b(BNB|Polygon|Avalanche)\b|\b(BNB|Polygon|Avalanche)\b[^.!?]{0,40}\bETH\b/i,
+      /\b(every|all|any|each)\b[^.!?]{0,40}\b(tokens?|launch(es)?)\b(?! agents?)/i,
+      /^(?=[\s\S]*\bSolana\b)[\s\S]*\b(lock\w*|team bag|supply|burn\w*|ERC-?20|no owner|no mint|no tax|blacklist|liquidity|Uniswap|copycats?|trading fees?|fee share)\b/i,
+      /* MEV, recuperation par e-mail, lancement sur une autre chaine, Raydium, l agent qui fait la promotion. */
+      /\bMEV\b|\bfront[- ]?run\w*|\bsandwich\w*|\brecover\w*|\brestor\w*|\bbackup\b|\blose your (phone|device)\b|\blaunch\w*\b[^.!?]{0,30}\b(Base|Ethereum|Arbitrum|BNB|Polygon|Avalanche|Optimism)\b|\bRaydium\b|\bgraduat\w*|\bshill\w*|\bpromot\w*|\bmarkets? (it|your token)\b/i] },
 
   /* « SWOGE AI » seul, jamais le debut de « SWOGE AI Cinema » : un tweet du cinema ne nomme pas SWOGE AI.
      Le lien du produit est celui de la colonie (son volet sans `nom`) ; chaque volet a le sien (LIENS_VOLETS). */
@@ -680,8 +739,10 @@ const PRODUITS = [
     faits: [
       { id: 'colonie', texte: 'SWOGE AI is a colony of AI agents that reads new Robinhood Chain tokens, scores them, paper-trades them at the real price, and learns from what actually worked.',
         preuve: 'site swoge_ai.html:6, 972' },
-      { id: 'papier', texte: 'SWOGE AI is paper trading: the page signs no real transaction, and every colony trade is paper, at real prices.',
-        preuve: 'site swoge_ai.html:977, index.html:1131' },
+      /* Pas « SWOGE AI is paper trading » ni « Paper only » (seconde relecture du 11/10) : la page propose
+         un miroir LIVE en argent reel (swoge_ai.html:977, 1009-1010, 1336). La colonie, elle, est papier. */
+      { id: 'papier', texte: 'The SWOGE AI colony trades on paper, at real prices, and the SWOGE AI page itself signs no real transaction.',
+        preuve: 'site swoge_ai.html:977 (« No real transactions are signed by this interface. The colony\'s trades below are paper, at real prices »)' },
       { id: 'roles', texte: 'In SWOGE AI each agent has one job: the Scout finds new pools, the Warden checks the contract, Whale-Watch reads the holders, Whisper reads the trades one by one, and any of them can veto.',
         preuve: 'site swoge_ai.html:1331-1333 ; serveur ai_colonie.js:797-809 (ROSTER_DEPART)' },
       { id: 'oracle', texte: 'In SWOGE AI the Oracle scores what survived and decides, and before any buy the Test Subject simulates the sale on chain, signing nothing.',
@@ -692,8 +753,12 @@ const PRODUITS = [
       { id: 'preuve', texte: 'The SWOGE AI Proof tab lists everything the server kept, newest first, each token linked to its DexScreener pair.', preuve: 'site swoge_ai.html:1314' },
       { id: 'scanner', texte: 'Paste a token address into the SWOGE AI market scanner and submit it to the colony: it is judged by the same rules as every other token.',
         preuve: 'site swoge_ai.html:1254, swoge_terminal.js:1134-1141 ; serveur server.js:7537-7543 (colonieSoumets, sur ws.addr seulement)' },
-      { id: 'sol-eth', nom: 'Solana AI and Ethereum AI', texte: 'Solana AI and Ethereum AI read every new token on their chain at its first price and again 30 minutes later, and a paper colony buys some at real quotes, fees included, against a blind control.',
-        preuve: 'site swoge_sol_ai.html:8, swoge_eth_ai.html:8' },
+      /* Pas « every new token » (seconde relecture du 11/10) : l observatoire lit UNE page de
+         GeckoTerminal new_pools (20 pools) par chaine et par cycle de 3 min (observatoire.js:15-17, 106,
+         236) — un echantillon, et un jeton sans pool n est jamais vu. La meta description des deux pages
+         du site dit encore « Every new token » : a corriger dans le site. */
+      { id: 'sol-eth', nom: 'Solana AI and Ethereum AI', texte: 'Solana AI and Ethereum AI follow new tokens on their chain from their first price to 30 minutes later, and a paper colony buys some at real quotes, fees included, against a blind control.',
+        preuve: 'serveur observatoire.js:8-19, 73 (HORIZON_MIN 30), 236 (new_pools page 1) ; site swoge_sol_ai.html:8, swoge_eth_ai.html:8 (devis Jupiter / KyberSwap, temoin aveugle)' },
       { id: 'chat', nom: 'SWOGE Agents', texte: 'SWOGE Agents: chat with Claude, ChatGPT and Grok and create images and videos, with no subscription. Each request is billed at its actual cost.',
         preuve: 'site swoge_agents.html:122, 1604-1605' },
       /* Pas « No $SWOGE needed » tout court : « Videos are paid in $SWOGE for now » (swoge_agents.html:1579). */
@@ -727,16 +792,36 @@ const PRODUITS = [
         preuve: 'site swoge_security.html:147-153, 330-345 ; serveur server.js:4654-4662 (/bugbounty/cansell, gratuit pour la page, sur main d592de0)' },
     ].map((f) => Object.assign({ verifie: VERIFIE }, f)),
     reserves: [
-      'SWOGE AI: a colony of AI agents reads new Robinhood Chain tokens, scores them and paper-trades them at the real price. Paper only, and the Proof tab shows what it kept. 🤖🐕',
+      'SWOGE AI: a colony of AI agents reads new Robinhood Chain tokens, scores them and paper-trades them at the real price, and the Proof tab shows what it kept. 🤖🐕',
       'Claude, ChatGPT and Grok in one place, no subscription: SWOGE Agents bills each request at its actual cost, and you can pay in USDC. 🧠🐕',
     ],
     /* SWOGE AI est du papier : ni gain (« profit » est refuse partout, MOTS_INTERDITS), ni taux de gain, ni P&L, ni « l IA gagne » ; le miroir n est
        pas presente ; fournisseurs « peu censures », Tor, bug bounty, mode blackjack (jeu sur des sites
        tiers) jamais ; aucun agent exterieur « qui paie deja » ; l eSIM depend d un fournisseur non
        verifie ; l agent du chat ne lance pas de jeton. */
-    interdits: [/win rate|\bP&L\b|\bPnL\b|makes? money|the AI wins|beats? the market|\bgains?\b/i, /\bmirror\b|real money/i,
+    /* Seconde relecture du 11/10 : la colonie qui « beats the blind control », « outperforms », « is
+       crushing it », « trades for you », « buys for real », « on-chain AI trading », « copy the colony » ;
+       des LECTURES prises pour des jetons distincts (« has scanned 52,340 tokens ») ; « No $SWOGE needed »
+       hors chat / images / taches d agent, et les videos avec USDC (elles se paient en $SWOGE,
+       swoge_agents.html:1579) ; Agent Passport « on-chain » (signe par SWOGE, verifiable : pas sur la
+       chaine) ; Autopilot « for hours » (30 minutes au plus). (« win », « gains », « immune »,
+       « can't be prompt-injected » : MOTS_INTERDITS.) */
+    interdits: [/\bP&L\b|\bPnL\b|makes? money|\bbeat(s|ing|en)?\b|\boutperform\w*|\bcrush\w*/i, /\bmirror\b|real money|\bfor real\b|\breal trades?\b|\blive trading\b|\bcop(y|ies|ying)\b/i,
       /uncensored|Venice|OpenRouter|DeepSeek|Mistral|\bTor\b|\.onion|bug bounty|martingale|paroli|blackjack mode|restyle/i,
-      /already (pay|paying|use|using)|agents? (are )?paying us|\brevenue\b/i, /\beSIM\b/i, /launch(es)? (a |your )?token/i] },
+      /already (pay|paying|use|using)|agents? (are )?paying us|\brevenue\b/i, /\beSIM\b/i, /launch(es)? (a |your )?token/i,
+      /\btrades? for (you|it|them)\b|\b(can|will|it'?ll) (buy|sell|trade|swap)\b|\bbuys? (tokens? )?for you\b|\bon[- ]?chain (AI )?trad\w*/i,
+      /\b(tokens?|coins?) (scanned|analy[sz]ed|vetted|looked at|checked|screened|reviewed|processed|tracked|seen)\b|\b(scanned|analy[sz]ed|vetted|looked at|checked|screened|reviewed|processed|tracked|seen|read)\b[^.!?]{0,20}\b(tokens|coins)\b|\d[\d,.]*\s*\+?\s*(different |unique |distinct |new )?(tokens|coins)\b/i,
+      /\b(no|without|zero|don'?t need( any)?|never need) \$?SWOGE\b(?! (needed for (AI )?(chat|images|agent tasks)|Agents|AI|Wallet|Bet|World|Security)\b)|\bno \$?SWOGE needed\b[^.!?]*\bvideos?\b|\bUSDC\b[^.!?]{0,60}\bvideos?\b|\bvideos?\b[^.!?]{0,60}\bUSDC\b|\beverything\b[^.!?]{0,30}\b(USDC|paid|pay\w*)\b/i,
+      /\b(identity|passport|verified|verification)\b[^.!?]{0,20}\bon[- ]?chain\b|\bon[- ]?chain (identity|passport|ID)\b/i, /\bhours?\b/i,
+      /* « AI that buys tokens on Robinhood Chain » : la colonie achete sur PAPIER ; un texte qui la fait
+         acheter, vendre ou trader sans dire « paper » est refuse (« reads the trades » reste permis). */
+      /^(?![\s\S]*\bpaper\b)[\s\S]*(?<!the )\b(buys|buying|trades|trading|sells|selling)\b/i,
+      /* Les « calls » et « signals » de la colonie, ses « picks » et ses « gems » ; SWOGE Security hors de
+         Robinhood Chain (cansell ne simule que Robinhood Chain, swoge_security.html:147-153) ; Browse qui
+         se connecte a vos comptes, Autopilot qui achete. */
+      /\b(calls|signals?|picks|gems?|alpha)\b/i,
+      /^(?=[\s\S]*\b(SWOGE Security|Can I sell)\b)[\s\S]*\b(Ethereum|Solana|Base|BNB|Arbitrum|other chains)\b/i,
+      /\blog(s|ging)? ?in(to)?\b|\bpasswords?\b|\byour accounts?\b|\bshop\w*|\bpurchas\w*/i] },
 
   { cle: 'cinema', nom: 'SWOGE AI Cinema', motsCles: /SWOGE AI Cinema\b/i, lien: 'https://swoleeswoge.dog/swoge_cinema.html',
     scenes: ['popcorn', 'cinema', 'projection'],
@@ -766,8 +851,13 @@ const PRODUITS = [
        sous licence » ; aucun vote n est compte (on demande A ou B en commentaire) ; aucun episode
        promis ; aucune audience ; les episodes ne sont pas faits avec SwoleMind. (FLIX, ferme, est refuse
        par MOTS_INTERDITS pour tous les produits.) */
-    interdits: [/100% original|\boriginal characters\b|none licensed|no licensed/i, /\bPepe\b|\bBrett\b/i, /\bvot(e|es|ed|ing)\b/i,
-      /season 3|new episodes|coming soon|\bviews\b|\bviewers watched\b/i, /SwoleMind|same tools/i] },
+    /* Seconde relecture du 11/10 : aucun choix n est compte (on demande A ou B en commentaire) — ni
+       « you decide », ni « the community chooses the ending », ni « the story follows your choice » ;
+       aucun episode a venir (« dropping soon ») ; rien « on chain ». (« licensed » : MOTS_INTERDITS.) */
+    interdits: [/100% original|\boriginal characters\b/i, /\bPepe\b|\bBrett\b|\bWojak\b|\bAndy\b|\bLandwolf\b|\bBonk\b/i, /\bvot(e|es|ed|ing)\b/i,
+      /season 3|new episodes|\bmore episodes\b|\bviews\b|\bviewers watched\b|\bevery (week|day)\b|\bweekly\b|\bdaily\b|\b4K\b|\bHD\b|award/i, /SwoleMind|same tools/i,
+      /\bdecid\w*|\bchoos\w*|\bchose\b|\bfollows? your\b|\byour (choice|pick|call)\b|\bwhat happens next\b|\b(shape|steer|write|change) the (story|ending|plot)\b/i,
+      /\bon[- ]?chain\b/i] },
 ].map((p) => Object.assign({ interdits: [] }, p));
 
 /* ---- LES MOTS QU AUCUN TWEET NE PORTE ----
@@ -777,11 +867,19 @@ const PRODUITS = [
  * Le texte du modele qui en porte un est remplace par une reserve (verifieTexte). */
 const MOTS_INTERDITS = [
   /\blive[- ]?bet/i, /\bbet(s|ting)? (live|in[- ]play)\b/i, /\bin[- ]play\b/i, /\bin[- ]game bet/i, /\blive odds\b/i,
-  /\btotals\b/i, /\bcups?\b/i, /Europa League|Conference League|Pokal|Copa del Rey|Coppa Italia|Coupe de France/i,
-  /\bguarantee/i, /price target/i, /\bbeat(ing)? the (bookies|books|bookmakers?|house|market)\b/i, /\+EV\b|positive EV/i,
-  /easy money|free money|risk[- ]free|sure (win|thing)|can'?t lose|passive income|get rich/i,
+  /* Les coupes (seconde relecture du 11/10) : la Ligue des champions est VENDUE comme un championnat
+     (prix_ligues.js:16-17, LIGUES_DEFAUT ; estCoupe ne la compte pas, :238-243) ; les huit coupes de
+     COUPES et les autres ne le sont pas. « Europa » / « Conference » seuls, « Copa » (del Rey,
+     Libertadores, America), Carabao, Sudamericana, Community Shield, phase a elimination directe. */
+  /\btotals\b/i, /\bcups?\b/i,
+  /\bEuropa\b|\bConference\b|Pokal|\bCopa\b|Coppa Italia|Coupe de France|Carabao|Libertadores|Sudamericana|Community Shield|\bknock[- ]?outs?\b/i,
+  /\bguarantee/i, /price target/i, /\b(beat(s|ing)?|smash(es|ing)?|outsmart\w*|outplay\w*|crush(es|ing)?|fleec\w*)\b[^.!?]{0,12}\b(the )?(bookies|books|bookmakers?|house|market|sportsbooks?)\b/i, /\+EV\b|positive EV/i,
+  /easy money|free money|risk[- ]free|sure (win|thing)|passive income|get rich/i,
   /\bAPR\b|\bAPY\b|\byield\b|\bstaking\b/i,
-  /instant(ly)? (pay|paid|payout|withdraw)|final whistle/i,
+  /* La vitesse : un paiement du carnet attend la passe quotidienne, jusqu a 24 h (paris_import.js:
+     1737-1742) ; un retrait est un bon signe a encaisser soi-meme. « the instant the curve hits » (fait
+     crash-auto, le cash-out automatique de Crash) reste permis. */
+  /(?<!the )\binstant(ly|aneous(ly)?)?\b|\b(in|within) (seconds|minutes|no time)\b|\bright away\b|\bimmediately\b|final whistle/i,
   /\bbest odds\b|sharp(est)? odds|zero margin|no margin|same odds/i,
   /play[- ]to[- ]earn|\bP2E\b|\bNFTs?\b/i,
   /Uniswap v4/i, /SWOGE \+18|SWOGE FLIX|\bmanga\b/i,
@@ -792,10 +890,64 @@ const MOTS_INTERDITS = [
   /\bbet(s|ting)? on (live|ongoing|running)\b|\blive (match|game|sports?) (bet|betting|wager)/i,
   /\b(bet|bets|betting|wager\w*)\b[^.!?\n]{0,40}\b(during|mid[- ]?(match|game)|while (the|they|it|games?|matches?)\b|as (it|they) (play|happen))/i,
   /\bodds\b[^.!?\n]{0,20}\b(move|moving|change|changing|update|updating)\b[^.!?\n]{0,12}\blive\b/i,
-  /\bwin(ning)? (big|real|crypto|money)\b|\bearn(s|ing)? (big|real|crypto|money)\b|\bprofit(s|able)?\b|\bcash out (your )?(profits?|winnings)\b/i,
+  /* Toute promesse de gain (seconde relecture du 11/10 : « double your stack », « make bank », « cash in »,
+     « payday », « Easy wins », « your next big win », « Earn $SWOGEBET », « win 250x », « top players win
+     $SWOGE » passaient). « win » sous toutes ses formes, sauf ce que disent les faits vrais : « wins come
+     back », « winnings come back », « winning slips », « tumbling wins », « the winner takes the stake ». */
+  /(?<!tumbling )\bwin(s|ning|nings|ner|ners)?\b(?! (come|comes) back| slips?\b| takes\b)|(?<!to[- ])\bearn\w*|\bprofit\w*|\bgains?\b|\bpayday\b|\bmake bank\b|\bstack(ing)? (your |the )?bags?\b|\bcash in\b|\b(double|triple|\d+x) your\b/i,
   /\bbest (payouts?|prices?)\b|\bbetter (odds|payouts?|than)\b/i,
-  /\b[a-z0-9][a-z0-9-]*\.[a-z]{2,}\b/i,
+  /* Un domaine nu, meme colle derriere un « _ » (« _swoleeswoge.dog » passait : pas de \b entre _ et s),
+     et le nom du domaine du site sous toute forme (« swoleeswoge . dog »). */
+  /(?<![a-z0-9-])[a-z0-9][a-z0-9-]*\.[a-z]{2,}\b|swoleeswoge/i,
+  /* Ce que personne ne peut affirmer pour SWOGE (seconde relecture du 11/10) : audit, licence,
+     regulation, KYC ; « no house edge » (la marge du carnet est de 10 %, whitepaper.html:2830). */
+  /\baudit\w*|\blicen[sc]\w*|\bregulat\w*|\bKYC\b|\banonym\w*|\bhouse edge\b|\b(low|no|zero|tiny|small|lowest|thin) (house )?edge\b/i,
+  /* L invulnerable : « can't be rugged », « immune to prompt injection », « rug-proof », « never … again ». */
+  /\b(can'?t|cannot|can not|won'?t) (be |get )?(rug|rugs|rugged|hacked|exploited|scammed|injected|prompt[- ]injected|honeypotted|fail|lose|stop\w*|go wrong)\b|\bimpossible\b|\bimmune\b|\bunstoppable\b|\bun(rugg?|hack)able\b|\b(rug|honeypot|scam|hack|exploit|bullet|fraud)[- ]?(proof|free)\b|\bnever\b[^.!?]{0,40}\bagain\b|\bnever (miss\w*|fails?)\b/i,
+  /* Ce qui n existe pas : application mobile, cashback, bonus, airdrop. */
+  /\b(iOS|Android|App Store|Google Play|mobile)\b|\bcash ?back\b|\brake ?back\b|\bwelcome (bonus|gift|offer|pack)\b|\bfree bets?\b|\bdeposit bonus\b|\bairdrop\w*|\bgiveaway\w*/i,
+  /* Aucune comparaison nommee avec un concurrent. */
+  /\b(DraftKings|FanDuel|Bet365|BetMGM|Caesars|Rollbit|Polymarket|Kalshi|Netflix|Hulu|Disney|TikTok|Binance|Coinbase)\b/i,
+  /* « the first / only / best sportsbook on Robinhood Chain » : un superlatif sur un produit. */
+  /\b(the|our|its|a) (very )?(best|first|only|biggest|largest|leading|fastest|cheapest|safest)\b[^.!?]{0,25}\b(sportsbook|casino|launchpad|wallet|book|colony|cinema|platform|dex|exchange|chain|app)s?\b|#1\b|\bnumber one\b/i,
+  /\b(any|every|all) (EVM )?chains?\b|\bpenn(y|ies)\b|\bcents?\b/i,
+  /* Ce qui n est pas encore la, ou n existe pas : une promesse (« coming soon », « we'll make it »,
+     « real trading tomorrow »), une assurance, un stockage « decentralise ». */
+  /\bsoon\b|\bcoming\b|\bupcoming\b|\btomorrow\b|\bnext (week|month|year|season)\b|\bstay tuned\b|\broadmap\b|\bwe'?ll\b|\bwe will\b/i,
+  /\binsured\b|\binsurance (fund|cover\w*|policy)\b|\bbacked by\b|\bIPFS\b|\bArweave\b|\bdecentrali[sz]\w*/i,
 ];
+
+/* ---- LES MOTS QUI AFFIRMENT, PERMIS SEULEMENT S ILS SONT DANS LES FAITS (seconde relecture du 11/10) ----
+ * Une liste noire ne finit jamais : 130 textes adverses, dont des paraphrases de chaque faux deja
+ * retire, passaient. La plupart portent un QUANTIFICATEUR ou un SUPERLATIF que les faits donnes ne
+ * portent pas (« every token », « all markets », « the only sportsbook », « free AI chat », « cheaper
+ * than », « keys never leave », « no house edge », « no KYC »). Comme les nombres : un de ces mots, ou
+ * un « no X » / « zero X » / « without X », n est permis que si les faits donnes au modele (fait
+ * vedette, voisins, chiffres vivants) l ecrivent aussi. Sinon la reserve part, vraie. */
+const RE_ABSOLUS = /\b(every(one|body|thing|where)?|all|any(one|body|thing|where|time)?|always|forever|unlimited|endless|only|first|free|best|biggest|fastest|cheapest|lowest|highest|largest|safest|safer|safe|secure(d|ly)?|sharpest|greatest|smartest|top|leading|than|beat(s|ing)?|outperform(s|ed|ing)?|fully|completely|totally|entirely)\b/gi;
+/* Des tournures qui n affirment rien : « y'all », « all in », « at all », « after all », « all set ». */
+const RE_IDIOMES = /\by'?all\b|\ball[- ](in|set|eyes|aboard)\b|\bat all\b|\bafter all\b/gi;
+const RE_NEGATIONS = /\b(no|zero|without)[\s-]+(\$?[a-z][a-z0-9'-]*)/gi;
+const NEGATIONS_LIBRES = new Set(['cap', 'joke', 'doubt', 'brainer', 'kidding', 'way', 'question', 'fluff', 'worries']);
+/** Les mots qui affirment et les « no X » d un texte, en minuscules, sans $. */
+function absolus(s) {
+  const t = String(s || '').replace(RE_IDIOMES, ' ');
+  const mots = (t.match(RE_ABSOLUS) || []).map((m) => m.toLowerCase());
+  const neg = [];
+  for (const m of t.matchAll(RE_NEGATIONS)) {
+    const mot = m[2].toLowerCase().replace(/^\$/, '').replace(/'s$/, '');
+    if (!NEGATIONS_LIBRES.has(mot)) neg.push(m[1].toLowerCase() + ' ' + mot);
+  }
+  return mots.concat(neg);
+}
+/* ---- UN NOMBRE ET CE QU IL COMPTE (seconde relecture du 11/10) ----
+ * « SWOGE Bet: 8 sports » passait parce que 8 est dans un fait (8 selections) ; « 40 players online »
+ * passerait avec « 40 characters are alive ». Pour ce qui se compte en public (sports, championnats,
+ * matchs, joueurs, jetons, agents…), le nombre et son nom doivent aller ENSEMBLE dans un fait donne
+ * (deux mots au plus entre eux : « 17 soccer leagues », « 12 SWOGE casino games »). */
+const UNITES = ['sport', 'league', 'competition', 'market', 'match', 'game', 'player', 'user', 'holder', 'bettor', 'member', 'follower',
+  'token', 'agent', 'chain', 'country', 'model', 'episode', 'series', 'character', 'creator', 'trader', 'wallet',
+  'kill', 'level', 'second', 'minute', 'hour', 'day', 'week', 'month'];
 
 /* ---- LES NOUVEAUTES, COTE JOUEUR ----
  * Celles de l inventaire du 11/10 qui changent quelque chose pour un joueur,
@@ -820,8 +972,8 @@ const NOUVEAUTES = [
     texte: 'Your $SWOGEBET from SWOGE Bet now plays in the SWOGE casino: pick Stake from: Bet $SWOGEBET on Smash, Spin, Plinko, Crash, Blackjack and more, and wins come back in $SWOGEBET.',
     preuve: 'serveur 358bf8a (game.js:4442-4461) ; site 0e3bb9d, a1c2b88, 086f639 (coffre.js:130-135) ; deja annonce : PROGRAMMES casino-swogebet, 08/10 19:00 UTC' },
   { id: 'ai-sol-eth', date: '2026-10-08', produit: 'ai', nom: 'Solana AI and Ethereum AI',
-    texte: 'Solana AI and Ethereum AI are now two separate SWOGE AI paper colonies: every new token is read at its first price and again 30 minutes later, against a blind-buy control.',
-    preuve: 'site afe74c6 (swoge_sol_ai.html, swoge_eth_ai.html)' },
+    texte: 'Solana AI and Ethereum AI are now two separate SWOGE AI paper colonies: each follows new tokens on its chain from their first price to 30 minutes later, against a blind-buy control.',
+    preuve: 'site afe74c6 (swoge_sol_ai.html, swoge_eth_ai.html) ; serveur observatoire.js:15-17, 236 (un echantillon de new_pools, pas « every new token »)' },
   { id: 'cinema-ouvert', date: '2026-10-07', produit: 'cinema',
     texte: 'SWOGE AI Cinema is open: 3 AI-made cartoon series, 14 short vertical episodes, free to watch, with A/B choice episodes and a share link for each one.',
     preuve: 'site f88b4eb (swoge_cinema.html, media/cinema/*.mp4)' },
@@ -951,17 +1103,35 @@ const LIENS_VOLETS = {
    permet « 7 sports ». « one » n est pas compte : il sert a tout (« one place », « one slip ») sans
    rien affirmer. Les ordres de grandeur (dozens, hundreds…) ne valent qu eux-memes : un fait ecrit
    en chiffres ne les permet pas. */
+/* Seconde relecture du 11/10 : sixty, seventy, eighty et ninety manquaient (« ninety leagues » passait). */
 const MOTS_NOMBRES = { zero: '0', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10',
   eleven: '11', twelve: '12', thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17', eighteen: '18',
-  nineteen: '19', twenty: '20', thirty: '30', forty: '40', fifty: '50', hundred: 'hundred', thousand: 'thousand', million: 'million',
-  billion: 'billion', dozen: 'dozen' };
+  nineteen: '19', twenty: '20', thirty: '30', forty: '40', fifty: '50', sixty: '60', seventy: '70', eighty: '80', ninety: '90',
+  hundred: 'hundred', thousand: 'thousand', million: 'million', billion: 'billion', dozen: 'dozen' };
 const RE_MOTS_NOMBRES = new RegExp('\\b(' + Object.keys(MOTS_NOMBRES).join('|') + ')s?\\b', 'gi');
+/* Un nombre suivi de K, M, B ou x est un nombre a part (seconde relecture du 11/10) : « 1M tokens »
+   passait des que « 1% » etait dans les faits, « 250K players » avec « 250x », « a 100x » avec la mise
+   de 100. « 250x » ne vaut que « 250x », « 1B » que « 1B ». */
+const RE_CHIFFRES = /(\d[\d,]*(?:\.\d+)?)(?:\s?([kmb]|bn|mm|x)\b)?/gi;
 /** Les nombres d un texte, sans separateurs de milliers : « 1,200 » et « 1200 » sont le meme ; « seven » vaut « 7 ». */
 function nombres(s) {
   const t = String(s || '');
-  const chiffres = (t.match(/\d[\d,]*(?:\.\d+)?/g) || []).map((x) => x.replace(/,/g, '').replace(/^0+(?=\d)/, ''));
+  const chiffres = [];
+  for (const m of t.matchAll(RE_CHIFFRES)) chiffres.push(m[1].replace(/,/g, '').replace(/^0+(?=\d)/, '') + (m[2] ? m[2].toLowerCase() : ''));
   const mots = (t.match(RE_MOTS_NOMBRES) || []).map((m) => MOTS_NOMBRES[m.toLowerCase().replace(/s$/, '')]);
   return chiffres.concat(mots);
+}
+const RE_UNITES = new RegExp('(\\d[\\d,]*(?:\\.\\d+)?|\\b(?:' + Object.keys(MOTS_NOMBRES).join('|') + '))\\s+(?:[a-z][a-z-]*\\s+){0,2}?('
+  + UNITES.map((u) => (u === 'match' ? 'match(?:es)?' : u === 'series' ? 'series' : u === 'country' ? 'countr(?:y|ies)' : u + 's?')).join('|') + ')\\b', 'gi');
+const uniteDe = (u) => { const x = u.toLowerCase(); return x === 'series' ? x : x === 'countries' ? 'country' : x === 'matches' ? 'match' : x.replace(/s$/, ''); };
+/** Les paires « nombre + ce qu il compte » d un texte : « 17 soccer leagues » donne « 17 league ». */
+function comptes(s) {
+  const out = [];
+  for (const m of String(s || '').matchAll(RE_UNITES)) {
+    const n = /^\d/.test(m[1]) ? m[1].replace(/,/g, '') : MOTS_NOMBRES[m[1].toLowerCase()];
+    out.push(n + ' ' + uniteDe(m[2]));
+  }
+  return out;
 }
 
 /* ---- CE QUE LE SERVEUR LIT AU MOMENT DU POST ----
@@ -971,6 +1141,7 @@ function nombres(s) {
  * chiffre trop petit pour servir (une poignee de personnages) n est pas dit. */
 const MONDE_VIVANTS_MIN = 25;          /* sous ce nombre de personnages vivants, le chiffre dessert (« Deux cartes, trente-neuf joueurs », server.js:9836 sur main d592de0) */
 const NOMS_SPORT = { foot: 'soccer', tennis: 'tennis', nba: 'NBA', nfl: 'NFL', nhl: 'NHL', mlb: 'MLB', cricket: 'cricket' };
+const pluriel = (n, un, plusieurs) => n + ' ' + (n === 1 ? un : plusieurs);
 let DEPS = null;
 function instantane(deps, t) {
   const d = deps || DEPS || {};
@@ -980,9 +1151,11 @@ function instantane(deps, t) {
     const parSport = {}; const comps = new Set();
     for (const m of l) { parSport[m.sport] = (parSport[m.sport] || 0) + 1; comps.add(m.competition); }
     const sports = Object.keys(parSport);
-    if (l.length) v.bet.faits.push(`${l.length} matches are open right now on SWOGE Bet across ${sports.length} sports (${sports.map((k) => NOMS_SPORT[k] || k).join(', ')}) and ${comps.size} competitions.`);
+    /* Accorde au singulier (seconde relecture du 11/10 : « 1 matches … across 1 sports ») ; sous deux
+       matchs ouverts, rien : un seul match ne fait pas une offre. */
+    if (l.length >= 2) v.bet.faits.push(`${l.length} matches are open right now on SWOGE Bet across ${pluriel(sports.length, 'sport', 'sports')} (${sports.map((k) => NOMS_SPORT[k] || k).join(', ')}) and ${pluriel(comps.size, 'competition', 'competitions')}.`);
     const marche = l.filter((m) => m.prixMarche).length;
-    if (marche) v.bet.faits.push(`${marche} of the matches open on SWOGE Bet right now are priced off the betting market.`);
+    if (marche) v.bet.faits.push(`${marche} of the matches open on SWOGE Bet right now ${marche === 1 ? 'is' : 'are'} priced off the betting market.`);
   } catch (e) { /* pas de calendrier : rien de vivant sur les matchs */ }
   try {
     const pl = require('./prix_ligues');
@@ -990,7 +1163,7 @@ function instantane(deps, t) {
     const foot = [...s].filter((k) => k.startsWith('soccer_') && !(pl.estCoupe && pl.estCoupe(k)));
     v.bet.sixGrands = pl.LIGUES_DEFAUT.every((k) => s.has(k));
     v.bet.dixSept = v.bet.sixGrands && foot.length === 17 && SECONDAIRES.every((k) => s.has(k));
-    if (foot.length) v.bet.faits.push(`${foot.length} soccer leagues on SWOGE Bet are priced off the betting market right now.`);
+    if (foot.length) v.bet.faits.push(`${pluriel(foot.length, 'soccer league', 'soccer leagues')} on SWOGE Bet ${foot.length === 1 ? 'is' : 'are'} priced off the betting market right now.`);
   } catch (e) { /* liste illisible : aucun fait de prix au marche */ }
   v.bet.auto = String(process.env.PARIS_AUTO || '1') !== '0';           /* la meme lecture que paris_import.js:1730 */
   try {
@@ -1117,9 +1290,16 @@ function verifieTexte(texte, s) {
      also lets you play the SWOGE World cinema » passait). */
   const autres = PRODUITS.filter((p) => p.interdits !== s.interdits && p.motsCles.test(t)).map((p) => p.interdits);
   for (const r of MOTS_INTERDITS.concat(s.interdits || [], ...autres)) if (r.test(t)) return { ok: false, raison: 'mot interdit ' + String(r) };
-  const permis = new Set(nombres([s.lead].concat(s.autres || [], s.vivants || []).join(' ')));
+  const donnes = [s.lead].concat(s.autres || [], s.vivants || []).join(' ');
+  const permis = new Set(nombres(donnes));
   const inventes = nombres(t).filter((x) => !permis.has(x));
   if (inventes.length) return { ok: false, raison: 'nombre absent des faits : ' + inventes.join(', ') };
+  const pairesPermises = new Set(comptes(donnes));
+  const malComptes = comptes(t).filter((x) => !pairesPermises.has(x));
+  if (malComptes.length) return { ok: false, raison: 'compte absent des faits : ' + malComptes.join(', ') };
+  const absolusPermis = new Set(absolus(donnes));
+  const affirmes = absolus(t).filter((x) => !absolusPermis.has(x));
+  if (affirmes.length) return { ok: false, raison: 'affirmation absente des faits : ' + affirmes.join(', ') };
   return { ok: true };
 }
 /* « $SWOGE Bet » est un faux nom (le ticker colle au produit) : on rend le nom
@@ -1182,8 +1362,48 @@ const SYSTEME = `You write posts on X for SWOGE ($SWOGE), a community-run memeco
 Audience: American crypto Twitter. Write in natural US English, with the humor and slang of US crypto X where it fits (never forced). In US English "football" means the NFL: say "soccer" or name the league.
 The request names ONE PRODUCT (or one NEW UPDATE of a product) and gives its LEAD FACT. The post is about that one thing: name it exactly as written on the PRODUCT line, never with a "$" in front of it, and build the post on the lead fact. You may add one of the other facts given, nothing else: no feature, number, date, price, user count, ranking or comparison that is not in the request. The TONE line only sets the voice. When the request gives an ANNOUNCEMENT instead, the post is about that announcement.
 Voice: bullish, playful, confident and fun, never desperate, never rude, never repetitive.
-Hard rules: English. Maximum 240 characters, and shorter is usually better. The request tells you, in its TICKER and HASHTAG lines, whether this post carries "$SWOGE" and "#RobinhoodChain": follow them exactly, and weave them in naturally rather than tacking them on. No other hashtag. 1 to 3 emojis. No links and no web addresses or domain names (nothing like "name.dog" or "name.fun"). Every number you write must appear in the request, written the same way, in digits or in words; never invent a number. No promises of returns or winnings ("win big", "profit", "earn"), no "guaranteed", no price targets, no "beat the house" or "beat the bookies", no "best odds" or "better than". SWOGE Bet has NO live or in-play betting, no betting during a match, no cash-out and no cup competitions: never suggest any of them. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
+Hard rules: English. Maximum 240 characters, and shorter is usually better. The request tells you, in its TICKER and HASHTAG lines, whether this post carries "$SWOGE" and "#RobinhoodChain": follow them exactly, and weave them in naturally rather than tacking them on. No other hashtag. 1 to 3 emojis. No links and no web addresses or domain names (nothing like "name.dog" or "name.fun"). Every number you write must appear in the request, written the same way, in digits or in words; never invent a number. No promises of returns or winnings (no "win", "earn", "profit", "payday", "cash in", "double your"), no "guaranteed", no price targets, no "beat the house" or "beat the bookies", no "best odds" or "better than". Never write an absolute or comparative word (every, all, any, only, first, best, free, unlimited, forever, than, safe) or a "no X" claim unless the facts in the request use that very word; never count something ("N sports", "N players") unless a fact counts it the same way; never write a speed ("instantly", "in seconds"), an audit, a license or a competitor's name. SWOGE Bet has NO live or in-play betting, no betting during a match, no cash-out, no domestic cups and no Europa or Conference League (the Champions League is offered): never suggest any of them. Do NOT reuse the opening words, the structure or the jokes of the previous posts you are shown. Mention today's image only if it lands naturally.
 Output only the post text, nothing else.`;
+
+/* ---- UN SECOND REGARD, AVANT DE POSTER (seconde relecture du 11/10) ----
+ * Les listes refusent des MOTS ; une affirmation inventee n a pas toujours de mot a refuser. Mesure du
+ * 11/10 sur 103 textes faux ecrits a la main, APRES les listes et le controle des mots qui affirment :
+ * 44 passaient (« player props are here », « the vault is insured », « SWOGE World: play on mobile »,
+ * « extra time counts », « hold BTC and SOL »…) ; apres les motifs ajoutes ensuite, 2 (« extra time
+ * counts on SWOGE Bet », un sens inverse ; « hold BTC and SOL »). Les 346 textes faux connus (ceux de la
+ * relecture et ceux-la) sont dans essais/x_post/faux.json, et x_post.test.js exige que les listes les
+ * refusent tous ; 56 textes vrais du ton attendu (essais/x_post/vrais.json) doivent passer. Le
+ * texte qui a passe tout le reste est donc relu par un second appel au modele : il recoit les MEMES
+ * faits que l auteur et ne dit oui que si chaque affirmation y est. Tout ce qui n est pas un oui franc
+ * (non, reponse illisible, HTTP en erreur, delai) poste la reserve : un tweet vrai de moins inventif
+ * plutot qu un tweet faux. Le cout : un appel de plus par creneau, quelques centaines de jetons.
+ * `X_JUGE=0` l eteint (les listes restent). Le taux de refus du juge sur de vrais textes n est pas
+ * mesure (aucun appel paye ici) : le lire dans le journal (`refus` commence par « juge »). */
+const SYSTEME_JUGE = `You check a post before it goes out on a public X account, with no human review. You receive FACTS, the only things known to be true about the product, and the POST.
+Answer ok:true only if every claim in the POST is stated by the FACTS or follows directly from them. Tone, jokes, slang, emojis, the "$SWOGE" cashtag, the "#RobinhoodChain" hashtag and hype words that state nothing ("built different", "LFG", "the pack") are fine.
+Answer ok:false if the POST states or implies anything the FACTS do not say, or says it more broadly than the FACTS: a feature, a market, a sport, a chain, a platform, a speed, a number or a count, a comparison, "every", "all", "only" or "first", a promise of gains, something still to come, a guarantee, safety or security, or anything that contradicts the FACTS. When unsure, answer ok:false.
+Reply with JSON only: {"ok": true or false, "claim": "the first unsupported claim, or empty"}`;
+/** Le second regard : `{ ok: true }` seulement sur un oui franc ; leve si l appel echoue. */
+async function jugeTexte(texte, s, f) {
+  if (process.env.X_JUGE === '0') return { ok: true, saute: 'desactive' };
+  const e = env();
+  const faits = [s.lead].concat(s.autres || [], s.vivants || []);
+  const r = await f('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': e.anthropic, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: e.modeleJuge, max_tokens: 150, system: SYSTEME_JUGE,
+      messages: [{ role: 'user', content: `PRODUCT: ${s.nom}\nFACTS:\n- ${faits.join('\n- ')}\n\nPOST:\n${texte}` }] }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json();
+  const brut = ((j.content || []).find((b) => b.type === 'text') || {}).text || '';
+  const m = brut.match(/\{[\s\S]*\}/);
+  let v = null;
+  try { v = m ? JSON.parse(m[0]) : null; } catch (err) { v = null; }
+  if (!v || v.ok !== true) return { ok: false, raison: 'juge : ' + String((v && v.claim) || 'pas de oui franc').replace(/\s+/g, ' ').slice(0, 120) };
+  return { ok: true };
+}
 
 /* Si le modele ne repond pas (ou se trompe), on poste quand meme — avec une
    phrase de reserve, vraie, plutot que de rater le creneau. Depuis le 11/10,
@@ -1333,7 +1553,15 @@ async function ecritTexte(faits, o, prendre) {
       const v = verifieTexte(nettoie(corrigeNoms(brut), false, tags), s);
       /* Un texte deja poste, mot pour mot : X le refuserait comme doublon (voir reserveDe). */
       const deja = v.ok && (o.postes || []).some((x) => empreinte(x) === empreinte(nettoie(corrigeNoms(brut), false, tags)));
-      if (v.ok && !deja) return { texte: nettoie(corrigeNoms(brut), lien, tags), via: 'modele' };
+      if (v.ok && !deja) {
+        /* Le second regard, sur le texte tel qu il partira (sans le lien). Une panne du juge poste la
+           reserve, jamais le texte non relu. */
+        let jg;
+        try { jg = await jugeTexte(nettoie(corrigeNoms(brut), false, tags), s, f); } catch (err) { jg = { ok: false, raison: 'juge injoignable (' + String(err.message || err).slice(0, 60) + ')' }; }
+        if (jg.ok) return { texte: nettoie(corrigeNoms(brut), lien, tags), via: 'modele' };
+        console.error('[x] texte du modele refuse au second regard (' + jg.raison + '), reserve du produit');
+        return reserve(jg.raison);
+      }
       const raison = deja ? 'texte deja poste' : v.raison;
       console.error('[x] texte du modele refuse (' + raison + '), reserve du produit');
       return reserve(raison);
@@ -1944,7 +2172,9 @@ module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAG
                    NOUVEAUTE_FRAICHE_JOURS, NOUVEAUTE_RETOUR_JOURS, NOUVEAUTE_SORTIES_MAX, NOUVEAUTE_UN_SUR, choixSujet, sujetDe, verifieTexte, nombres, instantane,
                    sceneProduit, sceneDeNom, angleDuCreneau, produitDe, corrigeNoms, nouveautesDues,
                    /* relecture du 11/10 */
-                   LIENS_VOLETS, MOTS_NOMBRES, reserveDe, empreinte };
+                   LIENS_VOLETS, MOTS_NOMBRES, reserveDe, empreinte,
+                   /* seconde relecture du 11/10 */
+                   absolus, comptes, UNITES, SYSTEME, SYSTEME_JUGE, jugeTexte };
 
 // ------------------------------------------------------------ en ligne de commande
 
