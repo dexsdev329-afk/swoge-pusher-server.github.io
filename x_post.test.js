@@ -353,6 +353,16 @@ const cfg = require('./config');
        'le post casino $SWOGEBET : ' + (cs && cs.texte.length + cs.lien.length + 2) + ' caracteres avec le lien (<= 280), libelles du selecteur, rien sur les cagnottes $SWOGE');
     const heureNY = cs && new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(cs.a);
     ok(heureNY > '12:30' && heureNY < '17:00', 'le post casino tombe seul entre les creneaux de 12:30 et 17:00 ET (' + heureNY + ')');
+    /* 11/10 : le « hidden gem ». Il vante le jeton : aucun chiffre (cap, hausse, cible), aucune promesse de rendement,
+     * aucun lien (0,015 $) ; les produits cites sont ceux de PRODUITS ; seul entre deux creneaux. */
+    const hg = x.PROGRAMMES.find((p) => p.nom === 'hidden-gem');
+    const heureHG = hg && new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(hg.a);
+    ok(hg && !hg.lien && hg.texte.length <= 280 && !/https?:|\.(dog|com|io)\b/i.test(hg.texte) && !/\d/.test(hg.texte)
+         && !/\b(x\d|moon|pump|guarantee|profit|returns?|price target|buy now|nfa|ape)\b/i.test(hg.texte + ' ' + hg.sujet)
+         && /\$SWOGE/.test(hg.texte) && /sportsbook/.test(hg.texte) && /casino/.test(hg.texte) && /SWOGE World/.test(hg.texte)
+         && ['bet', 'casino', 'world', 'wallet', 'ai'].every((c) => x.PRODUITS.some((p) => p.cle === c))
+         && heureHG > '12:30' && heureHG < '17:00',
+       'le post « hidden gem » : ' + (hg && hg.texte.length) + ' caracteres sans lien, aucun chiffre ni promesse de rendement, produits de PRODUITS, seul a ' + heureHG + ' ET');
     const cles = x.PROGRAMMES.map((p) => new Date(p.a).toISOString().slice(0, 10) + '#' + p.nom.slice(0, 24));
     ok(new Set(cles).size === cles.length, 'chaque post programme a sa propre cle de journal (' + cles.length + ')');
   }

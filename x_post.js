@@ -2127,6 +2127,24 @@ const PROGRAMMES = [
       + 'Tap "Stake from: Bet $SWOGEBET" before you play. Wins land in the same token.',
     prompt: 'sliding two stacks of casino chips onto a glowing green felt table at night, one stack gold, the other stack bright green; a football resting on the table edge; '
       + 'behind him a neon-lit casino with a plinko board, a slot machine and a rising crash chart glowing on a big screen; confident grin, cinematic neon lighting' },
+  /* 11/10/2026 : « fais un tweet X pour dire que c est un gem cache, tweet auto » (le proprietaire, capture du graphique
+   * SWOGE/WETH 4 h a l appui). Lecture DexScreener le meme jour a 16:08 UTC (paire 0x2Dc0…8456, Uniswap, Robinhood Chain) :
+   * cap 48 709 $, +33 % sur 6 h, +26 % sur 24 h, liquidite 18,2 K$. AUCUN de ces chiffres n est ecrit : ils seraient faux
+   * a l heure du post, et un post qui annonce un cours ou une hausse promet un rendement. Rien sur le graphique non plus
+   * (« higher lows » peut etre faux deux heures plus tard). Ce qu on affirme est verifiable :
+   *   - « community-run » : la presentation du projet (SYSTEME : « a community-run memecoin (CTO) »).
+   *   - les six noms cites viennent de cinq entrees de PRODUITS, en ligne : SWOGE Bet (le carnet de paris), le casino,
+   *     SWOGE World, SWOGE Wallet et son launchpad, SWOGE AI (les agents). Le cinema n y est pas, faute de place.
+   *   - « under the radar » / « most of CT hasn't found it yet » : une opinion, assumee comme telle, pas un chiffre.
+   * Sans lien (0,015 $) : le post vante le jeton, pas une page. Poste SEUL a 14:00 ET (18:00 UTC), entre les creneaux de
+   * 12:30 et 17:00. Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
+  { nom: 'hidden-gem', a: Date.parse('2026-10-11T18:00:00Z'),
+    sujet: 'SWOGE ($SWOGE) is a community-run memecoin on Robinhood Chain that already ships real, live products: a sportsbook (SWOGE Bet), a casino, SWOGE World, a wallet with a token launchpad, and AI agents. It is still under the radar.',
+    texte: 'Hidden gem on Robinhood Chain 💎🐕\n\n'
+      + '$SWOGE is community-run and already ships real products: a sportsbook, a casino, SWOGE World, a wallet, a launchpad and AI agents.\n\n'
+      + 'Still under the radar. Most of CT hasn\'t found it yet. #RobinhoodChain',
+    prompt: 'kneeling in a dark rocky cave at night, brushing dust off a huge glowing green gemstone half-buried in the ground; the gem lights up his face and the cave walls; '
+      + 'a small lantern beside him, tiny sparkles floating in the air; amazed confident grin, cinematic lighting' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
