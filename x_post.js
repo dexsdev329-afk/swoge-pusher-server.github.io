@@ -1787,8 +1787,22 @@ async function televerse(png, prendre) {
   if (!id) throw new Error('X media : reponse sans identifiant');
   return String(id);
 }
+/* ---- UN SEUL CASHTAG PAR POST (12/10/2026) ----
+ * X refuse un post qui porte plus d un cashtag : « Posts are limited to a maximum
+ * of one cashtag ($SYMBOL) », HTTP 403, trois fois de suite sur l annonce CTO du
+ * 12/10 (17:33, 17:38, 17:43 UTC), qui portait $SWOGE deux fois — le post est
+ * perdu au troisieme essai. Le post casino du 08/10 portait $SWOGEBET deux fois et
+ * est parti (x.com/SwoleDogeSwoge/status/2108272451637682423) : un cashtag est un
+ * symbole de 1 a 6 lettres (regle de twitter-text), $SWOGEBET n en est pas un.
+ * On garde le premier cashtag ; les suivants perdent leur « $ », la phrase reste
+ * entiere. Applique a TOUT ce qui part (creneaux, annonces, programmes). */
+function unSeulCashtag(texte) {
+  let vu = false;
+  return String(texte).replace(/\$([A-Za-z]{1,6})\b/g, (m, sym) => { if (!vu) { vu = true; return m; } return sym; });
+}
+
 async function publie(texte, mediaId, prendre, enReponseA) {
-  const corps = { text: texte, media: { media_ids: [mediaId] } };
+  const corps = { text: unSeulCashtag(texte), media: { media_ids: [mediaId] } };
   if (enReponseA) corps.reply = { in_reply_to_tweet_id: String(enReponseA) };
   const j = await appelX('/2/tweets', corps, prendre);
   const id = j.data && j.data.id;
@@ -2158,13 +2172,16 @@ const PROGRAMMES = [
    *   - un AUTRE « Swole Doge (SWOGE) » existe sur Robinhood Chain (0xdb87…9b03, paire du 20/07, theswoge.xyz) : d ou la
    *     derniere ligne, sans le nommer ni l accuser.
    *   - « For 90+ days » : le proprietaire, le 12/10 (« ca fait 90 jours, on est un CTO ») ; le renoncement date de 97 jours.
-   * 272 caracteres avec le lien (<= 280, essai) : au-dela, nettoie() ecraserait les paragraphes. Aucun chiffre de cours.
+   * 271 caracteres avec le lien (<= 280, essai) : au-dela, nettoie() ecraserait les paragraphes. Aucun chiffre de cours.
    * Poste SEUL a 13:30 ET (17:30 UTC), entre les creneaux de 12:30 et 17:00. Le lien (0,20 $) : le site officiel est la
    * deuxieme preuve que demande Etherscan. Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
-  { nom: 'cto-officiel', a: Date.parse('2026-10-12T17:30:00Z'), lien: 'https://swoleeswoge.dog',
+  /* 12/10, 17:45 UTC : le premier essai (« cto-officiel », 17:30 UTC) a ete refuse trois fois par X
+   * (HTTP 403, plus d un cashtag : $SWOGE deux fois) et sa cle est epuisee. Reprogramme sous un
+   * nouveau nom, $SWOGE une seule fois, 271 caracteres avec le lien, 14:45 ET (18:45 UTC). */
+  { nom: 'cto-officiel-2', a: Date.parse('2026-10-12T18:45:00Z'), lien: 'https://swoleeswoge.dog',
     sujet: 'Official announcement: $SWOGE is a community takeover (CTO). The original developer renounced ownership of the contract on July 7, 2026, and the community has run the project for more than 90 days. The official contract on Robinhood Chain is 0x8a166Fb41Cd659a0a43396272FF73973Ce29F817.',
     texte: '📢 $SWOGE is a community takeover (CTO).\n\n'
-      + 'The dev renounced ownership on July 7, 2026. For 90+ days, $SWOGE has been run by its community.\n\n'
+      + 'The dev renounced ownership on July 7, 2026. For 90+ days, SWOGE has been run by its community.\n\n'
       + 'Official contract (Robinhood Chain):\n0x8a166Fb41Cd659a0a43396272FF73973Ce29F817\n\n'
       + 'Always check the contract.',
     prompt: 'planting a big flag with a glowing paw print on top of a green hill at sunrise, a crowd of small cheering shiba inu dogs behind him '
@@ -2205,7 +2222,7 @@ function planifie(signale, deps) {
   return { arrete() { clearTimeout(premier); clearInterval(minuterie); } };
 }
 
-module.exports = { enabled, manque, env, enc, signeOAuth, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
+module.exports = { enabled, manque, env, enc, signeOAuth, unSeulCashtag, SCENES, RENDUS, CADRAGES, NEGATIF, ANGLES, renduDe, sceneSuivante, promptImage, choixImage,
                    ANNONCE, annonceEnAttente, genereVideo, televerseVideo, appelXGet, FENETRE_SCENES, FENETRE_RENDUS, FENETRE_CADRAGE, faitsDuJour, etiquettes,
                    nettoie, ecritTexte, genereImage, verifiePattes, genereImageVerifiee, televerse, publie, tache, planifie, derniere, reprend, programmes, PROGRAMMES, PROGRAMME_RETARD_MS,
                    heureLocale, creneauDu, jourDe, litJournal, dernieres, DOSSIER_IMAGES, RESERVE,

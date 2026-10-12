@@ -333,6 +333,12 @@ const cfg = require('./config');
     eq(rp[0] && rp[0].etat, 'poste', 'a son heure : poste');
     eq(tweetProg.corps.text, 'Line one 🤖\n\nLine two.\n\nLine three $SWOGE\n\nhttps://swoleeswoge.dog/swogeagentic.html', 'le texte IMPOSE part mot pour mot, paragraphes gardes, lien a la fin');
     ok(!appels.slice(avantProg).some((a) => /anthropic/.test(a.u)), 'aucun modele n ecrit (le texte est impose)');
+    /* 12/10 : ce qui PART chez X ne porte qu un cashtag, meme si le texte impose en a deux (403 de X sinon). */
+    const P2 = Object.assign({}, P, { nom: 'essai-cashtag', a: P.a + 600000, texte: 'Two tags $SWOGE and $SWOGE' });
+    const avantC = appels.length;
+    await x.programmes({ maintenant: P2.a + 60000, prendre: faux, liste: [P2] });
+    const twC = appels.slice(avantC).find((a) => /2\/tweets/.test(a.u));
+    eq(twC && twC.corps.text, 'Two tags $SWOGE and SWOGE\n\nhttps://swoleeswoge.dog/swogeagentic.html', 'le texte envoye a X porte un seul cashtag (publie le garde)');
     ok(/at an API shop counter with robots/.test(appels.slice(avantProg).find((a) => /images\/generations/.test(a.u)).corps.prompt), 'l image : sa scene a lui');
     const nTweets = appels.filter((a) => /2\/tweets/.test(a.u)).length;
     await x.programmes({ maintenant: P.a + 4 * 3600e3 * 0.4, prendre: faux, liste: [P] });
@@ -366,7 +372,7 @@ const cfg = require('./config');
     /* 12/10 : l annonce du CTO, piece jointe du ticket Etherscan. Elle part TELLE QUELLE (paragraphes et adresse
      * intacts) seulement si elle tient avec le lien ; l adresse est celle du jeton configure, au caractere pres ;
      * la date du renoncement est celle de la tx 0xdd81…2fe8 (07/07/2026) ; aucun cours, aucune promesse. */
-    const cto = x.PROGRAMMES.find((p) => p.nom === 'cto-officiel');
+    const cto = x.PROGRAMMES.find((p) => p.nom === 'cto-officiel-2');
     const adresses = cto ? (cto.texte.match(/0x[0-9a-fA-F]{40}/g) || []) : [];
     const heureCTO = cto && new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(cto.a);
     ok(cto && cto.texte.length + cto.lien.length + 2 <= 280 && cto.lien === 'https://swoleeswoge.dog'
@@ -375,6 +381,13 @@ const cfg = require('./config');
          && !/\b(x\d|moon|pump|guarantee|profit|returns?|price target|buy now|nfa|ape)\b/i.test(cto.texte + ' ' + cto.sujet)
          && heureCTO > '12:30' && heureCTO < '17:00',
        'l annonce CTO : ' + (cto && cto.texte.length + cto.lien.length + 2) + ' caracteres avec le lien (<= 280), l adresse du jeton configure, renoncement du 07/07, seule a ' + heureCTO + ' ET');
+    /* 12/10 : X refuse plus d un cashtag (HTTP 403 trois fois sur la premiere annonce CTO, $SWOGE
+     * deux fois). Intention : aucun texte impose ne porte deux cashtags, et rien ne part avec deux. */
+    const cashtags = (t) => (String(t).match(/\$[A-Za-z]{1,6}\b/g) || []).length;
+    ok(x.PROGRAMMES.filter((p) => p.a > Date.parse('2026-10-12T17:00:00Z')).every((p) => cashtags(p.texte) <= 1) && cashtags(cto.texte) === 1,
+       'les posts programmes a venir portent au plus UN cashtag (l annonce CTO : exactement $SWOGE)');
+    eq(x.unSeulCashtag('$SWOGE is live. Buy $SWOGE, not $ETH.'), '$SWOGE is live. Buy SWOGE, not ETH.', 'au-dela du premier, un cashtag perd son « $ » et la phrase reste entiere');
+    eq(x.unSeulCashtag('Your $SWOGEBET and $SWOGEBET again, $0.21 per image'), 'Your $SWOGEBET and $SWOGEBET again, $0.21 per image', 'un symbole de plus de 6 lettres ou un montant n est pas un cashtag : intact');
     const cles = x.PROGRAMMES.map((p) => new Date(p.a).toISOString().slice(0, 10) + '#' + p.nom.slice(0, 24));
     ok(new Set(cles).size === cles.length, 'chaque post programme a sa propre cle de journal (' + cles.length + ')');
   }
