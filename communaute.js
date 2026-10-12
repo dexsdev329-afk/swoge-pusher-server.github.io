@@ -135,6 +135,43 @@
  *
  * Les seuils d annonce, le plafond et l heure du releve sont plus bas, chacun
  * avec la mesure qui l a fixe.
+ *
+ * ---- LA SUITE (proprietaire, 12/10/2026) ----
+ *
+ * « Une notif une fois par jour en plus : combien de holders, believers,
+ * jeets et nouveaux, en resume, et combien de pour-cent la chart a pris depuis
+ * une semaine. Et les notifs quand quelqu un vend ou achete : dire s il
+ * rajoute dans son wallet, s il lui en reste encore, s il a vendu en gain ou a
+ * perte. Nouveau wallet, ou s il est relie a d autres : combien il a en tout
+ * et ses wallets quand il achete. »
+ *
+ * Sonde du 12/10/2026, 03:26-03:46 UTC, noeud officiel seulement (8 326
+ * Transfer, 5 723 Sync de la paire v2, bloc 86 356 865) ; chaque regle porte
+ * sa mesure plus bas. En bref :
+ *  - le RESUME est le releve de 13:00, enrichi (deux messages repeteraient le
+ *    compte des detenteurs) : dernieres 24 h, 7 jours, et le cours sur 7 jours
+ *    lu sur la CHAINE (Sync de la paire v2 en ETH, × ETH/USD d une piscine v3
+ *    WETH/USDG pour le $) — voir COURS ;
+ *  - le GAIN OU LA PERTE d une vente se lit contre le prix d achat moyen de CE
+ *    portefeuille, rejoue depuis la frappe avec la jambe WETH de chaque achat
+ *    (Sync de la paire = Transfer WETH dans 5 723 tx sur 5 723) — voir COUT ;
+ *    sans prix d achat connu, on l ecrit : « unknown » ;
+ *  - un portefeuille NEUF : il a signe lui-meme, nonce de la tx d achat <= 2,
+ *    premiere apparition sur le $SWOGE — voir NEUF ;
+ *  - des portefeuilles RELIES : au moins 1 000 $SWOGE envoyes directement de
+ *    l un a l autre (aucune piscine dans la tx), carrefours coupes, « not
+ *    proof of a single owner » — voir LIENS ;
+ *  - les ventes PARTIELLES s annoncent desormais (>= 25 $ et >= 10 % du sac,
+ *    famille a part) — voir MIN_USD.
+ * Trois verifications du 12/10 (non-regression, mutations, relecture) : la
+ * migration s arrete au curseur de l ancien etat (rien d avale pendant le
+ * redeploiement), la poussiere ne relie plus, un achat garde en partie ne
+ * double plus le prix moyen, le releve tient sous 1 024 signes a l envoi, les
+ * 7 jours comptent des portefeuilles, le % du cours est arrondi comme les
+ * autres — chaque regle porte sa mesure la ou elle vit.
+ * « Jeets » du proprietaire = nos « paper hands » (vente qui laisse moins de
+ * 1 000) : les annonces disent deja « Paper hand », le resume garde le meme mot
+ * pour la meme chose.
  */
 const fs = require('fs');
 const path = require('path');
@@ -188,6 +225,133 @@ const MORT = '0x000000000000000000000000000000000000dead';
 const BRULES = new Set([ZERO, MORT]);
 for (let i = 1; i <= 9; i++) BRULES.add('0x' + String(i).padStart(40, '0'));
 
+/* ---- COURS : LE % DU GRAPHIQUE SUR 7 JOURS, LU SUR LA CHAINE ----
+ * Sync(uint112,uint112) de la paire v2 (token0 = WETH, token1 = $SWOGE :
+ * 0x0bd7… < 0x8a16…, tri v2, et cours_chaine.js) : prix en ETH = reserve0 /
+ * reserve1, apres chaque echange. Le % compare le DERNIER Sync (maintenant) au
+ * dernier Sync anterieur a maintenant − 168 h (le prix spot a cet instant : pas
+ * d echange = prix inchange en ETH). Sonde du 12/10 vers 03:40 UTC : 1,15739e-8
+ * → 1,48707e-8 ETH, +28,49 % ; au meme instant DexScreener donne 1,487e-8
+ * (h1 +1,28 contre +1,37 ; h6 −20,79 contre −20,69). Sur ce jeton le
+ * chiffre depend fortement de l instant de reference (h6 −20,8 %) : la
+ * definition est ecrite telle quelle, « now vs. 7×24 h ago ».
+ * En $ : × ETH/USD de la piscine v3 WETH/USDG 0x52e65b17… (20,3 M$ de
+ * liquidite, 98,9 M$ de volume 24 h ; token0 WETH 18 decimales, token1 USDG 6,
+ * lus par decimals() sur la chaine), sqrtPriceX96 du dernier Swap dans les
+ * 3 000 blocs (~5 min) avant chaque instant : 1 eth_getLogs, ~0,9 s, 28 Swap
+ * dans la fenetre (sonde, p2_prix.js). Le 12/10 : 2 703,06 → 2 543,15 $, soit +20,88 % en $
+ * (DexScreener : ETH 2 540,69 au meme instant). Ecartes : GeckoTerminal (sa
+ * cloture horaire est un prix d EXECUTION, 2,4 % d ecart au spot, et son
+ * quota est partage avec la colonie), DexScreener (pas de champ 7 jours).
+ * Construction : 9 eth_getLogs sur la paire seule (Sync, une valeur par
+ * position) depuis la frappe, 5 724 journaux, 3,16 Mo, 8,9 s, 0 refus. En
+ * regime : 0 appel, le Sync est dans le recu deja lu ; le releve fait 2
+ * eth_getLogs par jour sur la v3 WETH/USDG. Sans ETH/USD lisible : le % en
+ * ETH seul ; sans Sync anterieur a −168 h : pas de ligne. */
+const TOPIC_SYNC = '0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1';   // Sync(uint112,uint112)
+const TOPIC_SWAP_V3 = '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67'; // Swap(address,address,int256,int256,uint160,uint128,int24)
+const PISCINE_ETH_USD = '0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca';   // v3 WETH/USDG
+const DECIMALES_USDG = 6;
+const FENETRE_ETH_USD = 3000;
+/* garde de vraisemblance sur un ETH/USD lu (un Swap mal forme ne fait pas un % faux) */
+const ETH_USD_MIN = 100, ETH_USD_MAX = 100000;
+const COURS_GARDE_MS = 8 * 24 * 3600 * 1000;   // 8 jours de Sync, plus le dernier d avant
+
+/* ---- COUT : LE PRIX D ACHAT MOYEN D UN PORTEFEUILLE ----
+ * Rejoue depuis la frappe : un achat de marche ou SEULE la paire v2 bouge et
+ * dont le portefeuille est le beneficiaire ajoute (jetons recus, WETH entre
+ * dans la paire) ; toute autre entree est a cout INCONNU (envoi, airdrop,
+ * conversion, v4 en ETH natif, achat partage entre deux piscines) ; toute
+ * sortie retire au prorata. Prix de vente = WETH sorti de la paire / jetons
+ * cedes par le vendeur.
+ * Sonde du 12/10 : 77 ventes en 30 jours, toutes par la v2 ; la part du sac a
+ * cout connu vaut = 100 % pour 68, >= 99 % pour 69, >= 90 % pour 69, 0 % pour
+ * 6 (sacs recus par envoi). Seuil 99 % : 69 ventes sur 77 ont un prix d achat
+ * (90 %), 33 sur 36 en 7 jours (92 %) ; 41 en gain, 28 en perte, mediane
+ * +2,6 %. L historique ENTIER est necessaire : avec 8 jours seulement, 27 sur
+ * 36 (75 %).
+ * En ETH, pas en $ : converti avec la cloture ETH du jour, le signe change pour
+ * 5 ventes sur 69 (−20,1 % en ETH = +12,6 % en $) — on ecrit « in ETH ».
+ * LES FRAIS D INTERFACE (relecture du 12/10, tx ou seule la paire v2 bouge,
+ * net du beneficiaire / net de la paire) : a la VENTE ils sont pris en $SWOGE
+ * au vendeur (0x5a3482…, 0xc06ebb…, 0x4acb6c…) — son net depasse le flux de
+ * la paire de 0,5 a 2 % dans 34 ventes sur 79 en 30 jours, de 1,0101 au plus
+ * sur les 2 206 ventes de l histoire ; le prix de vente ci-dessus les COMPTE
+ * (gain ou perte net pour le vendeur, ~0,9 point de moins). A l ACHAT le net de
+ * l acheteur vaut le flux (123 achats sur 124 en 30 jours, jamais au-dessus sur
+ * 3 494) : des frais d achat pris en ETH AVANT la paire, s il y en a, ne se
+ * voient pas. Pres de zero le signe ne dit donc rien : 11 ventes sur 69 dans
+ * ±1 % ; on ecrit « about break-even » dans ±1 %.
+ * ACHAT GARDE EN PARTIE (mutant du 12/10 : un achat dont la moitie repart dans
+ * la meme tx doublait le prix moyen, puis « Sold at a loss: -50% » pour une
+ * revente au meme prix) : l acheteur n est credite que de SA part de la jambe
+ * ETH, jambe × min(gardes, flux) / flux ; ce qu il recoit au-dela du flux est
+ * a cout inconnu. Histoire : 48 achats sur 3 494 sous 0,999 du flux (min
+ * 0,874), 1 sur 124 en 30 jours (0,990). VENTE MELEE : un vendeur qui cede
+ * plus que le flux × (1 + FRAIS_VENTE_MAX) a envoye des jetons ailleurs dans
+ * la meme tx — prix de vente illisible, dit tel quel (0 vente sur 2 206 au-dela
+ * de 1,05 ; frais mesures 1,0101 au plus). Un vendeur qui cede MOINS que le
+ * flux (un second vendeur dans la tx, 0 sur 2 206) : prix = jambe / flux. */
+const PART_CONNUE_MIN = 0.99;
+const EQUILIBRE_PCT = 1;
+const FRAIS_VENTE_MAX = 0.05;
+
+/* ---- NEUF : UN PORTEFEUILLE QUI N A JAMAIS SERVI ----
+ * Le nonce de la TX D ACHAT = le nombre de transactions signees avant elle,
+ * exact a l instant de l achat (le noeud n est pas une archive :
+ * eth_getTransactionCount refuse au-dela de pointe − 1 000 blocs, sonde du
+ * 12/10). Il ne dit rien d un achat RELAYE : 67 achats sur 123 en 30 jours
+ * (54 %) sont signes par un autre (EntryPoint 4337, solveurs) ; 9 acheteurs
+ * relayes ont un nonce de 1 et achetent pourtant souvent. Donc « Fresh wallet »
+ * seulement si l acheteur a SIGNE (receipt.from), nonce <= 2, et premiere
+ * apparition sur le $SWOGE (9 acheteurs a nonce <= 2 y etaient deja).
+ * Premieres entrees qui signent, 30 jours : nonces 0, 0, 0, 2, 6, 52, 80, 350,
+ * 418, 496, 798, 1 445 — la coupure tombe entre 2 et 6. Resultat : 4 acheteurs
+ * sur 49 en 30 jours. Cout : 1 eth_getTransactionByHash par candidat ANNONCE
+ * (~0,4 par jour). */
+const NONCE_NEUF_MAX = 2;
+
+/* ---- LIENS : DES PORTEFEUILLES RELIES PAR UNE PREUVE SUR LA CHAINE ----
+ * Un Transfer $SWOGE direct de personne a personne dans une transaction qui ne
+ * touche AUCUNE piscine. Ni les piscines, ni les contrats (routeurs,
+ * agregateurs), ni la maison, ni le brule, ni le signataire d un achat relaye
+ * (31 signataires pour 67 achats relayes, 17 servent plusieurs acheteurs) ne
+ * font un lien. Sonde du 12/10, historique entier : 161 envois reels hors
+ * airdrop, 103 couples, 79 envois vers un portefeuille qui apparait pour la
+ * premiere fois (le profil d un deplacement vers son propre portefeuille).
+ * Degres (voisins personnes distincts) : 147 a 1, 14 a 2, 6 a 3, puis trois
+ * carrefours — l envoyeur de l airdrop 0xe20bb824… (537), un collecteur
+ * 0x960b… (7), un robot 0x0e66… (6). Sans plafond, un groupe de 20 enchaine par
+ * ces carrefours ; plafond de degre <= 5 : 73 groupes (62 paires, 7 triplets,
+ * 2 de 4, 2 de 5), acheteurs relies 7 sur 49 en 30 jours, 3 sur 35 en 7 jours.
+ * Un lien prouve un transfert, pas un meme proprietaire (cadeau, paiement,
+ * OTC) : relecture du 12/10, 164 envois directs (hors airdrop et maison), 79
+ * vers un portefeuille NEUF, 85 vers un portefeuille deja vu. Le texte dit
+ * « linked by direct $SWOGE transfers » et, apres le total, « not proof of a
+ * single owner » — jamais « same owner ».
+ * LA POUSSIERE NE FAIT PAS UN LIEN (mutant du 12/10 : un tiers qui envoyait
+ * 0,000001 $SWOGE a un acheteur entrait dans sa ligne 🔗 et dans son total —
+ * une action de l envoyeur seul). Un envoi ne relie que s il porte au moins
+ * SEUIL_LIEN = 1 000 $SWOGE, le seuil de detenteur. Mesure (histoire entiere,
+ * 164 envois) : 0 envoi nul, 1 seul sous 1 000 (0,03 jeton, juillet), 3 a
+ * 1 000 pile (envois d essai vers un portefeuille neuf, gardes), mediane
+ * 8,7 M, p10 673 049. Un envoi plus petit mais non nul compte pour le DEGRE
+ * (le distributeur de l airdrop, 537 envois de 278,294, reste un carrefour ;
+ * un poudreur qui vise plus de 5 adresses en devient un) ; un Transfer de 0
+ * jeton (faisable sans la signature de l envoyeur) ne compte pour rien.
+ * Reste possible, et dit : envoyer 1 000 jetons (~0,05 $) a un acheteur pour
+ * apparaitre dans sa ligne — au plus 5 cibles avant d etre un carrefour.
+ * Affichage : le groupe (au plus 5 portefeuilles, la taille maximale mesuree),
+ * le total, 3 adresses courtes au plus. 0 appel en regime. */
+const DEGRE_MAX = 5;
+const GROUPE_MAX = 5;
+const SEUIL_LIEN = 1000n * E18;                  // = SEUIL_DETENTEUR (plus bas)
+
+/* La version de l etat qui porte tout ce qui precede : un etat ecrit avant (sans
+   couts, liens, cours) est RECONSTRUIT une fois, en gardant ce qui a deja ete
+   dit (annonces, recharges, releves) — jamais remis a neuf (VERSION_ETAT). */
+const SCHEMA = 2;
+
 /* ---- LE SEUIL DE DETENTEUR : 1 000 $SWOGE ----
  * Sonde du 11/10/2026 : 0 adresse dans [1 ; 100), 541 dans [100 ; 1 000) dont
  * 536 tiennent exactement l airdrop de 278,294 sans avoir jamais achete, 11
@@ -206,11 +370,18 @@ const SEUIL_DETENTEUR = 1000n * E18;
  *  - Believer : achat par une personne qui tenait deja 1 000 ou plus.
  *  - Paper hand : vente qui laisse moins de 1 000 (27 des 28 paper hands des
  *    7 jours retombaient a 0 pile, la 28e a 0,00x jeton).
- *  - Vente PARTIELLE : NON annoncee, comptee dans le releve. Sur 7 jours : 5
- *    ventes partielles (6 %, 15 %, 50 %, 50 %, 51 % du sac) ; le vendeur reste
- *    detenteur, l appeler « paper hand » serait faux ; 2 des 5 ont ete suivies
- *    d une sortie totale (0x1d4342 deux minutes plus tard, 0x1f2d92 cinq heures
- *    plus tard), qui, elle, est annoncee.
+ *  - Vente PARTIELLE (vente qui laisse 1 000 ou plus) : le vendeur reste
+ *    detenteur, l appeler « paper hand » serait faux. Muette jusqu au 12/10 ;
+ *    le proprietaire demande « s il lui en reste encore ». Sonde du 12/10, 30
+ *    jours : 29 partielles (0,97 par jour, 3 au plus par jour), mediane 167 $,
+ *    p25 25 $ ; 7 sous 25 $, 6 sous 10 % du sac (de 0 a 42 $) ; 16 sur 29
+ *    suivies d une sortie totale du meme portefeuille, dont 7 en moins de
+ *    24 h. Simulation 30 jours (10/10/25/25 $, recharge, 4/h) : production
+ *    106 annonces (3,5/jour) ; partielles >= 25 $ ET >= 10 % du sac, FAMILLE
+ *    A PART : 125 (4,2/jour, +19) ; >= 25 % du sac : 120, mais perd des ventes
+ *    reelles (20 % a 99 $, 15 % a 167 $) ; meme famille que les paper hands :
+ *    6 sorties totales de PLUS cachees (12 au lieu de 6) — rejete. Sur 7
+ *    jours : 70 → 74 annonces. Retenu : >= 25 $ et >= 10 % du sac, sa famille.
  * Montants minimaux en DOLLARS (jetons × cours DexScreener) : un seuil en
  * jetons change de sens quand le cours bouge (+20 % sur 24 h le 11/10).
  * Tailles mesurees (sonde, 7 jours, jambe WETH × 2 533 $) : entrees mediane
@@ -219,9 +390,15 @@ const SEUIL_DETENTEUR = 1000n * E18;
  * 1,44 a 6,49 $) et 2 retours sur 22 ; 25 $ ecarte 14 believers sur 39 —
  * surtout les micro-achats repetes de 0xb67a60… (9 sur 13 sous 25 $) — et 3
  * paper hands sur 28. */
-const MIN_USD = { nouveau: 10, retour: 10, believer: 25, paper: 25 };
+const MIN_USD = { nouveau: 10, retour: 10, believer: 25, paper: 25, partielle: 25 };
+const PARTIELLE_PART_MIN = 0.10;                  // part du sac vendue (voir plus haut)
+/* les genres qui s annoncent, et ceux qui entrent dans le resume */
+const GENRES_ANNONCES = new Set(['nouveau', 'retour', 'believer', 'paper', 'partielle']);
+const EVTS_GARDE_MS = 8 * 24 * 3600 * 1000;
 /* ---- UNE ANNONCE PAR ADRESSE ET PAR FAMILLE TOUTES LES 24 H ----
- * Familles : entree (new holder et welcome back), believer, paper hand.
+ * Familles : entree (new holder et welcome back), believer, paper hand, et
+ * depuis le 12/10 vente partielle (sa famille : une partielle ne fait pas taire
+ * la sortie totale qui suit — 0x1d4342, deux minutes plus tard, le 07/10).
  * Rejeu de CE module sur les 7 jours du 04/10 23:18 au 11/10 23:20 UTC (120
  * evenements de marche, 40 adresses, seuils 10/25/25 $, plafond 4/h) :
  *   - sans recharge                        88 annonces, 12,6 par jour ;
@@ -314,7 +491,9 @@ const SCENES = {
     monde: 'a bright classroom in the morning, sunlight through tall windows, chalk dust floating in the light, warm wood and a green board' },
 };
 const GENRES_IMAGE = ['nouveau', 'believer', 'paper', 'releve'];
-const imageDuGenre = (g) => (g === 'retour' ? 'nouveau' : g);
+/* une vente partielle porte l image du papier qui s envole : aucune image
+   nouvelle (le proprietaire paie chaque generation) */
+const imageDuGenre = (g) => (g === 'retour' ? 'nouveau' : g === 'partielle' ? 'paper' : g);
 const NOM_IMAGE = /^[0-9A-Za-z_-]{1,40}$/;
 
 const VERSION_ETAT = 1;
@@ -348,6 +527,20 @@ function fmtJetons(n) {
 const fmtUsd = (u) => (u >= 1 ? '$' + Math.round(u).toLocaleString('en-US') : '&lt;$1');   // HTML de Telegram : jamais un « < » nu
 const court = (a) => a.slice(0, 6) + '…' + a.slice(-4);
 const signe = (n) => (n > 0 ? '+' + n : n === 0 ? '±0' : String(n));
+/** Un pourcentage signe : une decimale sous 10 %, entier au-dela. */
+function pct(x) {
+  const a = Math.abs(x);
+  const s = a < 10 ? a.toFixed(1) : Math.round(a).toLocaleString('en-US');
+  return (x < 0 && s !== '0.0' ? '-' : '+') + s + '%';
+}
+const pluriel = (n, mot, pl) => `${n} ${n === 1 ? mot : (pl || mot + 's')}`;
+/** Prix en ETH d un Sync de la paire v2 (token0 = WETH, token1 = $SWOGE). */
+function prixDeSync(data) {
+  if (!/^0x[0-9a-fA-F]{128}/.test(String(data))) return null;
+  const d = String(data).slice(2);
+  const r0 = BigInt('0x' + d.slice(0, 64)), r1 = BigInt('0x' + d.slice(64, 128));
+  return r1 > 0n ? Number(r0 * E18 / r1) / 1e18 : null;
+}
 function xp() { return require('./x_post'); }
 function jourParis(t) { return xp().heureLocale(t, FUSEAU).jour; }
 /** Minuit (heure de Paris) du jour `jour` (AAAA-MM-JJ), en ms UTC. Paris est a
@@ -406,14 +599,25 @@ function cree(deps0) {
   // ---------------------------------------------------------- l etat
   let S = null;
   function etatNeuf() {
-    return { v: VERSION_ETAT, construit: false, curseur: 0, soldes: new Map(), codes: {}, pools: new Set(), autres: {},
+    /* `schema` 1 = un etat d avant le 12/10 (le champ manquait) : la
+       construction pose SCHEMA. `couts` : adresse → [jetons a cout connu, ETH
+       payes pour eux, jetons a cout inconnu] (voir COUT). `liens` : adresse →
+       voisins par envoi direct, DEGRE_MAX + 1 au plus (voir LIENS). `vus` :
+       toute adresse deja passee dans un Transfer (voir NEUF). `coursW` :
+       [heure, prix en ETH] du dernier Sync de chaque minute (voir COURS).
+       `evts` : [heure, genre, adresse] des evenements de marche (resume 24 h). */
+    return { v: VERSION_ETAT, schema: 1, construit: false, curseur: 0, soldes: new Map(), codes: {}, pools: new Set(), autres: {},
              deja: new Set(), jours: {}, photos: {}, horaires: [], ancres: [], annonces: {}, dernier: {},
-             heure: null, releves: {}, prix: null, compteurs: {}, appels: 0, refus429: 0, jourCourant: null, controleH: null };
+             heure: null, releves: {}, prix: null, compteurs: {}, appels: 0, refus429: 0, jourCourant: null, controleH: null,
+             couts: {}, liens: {}, vus: new Set(), coursW: [], evts: [] };
   }
   /* Ce qu une (re)construction garde de l etat precedent : ce qui a deja ete
      DIT (annonces, recharges, releves), les compteurs et le cours. Tout ce qui
      se deduit de la chaine (livre, codes, piscines, photos) repart de zero. */
-  const GARDES_CONSTRUCTION = ['annonces', 'dernier', 'releves', 'compteurs', 'appels', 'refus429', 'prix'];
+  /* `heure` aussi (non-regression du 12/10) : remis a zero, il rouvrait le
+     plafond de 4/h dans l heure de la bascule et perdait le message groupe d un
+     surplus en attente. */
+  const GARDES_CONSTRUCTION = ['annonces', 'dernier', 'releves', 'compteurs', 'appels', 'refus429', 'prix', 'heure'];
   function versDisque() {
     const soldes = {};
     for (const [a, b] of S.soldes) if (b !== 0n) soldes[a] = b.toString(16);
@@ -421,7 +625,7 @@ function cree(deps0) {
       pools: [...S.pools], autres: S.autres, deja: [...S.deja], jours: S.jours, photos: S.photos, horaires: S.horaires,
       ancres: S.ancres, annonces: S.annonces, dernier: S.dernier, heure: S.heure, releves: S.releves,
       prix: S.prix, compteurs: S.compteurs, appels: S.appels, refus429: S.refus429, jourCourant: S.jourCourant,
-      controleH: S.controleH });
+      controleH: S.controleH, schema: S.schema, couts: S.couts, liens: S.liens, vus: [...S.vus], coursW: S.coursW, evts: S.evts });
   }
   function depuisDisque(j) {
     const s = etatNeuf();
@@ -430,6 +634,7 @@ function cree(deps0) {
     s.soldes = new Map(Object.entries(j.soldes || {}).map(([a, h]) => [a, h.startsWith('-') ? -BigInt('0x' + h.slice(1)) : BigInt('0x' + h)]));
     s.pools = new Set(j.pools || []);
     s.deja = new Set(j.deja || []);
+    s.vus = new Set(j.vus || []);
     return s;
   }
   function litEtat() {
@@ -676,9 +881,29 @@ function cree(deps0) {
     const j = S.jours[cle] || (S.jours[cle] = { entrees: [], premieres: [], sorties: [], partielles: 0, achats: 0, ventes: 0 });
     if (!j.recus) j.recus = [];
     if (!j.partis) j.partis = [];
+    if (!j.believers) j.believers = [];
     return j;
   }
   const distinctesPersonnes = (l) => new Set((l || []).filter((a) => personne(a))).size;
+  /** La photo d une journee finie (construction et regime : la meme). Une photo
+   *  d avant le 12/10 n a pas de `believers` : le releve ecrit « – », jamais 0. */
+  function photoDe(jour, t, plus) {
+    const c = chiffres(), jj = S.jours[jour] || {};
+    return Object.assign({ detenteurs: c.detenteurs, horsPools: c.horsPools, entrees: distinctesPersonnes(jj.entrees),
+                           premieres: distinctesPersonnes(jj.premieres), sorties: distinctesPersonnes(jj.sorties),
+                           recus: distinctesPersonnes(jj.recus), partis: distinctesPersonnes(jj.partis),
+                           believers: distinctesPersonnes(jj.believers), partielles: jj.partielles || 0, t }, plus || {});
+  }
+  /** Un evenement de marche, compte dans sa journee de Paris et dans le fil des
+   *  8 derniers jours (le resume des 24 h). */
+  function noteJour(t, k) {
+    const jj = jourDe(jourParis(t));
+    if (k.genre === 'partielle') jj.partielles++;
+    if (k.genre === 'nouveau' || k.genre === 'retour' || k.genre === 'believer') jj.achats++;
+    if (k.genre === 'paper' || k.genre === 'partielle') jj.ventes++;
+    if (k.genre === 'believer') jj.believers.push(k.qui);
+    if (GENRES_ANNONCES.has(k.genre)) S.evts.push([Math.round(t), k.genre, k.qui]);
+  }
   function ligneCommunaute(now) {
     const c = chiffres();
     const d = ecart24h(c.detenteurs, now);
@@ -770,11 +995,21 @@ function cree(deps0) {
   }
   /** Ce qu un recu dit d une transaction : liquidite sur une piscine du $SWOGE ?
    *  quelles piscines y sont un MARCHE (voir VALEUR) ? */
-  function lisRecu(logs, net) {
+  function lisRecu(logs, net, signataire) {
     let liq = false;
     const autresPM4 = new Set();      // les jetons ERC-20 (hors $SWOGE) qui entrent dans le PoolManager ou en sortent
+    /* La jambe ETH de la paire v2 (WETH entre dans la paire, sortant negatif) et
+       son dernier Sync (le cours en ETH apres l echange) : deja dans ce recu,
+       0 appel de plus (voir COURS et COUT). */
+    let weth = 0n, wethVu = false, sync = null;
     for (const l of logs) {
       const a = String(l.address || '').toLowerCase(), tp = (l.topics || []).map((x) => String(x).toLowerCase());
+      if (a === WETH && tp[0] === TOPIC_TRANSFER && tp.length === 3) {
+        const v = BigInt(l.data && l.data !== '0x' ? l.data : 0);
+        if (adrDe(tp[2]) === PAIRE_PRIX) { weth += v; wethVu = true; }
+        if (adrDe(tp[1]) === PAIRE_PRIX) { weth -= v; wethVu = true; }
+      }
+      if (a === PAIRE_PRIX && tp[0] === TOPIC_SYNC) sync = l.data;
       if (TOPICS_LIQUIDITE.includes(tp[0]) && S.pools.has(a)) {
         /* Le PoolManager porte les ModifyLiquidity de TOUS les pools v4 : il ne
            compte que si le $SWOGE entre ou sort du PoolManager dans CETTE
@@ -790,7 +1025,8 @@ function cree(deps0) {
       if (p === PM4) { if (![...autresPM4].some((x) => !VALEUR.has(x))) marche.add(p); }
       else if (VALEUR.has(S.autres[p])) marche.add(p);
     }
-    return { liq, marche };
+    return { liq, marche, weth: wethVu ? Number(weth) / 1e18 : null, prixW: sync ? prixDeSync(sync) : null,
+             signataire: signataire ? String(signataire).toLowerCase() : null };
   }
   /** Les recus des transactions ou une piscine du $SWOGE bouge (voir LOT_RECUS) :
    *  Map hash → { liq, marche }. Un recu illisible fait echouer l appel (le tic
@@ -804,18 +1040,136 @@ function cree(deps0) {
       const rep = await lot(morceau.map((tx) => ['eth_getTransactionReceipt', [tx.h]]));
       rep.forEach((x, k) => {
         if (!x || x.error || !x.result || !Array.isArray(x.result.logs)) throw new Error('recu illisible pour ' + morceau[k].h + ' : ' + String((x && x.error && x.error.message) || 'vide').slice(0, 80));
-        out.set(morceau[k].h, lisRecu(x.result.logs, netSeul(morceau[k])));
+        out.set(morceau[k].h, lisRecu(x.result.logs, netSeul(morceau[k]), x.result.from));
       });
     }
     if (cand.length) compte('recus', cand.length);
     return out;
   }
-  const SANS_RECU = { liq: false, marche: new Set() };
+  const SANS_RECU = { liq: false, marche: new Set(), weth: null, prixW: null, signataire: null };
   /** Classe une transaction deja appliquee, recu a l appui (null si rien ne bouge). */
   function genreDe(tx, net, avant, recus, enDirect) {
     const r = recus.get(tx.h) || SANS_RECU;
     if (r.liq) { if (enDirect) compte('liquidite'); return null; }
     return classe(net, avant, r.marche);
+  }
+
+  // ---------------------------------------------------------- cout, liens (voir COUT et LIENS)
+  /** Le cout moyen et les liens apres une transaction deja appliquee. `jambe` :
+   *  { dW: ETH entre dans la paire v2 (sortant negatif) ou null, liq }. Rend,
+   *  pour le VENDEUR d une vente dont seule la paire a bouge, { qui, pnl } (pnl
+   *  en % en ETH contre son prix d achat moyen, null si ce prix n est pas
+   *  connu) — lu AVANT la mise a jour du cout ; null sinon (prix de vente
+   *  illisible : une autre piscine a bouge, ou l ETH natif du v4). */
+  function suit(net, jambe, logs) {
+    const nP = net.get(PAIRE_PRIX) || 0n;
+    let seule = !!(jambe && jambe.dW !== null && !jambe.liq && nP !== 0n);
+    if (seule) for (const [a, d] of net) if (d !== 0n && a !== PAIRE_PRIX && S.pools.has(a)) { seule = false; break; }
+    let acheteur = null, vente = null, fluxJ = 0;
+    if (seule) {
+      const achat = nP < 0n, flux = absB(nP);
+      fluxJ = jetons(flux);
+      let qui = null, q = 0n;
+      for (const [a, d] of net) {
+        if (!personne(a) || (achat ? d <= 0n : d >= 0n)) continue;
+        if (absB(d) > q) { qui = a; q = absB(d); }
+      }
+      if (qui && q * 2n >= flux && (achat ? jambe.dW > 0 : jambe.dW < 0)) {
+        if (achat) acheteur = qui;
+        else {
+          const c = S.couts[qui], qv = jetons(q);
+          /* la part du sac a cout connu, rapportee au solde REEL d avant (un
+             suivi incomplet abaisse la part, il ne l invente jamais) */
+          const avant = jetons(solde(qui) + q);
+          const connu = c && c[0] > 0 && c[0] / Math.max(c[0] + c[2], avant) >= PART_CONNUE_MIN;
+          /* vente melee (voir COUT) : des jetons partis ailleurs dans la tx */
+          if (qv > fluxJ * (1 + FRAIS_VENTE_MAX)) vente = { qui, lu: false, pnl: null };
+          else vente = { qui, lu: true, pnl: connu ? 100 * ((-jambe.dW / Math.max(qv, fluxJ)) / (c[1] / c[0]) - 1) : null };
+        }
+      }
+    }
+    for (const [a, d] of net) {
+      if (d === 0n || !personne(a)) continue;
+      const c = S.couts[a] || [0, 0, 0], q = jetons(absB(d));
+      if (d > 0n) {
+        /* l acheteur : SA part de la jambe ETH (voir COUT, achat garde en partie) */
+        if (a === acheteur && fluxJ > 0) { const k = Math.min(q, fluxJ); c[0] += k; c[1] += jambe.dW * k / fluxJ; c[2] += q - k; }
+        else c[2] += q;
+      } else {
+        const tot = c[0] + c[2], f = tot > 0 ? Math.min(1, q / tot) : 1;
+        c[0] *= 1 - f; c[1] *= 1 - f; c[2] *= 1 - f;
+      }
+      if (solde(a) <= 0n) delete S.couts[a]; else S.couts[a] = c;
+    }
+    /* un lien : un envoi direct de personne a personne, AUCUNE piscine dans la
+       tx ; le degre compte tout envoi non nul, le groupe seulement les envois
+       d au moins SEUIL_LIEN (voir LIENS) */
+    if (logs && ![...net.keys()].some((a) => S.pools.has(a))) {
+      for (const l of logs) {
+        const de = adrDe(l.topics[1]), vers = adrDe(l.topics[2]), v = BigInt(l.data === '0x' ? 0 : l.data);
+        if (de !== vers && personne(de) && personne(vers) && v > 0n) { const fort = v >= SEUIL_LIEN; lie(de, vers, fort); lie(vers, de, fort); }
+      }
+    }
+    return vente;
+  }
+  /* Les voisins d une adresse : « b » (lien, envoi >= SEUIL_LIEN) ou « ~b »
+     (poussiere : compte pour le degre, jamais pour le groupe). Au-dela de
+     DEGRE_MAX + 1 voisins, on n en garde pas plus : c est un carrefour. */
+  function lie(a, b, fort) {
+    const l = S.liens[a] || (S.liens[a] = []);
+    const faible = l.indexOf('~' + b);
+    if (fort && faible >= 0) { l[faible] = b; return; }
+    if (l.includes(b) || faible >= 0) return;
+    if (l.length <= DEGRE_MAX) l.push(fort ? b : '~' + b);
+  }
+  /** Le groupe d un acheteur : ses relies (au plus GROUPE_MAX portefeuilles,
+   *  lui compris, les plus proches d abord), sans carrefour ni maison. */
+  function groupe(qui) {
+    const ok = (a) => personne(a) && (S.liens[a] || []).length <= DEGRE_MAX;
+    if (!ok(qui)) return [];
+    const g = [qui];
+    for (let i = 0; i < g.length && g.length < GROUPE_MAX; i++) {
+      for (const b of S.liens[g[i]] || []) {
+        if (g.length >= GROUPE_MAX) break;
+        if (b[0] !== '~' && !g.includes(b) && ok(b)) g.push(b);
+      }
+    }
+    return g.slice(1);
+  }
+  /** Le cours en ETH apres un echange (un point par minute, le dernier gagne). */
+  function notePrix(t, p) {
+    if (!(p > 0)) return;
+    const A = S.coursW, m = Math.floor(t / 60000);
+    if (A.length && Math.floor(A[A.length - 1][0] / 60000) === m) A[A.length - 1] = [Math.round(t), p];
+    else if (!A.length || A[A.length - 1][0] <= t) A.push([Math.round(t), p]);
+  }
+  /** Les jambes de la paire v2 depuis ses Sync (construction) : hash → { dW,
+   *  liq, prixW, b }. dW = reserve0 apres la tx − reserve0 avant (le dernier
+   *  Sync d avant) ; reserves qui bougent dans le meme sens = de la liquidite.
+   *  Sonde du 12/10 : = Transfer WETH vers et depuis la paire dans 5 723 tx sur
+   *  5 723, = net $SWOGE de la paire dans 5 723 sur 5 723. */
+  function jambesDeSync(logs) {
+    const cle = (l) => [parseInt(l.blockNumber, 16), parseInt(l.transactionIndex, 16), parseInt(l.logIndex, 16)];
+    const tri = logs.filter((l) => !l.removed).map((l) => ({ l, k: cle(l) }))
+      .sort((x, y) => x.k[0] - y.k[0] || x.k[1] - y.k[1] || x.k[2] - y.k[2]);
+    const out = new Map();
+    let r0p = 0n, r1p = 0n;
+    for (const { l, k } of tri) {
+      if (!/^0x[0-9a-fA-F]{128}/.test(String(l.data))) { compte('syncIllisible'); continue; }   // un Sync mal forme ne casse pas la construction
+      const d = String(l.data).slice(2);
+      const r0 = BigInt('0x' + d.slice(0, 64)), r1 = BigInt('0x' + d.slice(64, 128));
+      let j = out.get(l.transactionHash);
+      if (!j) { j = { r0a: r0p, r1a: r1p, b: k[0] }; out.set(l.transactionHash, j); }
+      j.r0 = r0; j.r1 = r1; r0p = r0; r1p = r1;
+    }
+    for (const j of out.values()) {
+      const dW = j.r0 - j.r0a, dS = j.r1 - j.r1a;
+      j.dW = Number(dW) / 1e18;
+      j.liq = (dW > 0n && dS > 0n) || (dW < 0n && dS < 0n);
+      j.prixW = j.r1 > 0n ? Number(j.r0 * E18 / j.r1) / 1e18 : null;
+      delete j.r0a; delete j.r1a; delete j.r0; delete j.r1;
+    }
+    return out;
   }
   async function prepare(txs) {
     const adresses = [];
@@ -837,13 +1191,29 @@ function cree(deps0) {
 
   // ---------------------------------------------------------- la construction
   /* Une fois dans la vie du volume (ensuite : le fichier), ou apres un ecart
-     persistant avec la chaine. Rien n est annonce sur l historique. Cout au
-     rejeu (voir EXPLOITATION) : ~10-16 eth_getLogs, ~36 lots de getCode,
-     quelques lots token0/token1, 1 lot d en-tetes, ~8 lots de recus (les
-     echanges des 8 derniers jours), 1 lot de balanceOf. Elle travaille sur un
-     etat NEUF (voir tic) : ratee, elle ne laisse rien derriere elle. */
+     persistant avec la chaine, ou un etat d avant le 12/10 (SCHEMA). Rien
+     n est annonce sur l historique. Cout au rejeu du 12/10 (construction au
+     bloc 86 356 865 : 8 323 Transfer, 5 722 Sync, voir EXPLOITATION) : 75
+     appels — 18 eth_getLogs (9 sur le jeton, 9 sur les Sync de la paire),
+     44 lots de getCode (dont 8 pour les deux bouts des envois directs, voir
+     LIENS : 24 detenteurs relies au lieu de 11 sans eux), 2 lots
+     token0/token1, 1 lot d en-tetes, 7 lots de recus, 1 lot de balanceOf.
+     Resultat : 121 detenteurs, 66,49 % hors 5 piscines (= la production du
+     12/10 03:22), prix d achat connu pour 90 detenteurs sur 121. Elle
+     travaille sur un etat NEUF (voir tic) : ratee, elle ne laisse rien
+     derriere elle.
+     `borne` (une MIGRATION, voir tic) : la construction s arrete au curseur de
+     l ancien etat, et le tic suivant lit l ecart comme un redemarrage — sous la
+     regle des 30 min. Non-regression du 12/10 : construite jusqu a la pointe,
+     elle avalait comme de l histoire tout ce qui s etait passe entre le dernier
+     tic de l ancien processus et la fin de la reconstruction (2 a 5 min) — la
+     Paper hand 0x722d8572… de 09:37 le 09/10, annoncee par un simple
+     redemarrage, disparaissait. Probabilite de perdre au moins une annonce sur
+     les 74 des 7 jours reels : 2,1 % pour 3 min, 3,5 % pour 5 min. La borne
+     ne recule pas de plus de 30 min (17 385 blocs a 0,10354 s) : au-dela, rien
+     ne serait annonce de toute facon. */
   let constructionsIndecises = 0;
-  async function construit() {
+  async function construit(borne) {
     const t0 = Date.now(), appels0 = S.appels;
     const tip = await pointe();
     const now = deps.horloge();
@@ -854,9 +1224,18 @@ function cree(deps0) {
     S.ancres = [];
     en.forEach((x) => { if (x.result) S.ancres.push([parseInt(x.result.number, 16), parseInt(x.result.timestamp, 16) * 1000]); });
     S.ancres.push([tip.bloc, tip.t]);
-    const jusqua = tip.bloc - CONFIRMATIONS;
+    /* jamais plus de RETARD_MAX_MS derriere la pointe : un ecart plus vieux ne
+       serait pas annonce (regle des 30 min), et le rejouer au tic laisserait les
+       journees d entre-deux sans photo (un ancien etat arrete depuis des jours) */
+    const plancher = tip.bloc - CONFIRMATIONS - Math.ceil(RETARD_MAX_MS / CADENCE_MS);
+    const jusqua = borne > 0 ? Math.min(tip.bloc - CONFIRMATIONS, Math.max(borne, plancher)) : tip.bloc - CONFIRMATIONS;
     const logs = await lisLogs(BLOC_FRAPPE, jusqua, filtreJeton());
     const txs = regroupe(logs, 0);
+    /* les Sync de la paire v2 depuis la frappe : la jambe ETH de chaque echange
+       (le prix d achat moyen) et le cours des 8 derniers jours (voir COURS) ;
+       la paire SEULE, une valeur par position */
+    const syncs = await lisLogs(BLOC_FRAPPE, jusqua, { address: PAIRE_PRIX, topics: [TOPIC_SYNC] });
+    const jambes = jambesDeSync(syncs);
     /* Les bornes : fins des 8 derniers jours de Paris, heures pleines des 26 dernieres heures. */
     const aujourdhui = jourParis(now);
     const finsJour = [];
@@ -885,36 +1264,60 @@ function cree(deps0) {
     if (indecis.length) console.log(`[communaute] ${indecis.length} adresse(s) sans verdict 5 constructions de suite : on conclut, elles seront redemandees`);
     constructionsIndecises = 0;
     if (!S.pools.has(PAIRE_PRIX)) throw new Error('la paire du prix ' + PAIRE_PRIX + ' n est pas reconnue comme piscine : construction refusee');
+    /* Les liens (voir LIENS) demandent le code des deux bouts d un envoi direct,
+       meme s ils ne tiennent plus rien. Sans verdict, pas de lien : on ne
+       bloque pas la construction pour ca (compte `codesLiensIndecis`). */
+    const libres = [];
+    for (const tx of txs) {
+      const n = netSeul(tx);
+      if ([...n.keys()].some((a) => S.pools.has(a))) continue;
+      for (const a of n.keys()) if (!(a in S.codes) && !BRULES.has(a) && a !== JETON) libres.push(a);
+    }
+    const indecisLiens = await apprendCodes(libres);
+    if (indecisLiens.length) compte('codesLiensIndecis', indecisLiens.length);
     const recus = await examine(txs.filter((tx) => tx.b >= debutFenetre));
     /* Passe B : le rejeu complet, codes et piscines connus. */
     S.soldes = new Map(); S.deja = new Set(); S.jours = {}; S.photos = {}; S.horaires = [];
+    S.couts = {}; S.liens = {}; S.vus = new Set(); S.coursW = []; S.evts = [];
     let iJ = 0, iH = 0;
-    const photo = (jour, t) => {
-      const c = chiffres(), jj = S.jours[jour] || {};
-      S.photos[jour] = { detenteurs: c.detenteurs, horsPools: c.horsPools, entrees: distinctesPersonnes(jj.entrees),
-                         premieres: distinctesPersonnes(jj.premieres), sorties: distinctesPersonnes(jj.sorties),
-                         recus: distinctesPersonnes(jj.recus), partis: distinctesPersonnes(jj.partis),
-                         partielles: jj.partielles || 0, t, reconstruit: true };
-    };
-    const bornes = (b) => {
+    const photo = (jour, t) => { S.photos[jour] = photoDe(jour, t, { reconstruit: true }); };
+    const bornes = (b, bH) => {
       while (iJ < finsJour.length && blocDe(finsJour[iJ].t) < b) { photo(finsJour[iJ].jour, finsJour[iJ].t); iJ++; }
-      while (iH < heures.length && blocDe(heures[iH]) < b) { S.horaires.push({ t: heures[iH], n: chiffres().detenteurs }); iH++; }
+      while (iH < heures.length && blocDe(heures[iH]) < (bH === undefined ? b : bH)) { S.horaires.push({ t: heures[iH], n: chiffres().detenteurs }); iH++; }
     };
     for (const tx of txs) {
       bornes(tx.b);
       const { net, avant } = applique(tx);
-      if (tx.b >= debutFenetre) {
+      const j = jambes.get(tx.h);
+      const dansFenetre = tx.b >= debutFenetre;
+      const r = dansFenetre ? recus.get(tx.h) : null;
+      if (dansFenetre) {
         const t = tempsDe(tx.b);
         const k = genreDe(tx, net, avant, recus, false);
-        if (k && k.genre === 'partielle') jourDe(jourParis(t)).partielles++;
-        if (k && (k.genre === 'nouveau' || k.genre === 'retour' || k.genre === 'believer')) jourDe(jourParis(t)).achats++;
-        if (k && (k.genre === 'paper' || k.genre === 'partielle')) jourDe(jourParis(t)).ventes++;
+        if (k && k.qui) noteJour(t, k);
         passages(net, avant, t, k);
       } else {
         for (const a of net.keys()) if (solde(a) >= SEUIL_DETENTEUR) S.deja.add(a);
       }
+      /* le cout de TOUT l historique (voir COUT) : la jambe des Sync, la
+         liquidite par le sens des reserves, ou par le recu dans la fenetre */
+      suit(net, j ? { dW: j.dW, liq: j.liq || !!(r && r.liq) } : null, tx.logs);
+      for (const a of net.keys()) S.vus.add(a);
     }
-    bornes(Infinity);
+    /* les journees finies AU curseur ; une journee qui finit apres lui (une
+       migration bornee juste avant minuit) est photographiee par le tic, au
+       premier echange du lendemain, l ecart compris (voir photosDuJour) */
+    bornes(jusqua + 1, Infinity);
+    /* le cours des 8 derniers jours, plus le dernier Sync d avant (voir COURS) */
+    const debutCours = blocDe(now - COURS_GARDE_MS);
+    let avantCours = null;
+    for (const j of [...jambes.values()].sort((x, y) => x.b - y.b)) {
+      if (j.prixW === null) continue;
+      if (j.b < debutCours) { avantCours = j; continue; }
+      if (avantCours) { notePrix(tempsDe(avantCours.b), avantCours.prixW); avantCours = null; }
+      notePrix(tempsDe(j.b), j.prixW);
+    }
+    if (avantCours) notePrix(tempsDe(avantCours.b), avantCours.prixW);
     /* Le livre rejoue doit tomber sur la chaine au bloc du curseur, sinon on ne
        publie rien de ce qu il dit (un journal manquant dans une fenetre). */
     const ctl = await controleLivre(jusqua);
@@ -922,11 +1325,17 @@ function cree(deps0) {
     S.controleH = ctl.lus ? Math.floor(now / HEURE_MS) : null;
     S.curseur = jusqua;
     S.construit = true;
-    S.heure = { cle: Math.floor(now / HEURE_MS), n: 0, surplus: {} };
+    S.schema = SCHEMA;
+    if (!S.heure) S.heure = { cle: Math.floor(now / HEURE_MS), n: 0, surplus: {} };   // garde (voir GARDES_CONSTRUCTION)
     const c = chiffres();
     compte('constructions');
-    console.log(`[communaute] construit en ${Math.round((Date.now() - t0) / 1000)} s · ${logs.length} Transfer · ${S.appels - appels0} appels au noeud (${S.refus429} refus 429) · ` +
-      `${c.detenteurs} detenteurs (>= 1 000 $SWOGE, personnes hors maison) · ${c.horsPools === null ? '?' : c.horsPools.toFixed(2)} % hors ${S.pools.size} piscines · brule ${Math.round(c.brule)}`);
+    let connus = 0, suivis = 0, relies = 0;
+    for (const [a, x] of Object.entries(S.couts)) if (solde(a) >= SEUIL_DETENTEUR && personne(a)) { suivis++; if (x[0] / Math.max(x[0] + x[2], 1e-9) >= PART_CONNUE_MIN) connus++; }
+    for (const a of Object.keys(S.liens)) if (solde(a) >= SEUIL_DETENTEUR && groupe(a).length) relies++;
+    console.log(`[communaute] construit en ${Math.round((Date.now() - t0) / 1000)} s · ${logs.length} Transfer · ${syncs.length} Sync · ${S.appels - appels0} appels au noeud (${S.refus429} refus 429) · ` +
+      `${c.detenteurs} detenteurs (>= 1 000 $SWOGE, personnes hors maison) · ${c.horsPools === null ? '?' : c.horsPools.toFixed(2)} % hors ${S.pools.size} piscines · brule ${Math.round(c.brule)} · ` +
+      `prix d achat connu pour ${connus}/${suivis} detenteurs · ${relies} detenteurs relies · cours : ${S.coursW.length} points` +
+      (jusqua < tip.bloc - CONFIRMATIONS ? ` · arretee au curseur de l ancien etat (bloc ${jusqua}, ${tip.bloc - CONFIRMATIONS - jusqua} blocs lus au tic suivant)` : ''));
   }
 
   // ---------------------------------------------------------- le prix
@@ -945,20 +1354,53 @@ function cree(deps0) {
   // ---------------------------------------------------------- les annonces
   const lienAdr = (a) => `<a href="${deps.explorer}/address/${a}">${court(a)}</a>`;
   const lienTx = (h) => `<a href="${deps.explorer}/tx/${h}">view tx ↗</a>`;
+  /** Le gain ou la perte d une vente (voir COUT) : jamais un chiffre sans les
+   *  deux jambes lues. */
+  const RAISONS_VENTE = { paire: ' (not sold on the v2 pair)', piscines: ' (sold through several pools)', envois: ' (tokens also sent elsewhere in the same transaction)' };
+  function lignePnl(ev) {
+    /* la raison dite est celle lue dans la tx (relecture du 12/10 : « not sold on
+       the v2 pair » etait ecrit aussi quand la paire ET une autre piscine
+       bougeaient — 0 cas en 30 jours, mais la parenthese aurait ete fausse) */
+    if (!ev.venteLue) return '❔ Profit or loss unknown: sale price not readable on-chain' + (RAISONS_VENTE[ev.raisonVente] || '');
+    if (ev.pnl === null || ev.pnl === undefined || !isFinite(ev.pnl)) return '❔ Profit or loss unknown: buy price unknown (tokens received by transfer or another pool)';
+    if (Math.abs(ev.pnl) < EQUILIBRE_PCT) return '⚖️ About break-even (within ±1%) vs. average buy price, in ETH';
+    return ev.pnl > 0 ? `💰 Sold in profit: <b>${pct(ev.pnl)}</b> vs. average buy price, in ETH`
+                      : `🔻 Sold at a loss: <b>${pct(ev.pnl)}</b> vs. average buy price, in ETH`;
+  }
+  /** Les portefeuilles relies d un acheteur (voir LIENS), ou rien. */
+  function ligneLiens(qui) {
+    const g = groupe(qui);
+    if (!g.length) return null;
+    const tri = g.map((a) => ({ a, n: jetons(solde(a)) })).sort((x, y) => y.n - x.n);
+    const total = jetons(solde(qui)) + tri.reduce((s, x) => s + x.n, 0);
+    const vus = tri.slice(0, 3).map((x) => `${lienAdr(x.a)} (${fmtJetons(x.n)})`).join(', ');
+    return `🔗 Linked by direct $SWOGE transfers: ${vus}${tri.length > 3 ? ` +${tri.length - 3} more` : ''} · ` +
+           `<b>${fmtJetons(total)} $SWOGE</b> across ${g.length + 1} wallets (not proof of a single owner)`;
+  }
   function texte(ev) {
     const usd = ev.usd === null ? '' : ` (~${fmtUsd(ev.usd)})`;
-    let tete, corps;
+    let tete;
+    const corps = [];
     if (ev.genre === 'nouveau' || ev.genre === 'retour') {
       tete = '🆕 <b>New holder</b>' + (ev.genre === 'retour' ? ' · welcome back' : '');
-      corps = `${lienAdr(ev.qui)} bought <b>${fmtJetons(ev.q)} $SWOGE</b>${usd}`;
+      corps.push(`${lienAdr(ev.qui)} bought <b>${fmtJetons(ev.q)} $SWOGE</b>${usd}`);
+      if (typeof ev.frais === 'number') corps.push(`🐣 Fresh wallet: ${ev.frais === 0 ? 'this buy is its first transaction on this chain' : `only ${pluriel(ev.frais, 'transaction')} on this chain before this buy`}`);
+      const l = ligneLiens(ev.qui); if (l) corps.push(l);
     } else if (ev.genre === 'believer') {
       tete = '💎 <b>Believer</b>';
-      corps = `${lienAdr(ev.qui)} bought <b>${fmtJetons(ev.q)} $SWOGE</b> more${usd} · now holds ${fmtJetons(ev.apres)}`;
+      corps.push(`${lienAdr(ev.qui)} bought <b>${fmtJetons(ev.q)} $SWOGE</b> more${usd}`);
+      corps.push(`👜 Added to bag: ${fmtJetons(ev.avant)} → <b>${fmtJetons(ev.apres)} $SWOGE</b> (${pct(100 * (ev.apres / ev.avant - 1))})`);
+      const l = ligneLiens(ev.qui); if (l) corps.push(l);
+    } else if (ev.genre === 'partielle') {
+      tete = '✂️ <b>Partial sell</b>';
+      corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd}, ${Math.round(100 * ev.q / ev.avant)}% of the bag · still holds <b>${fmtJetons(ev.apres)}</b>`);
+      corps.push(lignePnl(ev));
     } else {
       tete = '🧻 <b>Paper hand</b>';
-      corps = `${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left`;
+      corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left${ev.apres >= 1 ? ` (kept ${fmtJetons(ev.apres)})` : ''}`);
+      corps.push(lignePnl(ev));
     }
-    return `${tete}\n${corps}\n${ev.ligne}\n${lienTx(ev.h)}`;
+    return `${tete}\n${corps.join('\n')}\n${ev.ligne}\n${lienTx(ev.h)}`;
   }
   function urlImage(genre) {
     const nom = genre + '-' + VERSION_IMAGES;
@@ -986,7 +1428,20 @@ function cree(deps0) {
       parts.push(`${achats} buy${achats > 1 ? 's' : ''} (${det.join(', ')})`);
     }
     if (s.paper) parts.push(`${s.paper} paper hand${s.paper > 1 ? 's' : ''}`);
+    if (s.partielle) parts.push(`${s.partielle} partial sell${s.partielle > 1 ? 's' : ''}`);
     return parts.join(' · ');
+  }
+  /** « Fresh wallet » (voir NEUF) : le nonce de la tx d achat, seulement pour
+   *  une premiere entree que l acheteur a SIGNEE et qui est sa premiere
+   *  apparition sur le $SWOGE ; 1 appel, rien dit s il echoue. */
+  async function nonceNeuf(ev) {
+    if (ev.genre !== 'nouveau' || !ev.neuf || !ev.signataire || ev.signataire !== ev.qui) return;
+    try {
+      const x = await rpc('eth_getTransactionByHash', [ev.h]);
+      const n = x && typeof x.nonce === 'string' ? parseInt(x.nonce, 16) : NaN;
+      compte('noncesLus');
+      if (x && String(x.from || '').toLowerCase() === ev.qui && n >= 0 && n <= NONCE_NEUF_MAX) { ev.frais = n; compte('neufs'); }
+    } catch (e) { compte('noncesIllisibles'); }
   }
   /** Le tri d un evenement annoncable : retard, prix, montant, recharge, plafond. */
   async function trie(ev, now, aEnvoyer) {
@@ -999,6 +1454,7 @@ function cree(deps0) {
     if (p === null) return ecarte('sansPrix');
     ev.usd = ev.q * p;
     if (ev.usd < MIN_USD[ev.genre]) return ecarte('sousSeuil');
+    if (ev.genre === 'partielle' && !(ev.q >= PARTIELLE_PART_MIN * ev.avant)) return ecarte('petitePart');
     const cleR = ev.qui + '|' + familleDe(ev.genre);
     if (S.dernier[cleR] && now - S.dernier[cleR] < RECHARGE_MS) return ecarte('recharge');
     S.dernier[cleR] = now;
@@ -1008,6 +1464,7 @@ function cree(deps0) {
     if (S.heure.n >= PLAFOND_HEURE) { S.heure.surplus[ev.genre] = (S.heure.surplus[ev.genre] || 0) + 1; return ecarte('regroupe'); }
     S.heure.n++;
     ecarte('annonce');
+    await nonceNeuf(ev);
     aEnvoyer.push({ image: imageDuGenre(ev.genre), legende: texte(ev), quoi: ev.genre });
   }
   /** L heure a tourne : le surplus de l heure finie part en UN message. */
@@ -1028,12 +1485,81 @@ function cree(deps0) {
   }
 
   // ---------------------------------------------------------- le releve quotidien
-  function texteReleve(now) {
+  /** Le cours sur 7 jours en ETH (voir COURS) : le dernier Sync connu contre le
+   *  dernier Sync anterieur a now − 168 h ; null sans reference. */
+  function coursEth(now) {
+    const A = S.coursW || [];
+    if (!A.length) return null;
+    const ref = now - 7 * JOUR_MS;
+    let p0 = null;
+    for (const [t, p] of A) { if (t <= ref) p0 = p; else break; }
+    const p1 = A[A.length - 1][1];
+    if (!(p0 > 0) || !(p1 > 0)) return null;
+    return { eth: 100 * (p1 / p0 - 1), p0, p1, usd: null };
+  }
+  /** ETH/USD au bloc `bloc` : le dernier Swap de la v3 WETH/USDG dans les
+   *  FENETRE_ETH_USD blocs d avant (voir COURS) ; null si rien de lisible. */
+  async function ethUsdAu(bloc) {
+    const l = await lisPlage(Math.max(0, bloc - FENETRE_ETH_USD), bloc, { address: PISCINE_ETH_USD, topics: [TOPIC_SWAP_V3] });
+    const x = l.length ? l[l.length - 1] : null;
+    if (!x || typeof x.data !== 'string' || x.data.length < 2 + 192) return null;
+    const r = Number(BigInt('0x' + x.data.slice(2 + 128, 2 + 192))) / 2 ** 96;
+    const v = r * r * 10 ** (18 - DECIMALES_USDG);
+    return v >= ETH_USD_MIN && v <= ETH_USD_MAX ? v : null;
+  }
+  /** Le cours sur 7 jours en ETH et, si l ETH/USD se lit aux deux instants, en $. */
+  async function coursSept(now) {
+    const c = coursEth(now);
+    if (!c) return null;
+    try {
+      const e1 = await ethUsdAu(S.curseur), e0 = await ethUsdAu(blocDe(now - 7 * JOUR_MS));
+      if (e0 && e1) { c.usd = 100 * (c.p1 * e1 / (c.p0 * e0) - 1); c.e0 = e0; c.e1 = e1; } else compte('ethUsdIllisible');
+    } catch (e) { compte('ethUsdIllisible'); }
+    return c;
+  }
+  /** Les evenements de marche des dernieres 24 h : portefeuilles DISTINCTS par genre. */
+  function resume24h(now) {
+    const p = { entrees: new Set(), believers: new Set(), paper: new Set(), partielles: 0 };
+    for (const [t, g, a] of S.evts || []) {
+      if (t < now - JOUR_MS || t > now || !personne(a)) continue;
+      if (g === 'nouveau' || g === 'retour') p.entrees.add(a);
+      else if (g === 'believer') p.believers.add(a);
+      else if (g === 'paper') p.paper.add(a);
+      else if (g === 'partielle') p.partielles++;
+    }
+    return p;
+  }
+  /* Le resume du jour (demande du 12/10) tient dans le releve : une publication.
+     Longueur mesuree (sonde du 12/10, unites UTF-16 sans balises, limite 1 024)
+     : releve d avant 856 ; avec les trois lignes ajoutees telles quelles 1 038 ;
+     d ou la note de bas raccourcie. Rejeu reel : 994.
+     LA LIMITE EST TENUE A L ENVOI (relecture du 12/10) : un jour extreme la
+     depassait — +999 en 24 h, % a 4 chiffres et +800 en 7 jours : 1 027 ; trois
+     chiffres partout : 1 029 ; pompe plausible (380 detenteurs, +85 en 24 h, 120
+     new par jour, +312 %) : 1 013 ; production 998 (26 de marge). Au-dela de
+     1 024, Telegram refuse la photo et le releve part en texte seul
+     (telegram.js). Donc : au-dela, la seconde phrase de la note (« Not
+     counted… ») tombe ; au-dela encore, la note entiere. Les chiffres restent. */
+  const LEGENDE_MAX = 1024;
+  const visible = (t) => t.replace(/<[^>]*>/g, '').replace(/&(lt|gt|amp|quot);/g, '_').length;
+  /* Les 7 jours en PORTEFEUILLES distincts (relecture du 12/10 : « Last 24h: N
+     new » comptait des portefeuilles, « 7 days: N new » additionnait les entrees
+     de chaque jour — 43 au rejeu contre 35 portefeuilles a la sonde, 0x132b… et
+     0x9322… comptes deux fois : deux definitions sous le meme mot). Les adresses
+     viennent du journal du jour (S.jours, 12 jours gardes) ; une journee sans
+     journal compte sa photo (des nombres) ; une photo sans le champ (believers
+     d avant le 12/10) : « – », jamais 0. Les ventes partielles restent des
+     VENTES (sonde : 4 partielles de 3 portefeuilles), en 24 h comme en 7 jours. */
+  const CHAMPS_7J = ['entrees', 'premieres', 'sorties', 'recus', 'partis', 'believers'];
+  function texteReleve(now, cours) {
+    if (cours === undefined) cours = coursEth(now);
     const c = chiffres();
     const d = ecart24h(c.detenteurs, now);
     const auj = jourParis(now);
     const lignes = [];
-    let somme = { entrees: 0, premieres: 0, sorties: 0, partielles: 0, recus: 0, partis: 0 }, premier = null, dernierN = null;
+    let partielles = 0, premier = null, dernierN = null;
+    const sept = {}, manque = {};
+    for (const f of CHAMPS_7J) sept[f] = new Set();
     for (let k = JOURS_RELEVE; k >= 1; k--) {
       const j = jourPlus(auj, -k), p = S.photos[j], pv = S.photos[jourPlus(j, -1)];
       if (!p) { lignes.push(`${jourCourt(j)}  ${'–'.padStart(4)}`); continue; }
@@ -1042,22 +1568,47 @@ function cree(deps0) {
       dernierN = p.detenteurs;
       const delta = pv ? `(${signe(p.detenteurs - pv.detenteurs)})` : '';
       lignes.push(`${jourCourt(j)}  ${(String(p.detenteurs).padStart(4) + ' ' + delta).padEnd(11)}${String(p.entrees).padStart(4)}${String(p.sorties).padStart(6)}  ${p.horsPools === null ? '–' : p.horsPools.toFixed(1) + '%'}`);
-      somme.entrees += p.entrees; somme.premieres += p.premieres; somme.sorties += p.sorties; somme.partielles += p.partielles || 0;
-      somme.recus += p.recus || 0; somme.partis += p.partis || 0;
+      partielles += p.partielles || 0;
+      const jj = S.jours[j];
+      for (const f of CHAMPS_7J) {
+        if (jj && Array.isArray(jj[f])) { for (const a of jj[f]) if (personne(a)) sept[f].add(a); }
+        else if (typeof p[f] === 'number') { for (let i = 0; i < p[f]; i++) sept[f].add(j + '#' + i); }
+        else manque[f] = true;
+      }
     }
+    const n7 = (f) => (manque[f] ? '–' : String(sept[f].size));
     const croissance = premier !== null && dernierN !== null ? dernierN - premier : null;
+    const r = resume24h(now);
     /* « New » et « Left » ne comptent que le MARCHE (voir passages) ; les
        autres passages du seuil sont dits « by transfer ». La poussiere et le
        compte brut sont calcules ici (relecture du 12/10 : « ~540 » et « ~700 »
-       etaient ecrits en dur, les chiffres du 11/10). */
-    return `📈 <b>$SWOGE community · daily report</b>\n` +
+       etaient ecrits en dur, les chiffres du 11/10).
+       Le % du cours : une decimale sous 10 %, entier au-dela, comme les autres
+       (pct). Relecture du 12/10 : deux passes de la sonde a 5 min d ecart ont
+       donne +20,88 % puis +19,8 % en $ (l ETH de J−7 avait bouge de 0,9 % entre
+       les deux minutes de reference) ; le chiffre depend de l instant a ~1 point
+       pres, une decimale au-dela de 10 % serait une precision fausse. */
+    const ligneCours = !cours ? '' : cours.usd !== null && cours.usd !== undefined
+      ? `📊 Chart: <b>${pct(cours.usd)}</b> in 7 days in $ (${pct(cours.eth)} in ETH)\n`
+      : `📊 Chart: <b>${pct(cours.eth)}</b> in 7 days (in ETH)\n`;
+    const corps = `📈 <b>$SWOGE community · daily report</b>\n` +
       `<b>${c.detenteurs}</b> holders now${d === null ? '' : ` (${signe(d)} in 24h)`} · <b>${c.horsPools === null ? '?' : c.horsPools.toFixed(1)}%</b> of supply outside pools\n` +
+      ligneCours +
       `<pre>${'Day'.padEnd(8)}${'Holders'.padEnd(11)}${'New'.padStart(4)}${'Left'.padStart(6)}  Outside pools\n${lignes.join('\n')}</pre>\n` +
-      `7 days: <b>${croissance === null ? '?' : signe(croissance)}</b> holders · ${somme.entrees} new (${somme.premieres} first-time) · ${somme.sorties} left · ${somme.partielles} partial sells · ${somme.recus} in / ${somme.partis} out by transfer\n` +
-      `<i>Holder = a wallet with 1,000+ $SWOGE. New = bought from the market to 1,000+, Left = sold to the market below 1,000; airdrops, wallet moves, casino deposits and $SWOGEBET swaps count as transfers. ` +
-      `Not counted: pools, the burn address, contracts, house wallets and ${c.poussiere.toLocaleString('en-US')} wallets under 1,000 (mostly airdrop dust) — trackers that count every balance show ${c.brut.toLocaleString('en-US')}.</i>`;
+      `Last 24h: ${r.entrees.size} new · ${pluriel(r.believers.size, 'believer')} · ${pluriel(r.paper.size, 'paper hand')} · ${pluriel(r.partielles, 'partial sell')}\n` +
+      `7 days: <b>${croissance === null ? '?' : signe(croissance)}</b> holders · ${n7('entrees')} new (${n7('premieres')} first-time) · ` +
+      `${manque.believers ? '– believers' : pluriel(sept.believers.size, 'believer')} · ${n7('sorties')} left · ${pluriel(partielles, 'partial sell')} · ` +
+      `${n7('recus')} in / ${n7('partis')} out by transfer`;
+    const note1 = `<i>Holder = 1,000+ $SWOGE. New = bought on the market to 1,000+; believer = holder who bought more; left = paper hand, sold below 1,000; transfers = airdrops, wallet moves, casino, $SWOGEBET swaps. Chart = now vs. 7×24h ago.`;
+    const note2 = ` Not counted: pools, burn, contracts, house wallets and ${c.poussiere.toLocaleString('en-US')} wallets under 1,000 (mostly airdrop dust) — trackers that count every balance show ${c.brut.toLocaleString('en-US')}.`;
+    const t1 = `${corps}\n${note1}${note2}</i>`, t2 = `${corps}\n${note1}</i>`;
+    if (visible(t1) <= LEGENDE_MAX) return t1;
+    compte('releveNoteCourte');
+    if (visible(t2) <= LEGENDE_MAX) return t2;
+    compte('releveSansNote');
+    return corps;
   }
-  function releveDu(now, aEnvoyer) {
+  async function releveDu(now, aEnvoyer) {
     const cr = xp().creneauDu(now, [C.heure], FUSEAU);
     if (!cr || S.releves[cr.jour]) return;
     const prevu = minuitParis(cr.jour) + (Number(C.heure.split(':')[0]) * 60 + Number(C.heure.split(':')[1])) * 60000;
@@ -1065,7 +1616,8 @@ function cree(deps0) {
     if (now - prevu > RELEVE_RETARD_MAX_MS + HEURE_MS) { S.releves[cr.jour] = { saute: now }; compte('relevesSautes'); console.log(`[communaute] releve du ${cr.jour} saute : plus de 3 h de retard`); return; }
     S.releves[cr.jour] = { t: now };
     compte('releves');
-    aEnvoyer.push({ image: 'releve', legende: texteReleve(now), quoi: 'releve' });
+    const cours = await coursSept(now);
+    aEnvoyer.push({ image: 'releve', legende: texteReleve(now, cours), quoi: 'releve' });
   }
   /* `now` est l heure de la CHAINE traitee (un echange, ou le curseur), jamais
      en arriere : un Transfer de 23:59:58 traite apres un tic de 00:00:30 ne
@@ -1074,11 +1626,8 @@ function cree(deps0) {
     const auj = jourParis(now);
     if (!S.jourCourant) { S.jourCourant = auj; return; }
     if (S.jourCourant >= auj) return;
-    const fini = S.jourCourant, c = chiffres(), jj = S.jours[fini] || {};
-    S.photos[fini] = { detenteurs: c.detenteurs, horsPools: c.horsPools, entrees: distinctesPersonnes(jj.entrees),
-                       premieres: distinctesPersonnes(jj.premieres), sorties: distinctesPersonnes(jj.sorties),
-                       recus: distinctesPersonnes(jj.recus), partis: distinctesPersonnes(jj.partis),
-                       partielles: jj.partielles || 0, t: now };
+    const fini = S.jourCourant;
+    S.photos[fini] = photoDe(fini, now);
     S.jourCourant = auj;
     const garde = (o, n) => { const k = Object.keys(o).sort(); for (const x of k.slice(0, Math.max(0, k.length - n))) delete o[x]; };
     garde(S.photos, 40); garde(S.jours, 12); garde(S.releves, 40);
@@ -1092,6 +1641,12 @@ function cree(deps0) {
     for (const a of Object.keys(S.dernier)) if (now - S.dernier[a] >= RECHARGE_MS) delete S.dernier[a];
     const k = Object.keys(S.annonces);
     if (k.length > 500) { k.sort((x, y) => S.annonces[x] - S.annonces[y]); for (const x of k.slice(0, k.length - 500)) delete S.annonces[x]; }
+    S.evts = (S.evts || []).filter((e) => e[0] >= now - EVTS_GARDE_MS);
+    /* le cours : 8 jours, plus le dernier point d avant (la reference de −168 h) */
+    const A = S.coursW || [];
+    let i = 0;
+    while (i + 1 < A.length && A[i + 1][0] <= now - COURS_GARDE_MS) i++;
+    if (i) S.coursW = A.slice(i);
   }
 
   // ---------------------------------------------------------- le tic
@@ -1105,6 +1660,17 @@ function cree(deps0) {
       if (!S) S = litEtat();
       MAISON = maisonSet();
       const now = deps.horloge();
+      /* Un etat d avant le 12/10 (sans couts, liens ni cours) : reconstruit UNE
+         fois depuis la chaine, en gardant ce qui a deja ete dit — annonces,
+         recharges, releves (le releve du jour ne repart pas). Rien n est
+         annonce PENDANT la reconstruction (~2 a 5 min), mais elle s arrete au
+         curseur de l ancien etat : le tic suivant lit l ecart et annonce ce qui
+         a moins de 30 min, comme apres un simple redemarrage (voir construit). */
+      if (S.construit && (S.schema || 1) < SCHEMA) {
+        S.construit = false;
+        compte('migrations');
+        console.log(`[communaute] etat ecrit au schema ${S.schema || 1}, attendu ${SCHEMA} : reconstruction depuis la frappe (prix d achat, liens, cours), annonces et releves gardes`);
+      }
       if (!S.construit) {
         if (now < prochainEssai) return { fait: 'attente' };
         /* La construction travaille sur un etat NEUF, qui ne garde que ce qui a
@@ -1112,9 +1678,12 @@ function cree(deps0) {
            aucun code, aucune piscine a moitie lus ne survit (relecture du 12/10 :
            un seul 503 figeait la paire hors des piscines pour toujours). */
         const ancien = S;
+        /* une migration (ancien etat construit sous un schema d avant) est bornee
+           a son curseur ; un essai rate garde la borne (l ancien etat revient) */
+        const borne = (ancien.schema || 1) < SCHEMA && ancien.curseur > 0 ? ancien.curseur : 0;
         S = etatNeuf();
         for (const k of GARDES_CONSTRUCTION) if (ancien[k] !== undefined) S[k] = ancien[k];
-        try { await construit(); }
+        try { await construit(borne); }
         catch (e) {
           ancien.appels = S.appels; ancien.refus429 = S.refus429; ancien.compteurs = S.compteurs;
           S = ancien;
@@ -1122,7 +1691,9 @@ function cree(deps0) {
           console.log('[communaute] construction ratee, nouvel essai dans 10 min : ' + String(e && e.message).slice(0, 200));
           return { fait: 'echec', erreur: e.message };
         }
-        S.jourCourant = jourParis(now);
+        /* la journee du CURSEUR (une migration bornee avant minuit laisse la
+           veille ouverte : le tic la ferme au premier echange du lendemain) */
+        S.jourCourant = jourParis(tempsDe(S.curseur));
         ecritEtat();
         return { fait: 'construit', ...chiffres() };
       }
@@ -1141,15 +1712,33 @@ function cree(deps0) {
           photosDuJour(t);
           const { net, avant } = applique(tx);
           const k = genreDe(tx, net, avant, recus, true);
+          /* le cout et les liens (voir COUT, LIENS) : la jambe ETH vient du recu
+             (Transfer WETH vers et depuis la paire), le prix de vente lu AVANT
+             la mise a jour du cout ; une tx de liquidite n a pas de jambe */
+          const r = recus.get(tx.h) || SANS_RECU;
+          const vente = suit(net, r.liq ? null : { dW: r.weth, liq: false }, tx.logs);
+          if (r.prixW) notePrix(t, r.prixW);
+          if (k && k.qui) {
+            k.neuf = !S.vus.has(k.qui);                // premiere apparition (voir NEUF)
+            k.signataire = r.signataire;
+            k.venteLue = !!(vente && vente.qui === k.qui && vente.lu);
+            k.pnl = k.venteLue ? vente.pnl : null;
+            if (!k.achat && !k.venteLue) {
+              k.raisonVente = (net.get(PAIRE_PRIX) || 0n) === 0n ? 'paire' : vente && vente.qui === k.qui ? 'envois'
+                : [...net].some(([a, d]) => d !== 0n && a !== PAIRE_PRIX && S.pools.has(a)) ? 'piscines' : '';
+            }
+            /* ce que le mode observe donne a relire (voir « A revoir ») : la part
+               des ventes a prix connu, des achats relies */
+            if (k.genre === 'paper' || k.genre === 'partielle') compte(!k.venteLue ? 'pnlVenteIllisible' : k.pnl === null ? 'pnlCoutInconnu' : 'pnlConnu');
+            else if ((k.genre === 'nouveau' || k.genre === 'retour' || k.genre === 'believer') && groupe(k.qui).length) compte('achatsRelies');
+          }
+          for (const a of net.keys()) S.vus.add(a);
           if (k) {
             compte('genre_' + k.genre);
-            const jj = jourDe(jourParis(t));
-            if (k.genre === 'partielle') jj.partielles++;
-            if (k.genre === 'nouveau' || k.genre === 'retour' || k.genre === 'believer') jj.achats++;
-            if (k.genre === 'paper' || k.genre === 'partielle') jj.ventes++;
+            if (k.qui) noteJour(t, k);
           }
           passages(net, avant, t, k);
-          if (k && (k.genre === 'nouveau' || k.genre === 'retour' || k.genre === 'believer' || k.genre === 'paper')) {
+          if (k && GENRES_ANNONCES.has(k.genre)) {
             n++;
             await trie(Object.assign({ h: tx.h, t, ligne: ligneCommunaute(now), usd: null }, k), now, aEnvoyer);
           }
@@ -1162,7 +1751,7 @@ function cree(deps0) {
          sous les 50 blocs de marge appartient a la veille */
       photosDuJour(tip.t - (tip.bloc - S.curseur) * CADENCE_MS);
       horaire(now);
-      releveDu(now, aEnvoyer);
+      await releveDu(now, aEnvoyer);
       purge(now);
       /* Le recoupement avec la chaine (voir l en-tete) : quand un echange vient
          d etre lu, avant tout envoi, et au moins une fois par heure. Un ecart :
@@ -1239,7 +1828,8 @@ function cree(deps0) {
     if (C.mode === 'inconnu') return `[communaute] TG_COMMUNAUTE=${C.brut} inconnu (« observe » ou « 1 ») : RIEN ne tourne`;
     const base = `releve de la chaine toutes les ${TIC_MS / 1000} s (noeud officiel, 0 cle), releve quotidien ${C.heure} ${FUSEAU}` +
       (C.heureBrute !== C.heure ? ` (TG_COMMUNAUTE_HEURE=${C.heureBrute} illisible)` : '') +
-      `, detenteur >= 1 000 $SWOGE, seuils new ${MIN_USD.nouveau} $ / believer ${MIN_USD.believer} $ / paper ${MIN_USD.paper} $, 1 annonce par adresse et par famille en 24 h, ${PLAFOND_HEURE}/h, rien au-dela de 30 min de retard` +
+      `, detenteur >= 1 000 $SWOGE, seuils new ${MIN_USD.nouveau} $ / believer ${MIN_USD.believer} $ / paper ${MIN_USD.paper} $ / partielle ${MIN_USD.partielle} $ et ${PARTIELLE_PART_MIN * 100} % du sac, 1 annonce par adresse et par famille en 24 h, ${PLAFOND_HEURE}/h, rien au-dela de 30 min de retard` +
+      `, gain/perte en ETH contre le prix d achat moyen, portefeuilles relies par envoi direct >= 1 000 $SWOGE (degre <= ${DEGRE_MAX}), cours 7 jours sur la chaine` +
       (C.exclus.length ? `, ${C.exclus.length} adresse(s) exclue(s) en plus` : '');
     if (C.mode === 'observe') return `[communaute] OBSERVATION (TG_COMMUNAUTE=observe) : ${base} — n annonce rien, aucune image`;
     return `[communaute] ANNONCES ARMEES (TG_COMMUNAUTE=1) sur le canal public : ${base} ; images ${deps.imageCle ? 'generees une fois (OPENAI_API_KEY posee)' : 'absentes : OPENAI_API_KEY non posee, texte seul'}`;
@@ -1250,7 +1840,8 @@ function cree(deps0) {
     etat: () => { if (!S) S = litEtat(); return S; },
     journalImages: () => litImages(),
     chiffres: () => { if (!S) S = litEtat(); return chiffres(); },
-    texteReleve: (now) => { if (!S) S = litEtat(); return texteReleve(now); },
+    texteReleve: (now, cours) => { if (!S) S = litEtat(); return texteReleve(now, cours); },
+    groupe: (a) => { if (!S) S = litEtat(); return groupe(a); },
     ligneCommunaute: (now) => { if (!S) S = litEtat(); return ligneCommunaute(now); },
   };
 }
@@ -1289,6 +1880,8 @@ module.exports = {
   SEUIL_DETENTEUR, MIN_USD, RECHARGE_MS, PLAFOND_HEURE, RETARD_MAX_MS, TIC_MS, CONFIRMATIONS, CADENCE_MS,
   HEURE_RELEVE, FUSEAU, JOURS_RELEVE, PM4, PAIRE_PRIX, BLOC_FRAPPE, FENETRE_LOGS, BRULES, TOPIC_TRANSFER, TOPICS_LIQUIDITE,
   TOPIC_MODIFY_V4, WETH, USDG, VALEUR, LOT_RECUS,
+  TOPIC_SYNC, TOPIC_SWAP_V3, PISCINE_ETH_USD, DECIMALES_USDG, FENETRE_ETH_USD, PART_CONNUE_MIN, EQUILIBRE_PCT,
+  NONCE_NEUF_MAX, DEGRE_MAX, GROUPE_MAX, SEUIL_LIEN, FRAIS_VENTE_MAX, SCHEMA, PARTIELLE_PART_MIN,
   SCENES, GENRES_IMAGE, VERSION_IMAGES, ESSAIS_IMAGE_MAX, COUT_IMAGE_USD, ESPACE_RPC_MS, LOT_CODES, ESPACE_LOTS_MS,
   minuitParis, jourParis, fmtJetons,
 };
