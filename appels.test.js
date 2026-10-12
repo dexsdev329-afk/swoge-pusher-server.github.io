@@ -80,6 +80,40 @@ function tient(R, boss, j, pv, secondes) {
 }
 const sbires = (R, boss) => R.monstres.filter((m) => m.pv > 0 && m.invoquePar === boss.id);
 
+/* ---- UN POSTE DE TIR DONT LA LIGNE EST LIBRE ----
+ *
+ * La mue se prouve en tirant sur le boss depuis 200 u. Le poste etait
+ * toujours a l'OUEST, et le decor du Sanctuaire (des cercles, que `_pasTirs`
+ * traite comme des murs pour la fleche) coupe ce segment. Mesure du 12/10/2026
+ * sur 400 plans : la ligne ouest est bouchee dans 52 (13 %), et les 36 plans
+ * ou douze tirs ne retiraient rien au boss apres la mue etaient TOUS de ceux-la
+ * — « et les coups repassent (0 degats) » accusait la mue d'une pierre. Pire,
+ * dans la boucle des phases, « ni les tirs ne l entament » passait alors sans
+ * qu'aucune fleche ait pu l'atteindre : l'essai etait vrai pour rien.
+ *
+ * On cherche donc, parmi seize directions, un poste dont le SEGMENT ENTIER
+ * jusqu'au centre du boss est libre (plus strict que le point de la fleche,
+ * qui n'a besoin d'atteindre que son rayon), et l'essai AFFIRME l'avoir
+ * trouve au lieu de tirer dans la pierre. Le poste est recalcule a chaque pas :
+ * le boss marche (44 u/s), et un segment libre a la premiere fleche peut ne
+ * plus l'etre a la douzieme. */
+const segmentLibre = (R, x0, y0, x1, y1) => R.obstacles.every((o) => {
+  if (!(o.r > 0)) return true;
+  const dx = x1 - x0, dy = y1 - y0, L2 = dx * dx + dy * dy;
+  const u = L2 ? Math.max(0, Math.min(1, ((o.x - x0) * dx + (o.y - y0) * dy) / L2)) : 0;
+  return Math.hypot(o.x - (x0 + u * dx), o.y - (y0 + u * dy)) > o.r;
+});
+function poste(R, boss, j, d) {
+  for (let k = 0; k < 16; k++) {
+    const a = Math.PI + (k * Math.PI) / 8;            // l'ouest d'abord, comme avant
+    const x = boss.x + Math.cos(a) * d, y = boss.y + Math.sin(a) * d;
+    if (!segmentLibre(R, x, y, boss.x, boss.y)) continue;
+    j.x = x; j.y = y;
+    return Math.atan2(boss.y - y, boss.x - x);       // l'angle qui vise le boss
+  }
+  return null;
+}
+
 console.log('-- ce que le monde declare --');
 ok(AVEC_APPEL.length >= 2,
    `${AVEC_APPEL.length} phases de « ${BOSS} » appellent des creatures`);
@@ -128,24 +162,56 @@ for (const a of AVEC_APPEL) {
  *
  * Le point d'apparition voyage dans l'evenement (`ev.appels[].nes`), et c'est
  * la seule chose qui dise ce que le placement a decide.
+ *
+ * ---- MAIS L'EVENEMENT EST ARRONDI, LE PLACEMENT NE L'EST PAS ----
+ *
+ * `nes` porte des coordonnees entieres (Math.round, pour la page), et le
+ * moteur decide sur les coordonnees exactes. Une creature nee a moins de
+ * 0,71 u du bord d'un rocher s'y retrouve une fois arrondie. Mesure du
+ * 12/10/2026 sur 2 000 plans et 100 000 naissances : 3 « dans la pierre » sur
+ * les coordonnees arrondies, 0 sur les exactes — l'essai rougissait environ
+ * une fois sur seize pour un defaut qui n'existe pas.
+ * On releve donc le point EXACT, a la source (`_naissance`, que le moteur
+ * appelle pour chaque creature appelee), par l'id que porte l'evenement. Le
+ * meme critere, sans marge : une seule naissance dans la pierre fait rougir.
  */
 {
-  let nes = 0, dedans = 0;
+  let nes = 0, dedans = 0, sansSource = 0, ecart = 0;
+  const exact = new Map();
+  const naissance = Realm.prototype._naissance;
+  Realm.prototype._naissance = function (m) {
+    const b = naissance.call(this, m);
+    exact.set(b.id, { x: m.x, y: m.y });
+    return b;
+  };
   /* Sur BEAUCOUP d'ouvertures : le decor et les murs changent a chaque plan,
      et un seul plan ne dit rien de la forme des autres. C'est le defaut le
      plus cher du lot — une creature coincee rend le donjon infinissable. */
-  for (let k = 0; k < 40; k++) {
-    const { R, j, boss } = scene();
-    const evs = tient(R, boss, j, AVEC_APPEL[AVEC_APPEL.length - 1].pv, 60);
-    for (const a of evs.flatMap((e) => e.appels || [])) {
-      for (const b of (a.nes || [])) {
-        nes++;
-        const t = monde.MONSTRES[b.e];
-        if (monde.bloque(R.obstacles, b.x, b.y, t.rayon)) dedans++;
+  try {
+    for (let k = 0; k < 40; k++) {
+      exact.clear();                  // les ids repartent a chaque monde
+      const { R, j, boss } = scene();
+      const evs = tient(R, boss, j, AVEC_APPEL[AVEC_APPEL.length - 1].pv, 60);
+      for (const a of evs.flatMap((e) => e.appels || [])) {
+        for (const b of (a.nes || [])) {
+          nes++;
+          const p = exact.get(b.i);
+          if (!p) { sansSource++; continue; }
+          ecart = Math.max(ecart, Math.abs(p.x - b.x), Math.abs(p.y - b.y));
+          const t = monde.MONSTRES[b.e];
+          if (monde.bloque(R.obstacles, p.x, p.y, t.rayon)) dedans++;
+        }
       }
     }
+  } finally {
+    Realm.prototype._naissance = naissance;
   }
   ok(nes > 40, `${nes} naissances relevees sur quarante ouvertures`);
+  /* Sans ces deux lignes, un crochet qui ne verrait rien rendrait « zero dans
+     la pierre » : chaque naissance annoncee a son point exact, et l'evenement
+     dit bien ce point a l'arrondi pres. */
+  eq(sansSource, 0, 'chaque naissance annoncee a son point exact, releve a la source');
+  ok(ecart <= 0.5, `et l evenement le porte a l arrondi pres (ecart max ${ecart.toFixed(2)} u)`);
   eq(dedans, 0, 'aucune n a eu lieu dans la pierre');
 }
 
@@ -268,12 +334,19 @@ console.log('\n-- l evenement part vers la page --');
 
     /* ---- ON LE FRAPPE PAR TROIS CHEMINS DIFFERENTS ---- */
     const pv0 = boss.pv;
+    let bouches = 0, arrivees = 0;
     for (let i = 0; i < 12; i++) {
-      R.tire('0xaaa', 0);                       // nos projectiles
+      const ang = poste(R, boss, j, 200);
+      if (ang === null) bouches++;
+      R.tire('0xaaa', ang === null ? 0 : ang);  // nos projectiles
       boss.feu = 3; boss.feuTaux = 200; boss.feuPar = j.addr;  // la brulure
-      j.x = boss.x - 200; j.y = boss.y;
-      R.pas(0.1);
+      const ev = R.pas(0.1);
+      arrivees += (ev.touches || []).filter((t) => t.monstre === boss.id).length;
     }
+    eq(bouches, 0, 'chaque tir part d un poste dont la ligne jusqu au boss est libre');
+    /* Les fleches l'ont ATTEINT : sans cette ligne, « ne l entament pas » se
+       lirait aussi bien d'une fleche arretee par le decor. */
+    ok(arrivees > 0, `${arrivees} fleches l atteignent pendant la mue`);
     eq(boss.pv, pv0, 'ni les tirs ni la brulure ne l entament');
     /* Et la morsure du familier non plus : c'est le chemin qu'on oublie. */
     const av = boss.pv;
@@ -292,7 +365,14 @@ console.log('\n-- l evenement part vers la page --');
   }
   eq(boss.invulPhase, 0, 'la mue se termine toute seule');
   const pv1 = boss.pv;
-  for (let i = 0; i < 12; i++) { R.tire('0xaaa', 0); j.x = boss.x - 200; j.y = boss.y; R.pas(0.1); }
+  let bouches = 0;
+  for (let i = 0; i < 12; i++) {
+    const ang = poste(R, boss, j, 200);
+    if (ang === null) bouches++;
+    R.tire('0xaaa', ang === null ? 0 : ang);
+    R.pas(0.1);
+  }
+  eq(bouches, 0, 'la mue finie, chaque tir part d une ligne libre');
   ok(boss.pv < pv1, `et les coups repassent (${Math.round(pv1 - boss.pv)} degats)`);
 
   /* ---- LA PAGE L'APPREND ---- */

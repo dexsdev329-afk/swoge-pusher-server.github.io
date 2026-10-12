@@ -1082,6 +1082,33 @@ function peuplementDonjon(alea, nom, plan) {
      ete reproductible — c'est exactement ce qu'un serveur ne doit pas faire
      d'un monde qu'il diffuse. */
   const p = plan || planDonjon(alea);
+  /* ---- L'ETIQUETTE EST LE SOL DU DONJON, PAS LE MOT « DONJON » ----
+   * Les creatures portaient toutes `biome: 'donjon'`, ecrit en dur, et c'est
+   * cette etiquette que `butinDe` lit dans RARETE_ANNEAU. La table dit
+   * pourtant, en toutes lettres, `cave: 'rare'` — « ses pirates rendent donc
+   * du RARE » — mais aucune creature ne portait jamais 'cave' : la ligne
+   * etait morte, et les pirates tiraient dans `donjon: 'mythique'`.
+   * Mesure du 12/10/2026, avec Math.random comme le Realm (500 plans,
+   * 2.10^6 morts tirees) : 54,6 pirates par cave, 0,726 % de mythique par
+   * mort, soit 0,40 mythique par cave videe. Le lot des trouvailles n'a que 4
+   * mythiques a 10 exemplaires : 40 copies, partagees par la lave et la
+   * Fonderie (qui tirent dans ce meme lot), qu'environ 101 caves videes
+   * auraient tirees a elles seules — depuis un donjon qui s'ouvre sur un boss
+   * de NEIGE. Et le lot ne s'epuisait meme pas : avec RACHAT_RECYCLE (1 par
+   * defaut), chaque mythique revendu y retourne, rachete 50 000 $SWOGE
+   * (RACHAT_BASE 500). Verrou de volume mis a part, une cave videe ouvrait
+   * donc environ 19 800 $SWOGE de rachat : un robinet, pas un plafond. Avec
+   * 'cave' : 5,6 % de rare par mort (3,0 par cave, environ 3 800 $SWOGE de
+   * rachat), 0 mythique — cave.test.js le mesure sur les creatures du plan,
+   * plus sur la table.
+   * Le sol du donjon est deja la source de verite pour `anneauUnique` (la
+   * page y lit sa planche) : la creature nait sur ce sol, elle en porte le
+   * nom. La Fonderie ne bouge pas — son sol EST 'donjon'. Le Sanctuaire et
+   * l'Arene portent 'sanctuaire' et 'arena', absents de RARETE_ANNEAU : sans
+   * effet le 12/10, ils n'ont aucune espece ordinaire (invocations sansButin,
+   * boss par BUTIN_GARANTI). Leur ajouter des creatures demande d'abord une
+   * ligne dans la table — cave.test.js l'affirme pour chaque porte. */
+  const sol = D.sol || 'donjon';
   const out = [];
   for (const s of p.salles) {
     /* La salle d'arrivee reste VIDE. On y apparait : y poser des creatures
@@ -1133,7 +1160,7 @@ function peuplementDonjon(alea, nom, plan) {
       } else {
         dx = (r() * 2 - 1) * demi; dy = (r() * 2 - 1) * demi;
       }
-      out.push({ espece: e, biome: 'donjon', x: s.x + dx, y: s.y + dy });
+      out.push({ espece: e, biome: sol, x: s.x + dx, y: s.y + dy });
     }
   }
   /* LE FOND SE CHERCHE PAR SON ROLE, pas par sa position dans la liste. Dans
@@ -1155,7 +1182,7 @@ function peuplementDonjon(alea, nom, plan) {
      la manche 2 arrive, elle ecrit `bossAu: 'centre'` comme celle-ci, et
      cette fonction ne bouge pas. La Fonderie et le Sanctuaire, eux, gardent
      leur boss au fond — on les traverse, on ne s'y presente pas. */
-  out.push({ espece: D.boss, biome: 'donjon', boss: 1,
+  out.push({ espece: D.boss, biome: sol, boss: 1,
              x: D.bossAu === 'centre' ? fond.x
                                       : fond.x + (fond.cote / 2 - 2) * DONJON_TUILE,
              y: fond.y });
@@ -4479,6 +4506,16 @@ function tireOeuf(alea) {
   return OEUF.especes[OEUF.especes.length - 1].cle;
 }
 
+/* ---- LA RARETE D'UN OEUF, ECRITE UNE FOIS ----
+ * Le prisme ('legendaire') est une relique, les autres sont mythiques. La
+ * regle vivait recopiee dans `sacPour` et dans la vitrine du marche, et la
+ * vue d'un sac au sol ne la connaissait pas : relecture du 12/10/2026, la
+ * meme Ember Egg avait un liseré rouge dans le sac et AUCUN au sol — la ou
+ * l'on decide de la ramasser. Une seule source, que lisent les trois. */
+function rareteOeuf(espece) {
+  return espece === 'legendaire' ? 'relique' : 'mythique';
+}
+
 /* Une piece toutes les douze morts au bord, une toutes les cent quarante au
    coeur. Le rapport n'est pas une punition : au bord on s'equipe, au coeur on
    complete. Un mythique aussi frequent qu'un commun aurait rendu la boutique
@@ -5113,7 +5150,7 @@ module.exports = {
   ZONE_REACTION,
   SAC, SACS, POTION_DE, CHANCE_POTION, CHANCE_SOIN, STATS_POTION, butinDe, BOSS,
   SOCLE, SOCLE_DELAI, biomeDe, placeUne, naitDans, ecartDeNaissance,
-  BUTIN_GARANTI, OEUF, OEUFS, tireOeuf,
+  BUTIN_GARANTI, OEUF, OEUFS, tireOeuf, rareteOeuf,
   RARETE_ANNEAU, SAC_DE_RARETE, CHANCE_EQUIP, CHANCE_RELIQUE, CHANCE_RELIQUE_BOSS,
   OBSTACLE, OBSTACLE_BIOME, obstacles, bloque,
   SALLE, SALLE_ANNEAUX, SALLE_BUTIN, MUR_BASE, salles, mursDe, dansLaSalle, DONJON,

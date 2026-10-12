@@ -135,6 +135,37 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     return p;
   };
 
+  /* ---- UNE LIGNE DE TIR LIBRE, CHOISIE ET AFFIRMEE ----
+   * Les deux tirs de 2 bis visaient toujours plein est (a = 0), a 280 unites.
+   * Les rochers du monde ouvert sont tires au hasard a chaque demarrage
+   * (`monde.obstacles`), et un rocher arrete la fleche (`_pasTirs` :
+   * `monde.bloque(obstacles, t.x, t.y, 0)`). Mesure du 12/10/2026 : 4 echecs
+   * sur 64 executions de cet essai ; et sur 1 000 cartes tirees, une pierre
+   * coupe le segment est de 280 u depuis le point d'apparition dans 89
+   * (8,9 %) — l'essai accusait la porte d'un rocher. Sur ces 1 000 cartes,
+   * aucune n'avait ses seize directions bouchees a la fois.
+   * On cherche donc, parmi seize directions, une ou le SEGMENT ENTIER est
+   * libre (distance du segment a chaque centre > rayon du rocher, ce qui est
+   * plus strict que les points echantillonnes par le pas) et dont le bout
+   * reste dans la carte. Et on l'AFFIRME : si aucune ne l'est, l'essai le dit
+   * au lieu de tirer dans la pierre. */
+  const segmentLibre = (R, x0, y0, x1, y1) => R.obstacles.every((o) => {
+    if (!(o.r > 0)) return true;
+    const dx = x1 - x0, dy = y1 - y0, L2 = dx * dx + dy * dy;
+    const u = L2 ? Math.max(0, Math.min(1, ((o.x - x0) * dx + (o.y - y0) * dy) / L2)) : 0;
+    const px = x0 + u * dx, py = y0 + u * dy;
+    return Math.hypot(o.x - px, o.y - py) > o.r;
+  });
+  const ligneDeTir = (R, j, d) => {
+    for (let k = 0; k < 16; k++) {
+      const a = (k * Math.PI) / 8;
+      const x = j.x + Math.cos(a) * d, y = j.y + Math.sin(a) * d;
+      if (x < 0 || y < 0 || x > M.MONDE.w || y > M.MONDE.h) continue;
+      if (segmentLibre(R, j.x, j.y, x, y)) return { a, x, y };
+    }
+    return null;
+  };
+
   // ================== 1. ON N'ENTRE PAS DE LOIN
   const wa = ethers.Wallet.createRandom();
   const sa = await connecte(wa);
@@ -286,8 +317,11 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
      * pas. */
     const j = monde0.joueurs.get(T);
     const t = M.MONSTRES.optimus;
+    const vise = ligneDeTir(monde0, j, 280);
+    ok(!!vise && segmentLibre(monde0, j.x, j.y, vise.x, vise.y),
+       `une ligne de tir libre de 280 u existe (angle ${vise && vise.a.toFixed(2)}, ${monde0.obstacles.length} rochers)`);
     const mm = { id: monde0._nouvelId(), espece: 'optimus', biome: 'lave',
-                 x: j.x + 280, y: j.y, ancreX: j.x + 280, ancreY: j.y,
+                 x: vise.x, y: vise.y, ancreX: vise.x, ancreY: vise.y,
                  pv: 1, pvMax: t.pv, dir: 'down', cible: null,
                  recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 };
     monde0.monstres.push(mm);
@@ -297,7 +331,7 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
        silence en croyant mesurer une porte. */
     const nAvant = monde0.portails.length;
     for (let tour = 0; tour < 30 && monde0.portails.length === nAvant; tour++) {
-      st.send(JSON.stringify({ type: 'realmTir', a: 0,
+      st.send(JSON.stringify({ type: 'realmTir', a: vise.a,
                                x: Math.round(j.x), y: Math.round(j.y) }));
       await dort(120);
     }
@@ -341,13 +375,18 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     const avant2 = ANNONCES.length;
     st.recus.length = 0;
     const nAvant2 = monde0.portails.length;
+    /* Rechoisie : un coup recu a pu deplacer le joueur depuis le premier tir
+       (le choc projette), et la ligne d'avant ne partirait plus de lui. */
+    const vise2 = ligneDeTir(monde0, j, 280);
+    ok(!!vise2 && segmentLibre(monde0, j.x, j.y, vise2.x, vise2.y),
+       `et une ligne libre pour le second tir (angle ${vise2 && vise2.a.toFixed(2)})`);
     const mb = { id: monde0._nouvelId(), espece: 'fonderie', biome: 'donjon',
-                 x: j.x + 280, y: j.y, ancreX: j.x + 280, ancreY: j.y,
+                 x: vise2.x, y: vise2.y, ancreX: vise2.x, ancreY: vise2.y,
                  pv: 1, pvMax: M.MONSTRES.fonderie.pv, dir: 'down', cible: null,
                  recharge: 0, rechargeT: 0, stase: 0, errX: 0, errY: 0, errChrono: 0 };
     monde0.monstres.push(mb);
     for (let tour = 0; tour < 30 && monde0.portails.length === nAvant2; tour++) {
-      st.send(JSON.stringify({ type: 'realmTir', a: 0,
+      st.send(JSON.stringify({ type: 'realmTir', a: vise2.a,
                                x: Math.round(j.x), y: Math.round(j.y) }));
       await dort(120);
     }

@@ -590,22 +590,74 @@ const COFFRE_ANNONCE = (() => {
   const i = COFFRE_RANGS.indexOf(mini);
   return COFFRE_RANGS.slice(i < 0 ? 0 : i);
 })();
+/* ---- UNE ANNONCE NE COUPE JAMAIS UNE REPONSE DE JEU ----
+ *
+ * Mesure du 12/10/2026 : `notifyCoffre` lisait `base0`, une variable retiree
+ * de ce fichier sans que la ligne qui la lisait le soit. Le chemin ne part que
+ * sur une LIGNE COMPLETE — trois fois dans toute la vie de l'edition — et
+ * aucun essai ne completait une ligne A TRAVERS LE SERVEUR (boutique.test.js
+ * et xp.test.js le font sur le moteur seul, coffre_notif.test.js remplit la
+ * course d'avance) : la ReferenceError n'avait jamais ete vue.
+ * Elle remontait jusqu'au `catch` muet du message, et le gagnant du premier
+ * prix (5 000 000 $SWOGE, deja credite par `_boutiqueLigne`) recevait
+ * « server error » a la place de son coffre. Sur `perfectDay`, le `catch`
+ * local renvoyait « base0 is not defined » et perdait la reponse entiere.
+ *
+ * L'annonce est un effet de bord : le geste est DEJA fait quand elle part.
+ * Elle passe donc par ici, et son echec s'ecrit dans le journal du serveur,
+ * jamais dans la reponse du joueur. annonces_monde.test.js complete une ligne
+ * par les quatre chemins qui le peuvent (shopOpen, marketBuy, freeChestOpen,
+ * perfectDay) avec un faux Telegram. */
+function annonceSure(quoi, f) {
+  try { f(); }
+  catch (e) { console.error('[annonce]', quoi, (e && e.stack) || e); }
+}
+
+/* ---- LA LIGNE COMPLETE ----
+ *
+ * Une annonce a elle, et plus une branche de `notifyCoffre` : une ligne se
+ * ferme aussi par le MARCHE, ou il n'y a ni coffre, ni numero d'emission. Le
+ * marche appelait `notifyCoffre` avec un faux coffre, et la seconde moitie de
+ * la fonction partait quand meme : « pulled X from a undefined · #undefined of
+ * undefined ».
+ *
+ * Les montants sont LUS dans `boutique.PRIX_LIGNE`. La phrase disait « 50M,
+ * then 30M, then 10M » en dur, restee de l'avant-division par dix : les prix
+ * reels sont 5 000 000, 3 000 000 et 1 000 000 (boutique.js), et l'annonce
+ * promettait dix fois ce que la course paie. Elle donne aussi les prix QUI
+ * RESTENT, pas la liste depuis le premier : apres la premiere ligne, « first
+ * line wins » ne veut plus rien dire. */
+function annonceLigne(ligne, item) {
+  if (!ligne) return;
+  const base = siteBase();
+  const course = game.boutiqueCourse();
+  const restants = boutique.PRIX_LIGNE.slice(boutique.PRIX_LIGNE.length - course.restant);
+  const rang = ['FIRST', 'SECOND', 'THIRD'][ligne.rang - 1] || ('#' + ligne.rang);
+  tg.notifyPhoto(imageBoutique(item && item.cle),
+    `\uD83C\uDFC6 <b>${rang} COMPLETE LINE</b>\n` +
+    `${escHtml(ligne.nom)} finished the <b>${escHtml(ligne.familleNom)}</b> collection \u2014 all five tiers\n\n` +
+    `Prize: <b>${fmtAmt(String(ligne.prix))} $SWOGE</b>\n` +
+    (restants.length
+      ? `${restants.length} prize${restants.length > 1 ? 's' : ''} left \u2014 the next line wins `
+        + restants.map((x) => fmtAmt(String(x))).join(', then ') + ' $SWOGE'
+      : `<b>All ${boutique.PRIX_LIGNE.length} prizes are gone.</b> The race is over.`) +
+    (base ? `\n<a href="${base}/games.html">Open a chest \u2197</a>` : ''));
+}
+
 function notifyCoffre(addr, g) {
+  annonceSure('coffre', () => notifyCoffreBrut(addr, g));
+}
+function notifyCoffreBrut(addr, g) {
   /* UNE LIGNE COMPLETEE PART TOUJOURS, quelle que soit la rarete du dernier
      fruit. C'est l'annonce la plus forte du canal — il n'y en aura que trois
      dans toute la vie de l'edition — et la retenir parce que la cinquieme
-     case etait un commun serait absurde. */
-  if (g && g.ligne) {
-    tg.notifyPhoto(imageBoutique(g.item.cle),
-      `\uD83C\uDFC6 <b>${g.ligne.rang === 1 ? 'FIRST' : g.ligne.rang === 2 ? 'SECOND' : 'THIRD'} COMPLETE LINE</b>\n` +
-      `${escHtml(g.ligne.nom)} finished the <b>${escHtml(g.ligne.familleNom)}</b> collection — all five tiers\n\n` +
-      `Prize: <b>${fmtAmt(String(g.ligne.prix))} $SWOGE</b>\n` +
-      (game.boutiqueCourse().restant
-        ? `${game.boutiqueCourse().restant} prize(s) left \u2014 first line wins 50M, then 30M, then 10M`
-        : `<b>All three prizes are gone.</b> The race is over.`) +
-      (base0 ? `\n<a href="${base0}/games.html">Open a chest \u2197</a>` : ''));
-  }
-  if (!g || !g.item || COFFRE_ANNONCE.indexOf(g.rarete) < 0) return;
+     case etait un commun serait absurde. Elle part dans son propre filet :
+     une faute dans l'une ne doit pas taire l'autre. */
+  if (g && g.ligne) annonceSure('ligne', () => annonceLigne(g.ligne, g.item));
+  /* Ce qui suit decrit un TIRAGE : sans coffre ni numero d'emission, il n'y
+     a rien a dire, et le dire quand meme ecrivait « undefined ». */
+  if (!g || !g.item || !g.coffreNom || !(g.plafond > 0)) return;
+  if (COFFRE_ANNONCE.indexOf(g.rarete) < 0) return;
   const cat = boutique;
   const fam = cat.famille(g.item.famille);
   const rar = cat.rarete(g.rarete);
@@ -654,34 +706,75 @@ function notifyCoffre(addr, g) {
 
 /* ---- UNE PORTE DE DONJON VIENT DE S'OUVRIR ----
  *
- * La meme raison que la diffusion en jeu, poussee un cran plus loin : la
- * plupart des gens ne sont pas connectes au moment ou Optimus tombe. Le canal
- * est le seul endroit ou l'on peut leur dire « maintenant », et trois minutes
- * suffisent largement a ouvrir un onglet.
+ * La meme raison que la diffusion en jeu : la plupart des gens ne sont pas
+ * connectes au moment ou un gardien tombe. Le canal raconte ce qui se passe
+ * dans le monde ; il ne peut plus servir de rendez-vous.
+ *
+ * ---- CE QU'ELLE PROMETTAIT, ET QUI ETAIT FAUX (12/10/2026) ----
+ *
+ * Le texte avait ete ecrit pour la Forge, a l'epoque des trois minutes :
+ * « Optimus », « The Foundry Brute », « Get in ». Trois donjons sont venus
+ * depuis, et les quatre portes s'annoncaient avec la meme phrase — une porte
+ * de la Cave, ouverte par la Deep Carapace, promettait la relique de la
+ * Fonderie alors que Dreadstump garantit de l'epique. Et la porte dure
+ * desormais `PORTAIL.duree` = 40 s : `Math.round(40 / 60)` ecrivait
+ * « 1 minutes », et « Get in » promettait a un lecteur du canal une porte
+ * qui sera fermee avant que sa page ait fini de charger.
+ *
+ * Tout vient donc des tables du monde — le nom du donjon (`DONJONS`), qui
+ * l'ouvre et qui l'attend (`MONSTRES`), ce qui tombe a coup sur
+ * (`BUTIN_GARANTI`) — et la duree s'ecrit dans son unite. Le lien ouvre le
+ * Nexus (le hall d ou part le monde), sans promettre la porte.
  *
  * On ne dit PAS ou elle est. Ce n'est pas un oubli : une coordonnee dans le
- * canal ferait de l'annonce une carte au tresor lisible par n'importe qui, y
- * compris par quelqu'un qui n'a jamais mis les pieds dans le monde. Ce qu'on
- * annonce, c'est qu'il FAUT Y ETRE — ceux qui jouent ont deja la fleche a
- * l'ecran.
+ * canal ferait de l'annonce une carte au tresor lisible par n'importe qui.
  *
- * L'image est la meme porte que dans le jeu, composee sur le fond sombre du
- * site : Telegram refuse le WebP en photo, et une annonce sans image se lit
- * comme une ligne de journal systeme.
+ * L'image est la porte du donjon, composee sur le fond sombre du site :
+ * Telegram refuse le WebP en photo, et une annonce sans image se lit comme
+ * une ligne de journal systeme.
  */
-function annoncePortail(p, nom) {
+function dureeEnClair(s) {
+  const n = Math.max(0, Math.round(Number(s) || 0));
+  if (n >= 120) return `${Math.round(n / 60)} minutes`;
+  return `${n} second${n === 1 ? '' : 's'}`;
+}
+function legendePortail(p, nom) {
+  const cle = String(p && p.donjon || '');
+  const D = monde.DONJONS[cle];
+  if (!D) return null;
+  const nomDe = (esp) => (monde.MONSTRES[esp] && monde.MONSTRES[esp].nom) || null;
+  const ouvreur = nomDe(D.ouvreur), boss = nomDe(D.boss);
+  const R = boutique.rarete(monde.BUTIN_GARANTI[D.boss]);
+  const lieu = /^the\s/i.test(D.nom) ? D.nom : 'the ' + D.nom;
+  const article = (mot) => (/^[aeiou]/i.test(mot) ? 'an' : 'a');
   const base = siteBase();
-  const ou = String(p.donjon || 'dungeon');
-  const titre = ou.charAt(0).toUpperCase() + ou.slice(1);
-  /* Par `imageBoutique` comme le reste : la porte est un dessin du site, et
-     elle a le meme cache a contourner que les autres. */
-  tg.notifyPhoto(imageBoutique('portail_' + ou),
-    `\uD83C\uDF00 <b>A PORTAL TO THE ${escHtml(titre.toUpperCase())} IS OPEN</b>\n` +
-    (nom ? `${escHtml(nom)} brought down <b>Optimus</b> and tore one open\n\n`
-         : `<b>Optimus</b> fell, and one tore open\n\n`) +
-    `Anyone in the wild can walk in \u00b7 <b>${Math.round(monde.PORTAIL.duree / 60)} minutes</b> before it closes\n` +
-    `The Foundry Brute waits at the bottom. It drops a relic \u2014 always.` +
-    (base ? `\n<a href="${base}/nexus.html">Get in \u2197</a>` : ''));
+  return `\uD83C\uDF00 <b>A PORTAL TO ${escHtml(lieu.toUpperCase())} IS OPEN</b>\n` +
+    (ouvreur
+      ? (nom ? `${escHtml(nom)} brought down <b>${escHtml(ouvreur)}</b> and tore one open\n\n`
+             : `<b>${escHtml(ouvreur)}</b> fell, and one tore open\n\n`)
+      : '\n') +
+    `It closes in <b>${dureeEnClair(monde.PORTAIL.duree)}</b> \u2014 only players already in the world can reach it\n` +
+    /* ---- OU IL ATTEND, ET CE QU'IL DONNE ----
+     * Relecture du 12/10/2026 : la phrase disait « waits at the bottom » pour
+     * les quatre, et le Warden de l'Arene attend au CENTRE (`bossAu`). Et
+     * « always drops » promettait plus que le jeu : la piece du boss sort d'un
+     * lot fini (`tireButin`, `tireButinDonjon` : null quand il est vide — 16
+     * reliques pour l'Arene, renouvelees par le seul rachat), et un lot vide ne
+     * fait tomber aucun sac. On dit donc la rarete, et sa limite. */
+    (boss ? `${escHtml(boss)} waits ${D.bossAu === 'centre' ? 'at the centre' : 'at the bottom'}`
+          : `A keeper waits ${D.bossAu === 'centre' ? 'at the centre' : 'at the bottom'}`) +
+    (R ? ` and drops ${article(R.nom)} <b>${escHtml(R.nom)}</b> piece while copies last`
+       : '') +
+    (base ? `\n<a href="${base}/nexus.html">Open the Nexus \u2197</a>` : '');
+}
+function annoncePortail(p, nom) {
+  annonceSure('portail', () => {
+    const legende = legendePortail(p, nom);
+    if (!legende) return;
+    /* Par `imageBoutique` comme le reste : la porte est un dessin du site, et
+       elle a le meme cache a contourner que les autres. */
+    tg.notifyPhoto(imageBoutique('portail_' + p.donjon), legende);
+  });
 }
 
 /* ---- UN SKIN VIENT D'ETRE ACHETE ----
@@ -691,7 +784,13 @@ function annoncePortail(p, nom) {
  * objet, avec une image. Le dessin part depuis `img/skins/tg/`, converti a
  * part des objets de boutique parce que les deux dossiers n'ont jamais
  * besoin d'etre synchronises entre eux. */
+/* Dans le meme filet que les coffres : l'achat est fait et paye quand
+   l'annonce part, et une faute de redaction ne doit pas couper la reponse
+   `skinBuy` (elle suit l'appel, server.js `m.type === 'skinBuy'`). */
 function notifySkinBuy(addr, r) {
+  annonceSure('skin', () => notifySkinBuyBrut(addr, r));
+}
+function notifySkinBuyBrut(addr, r) {
   const s = skins.skin(r.id);
   if (!s) return;
   const base = siteBase();
@@ -7516,9 +7615,9 @@ wss.on('connection', (ws) => {
         /* Une ligne fermee par un ACHAT s'annonce comme une ligne fermee par
            un coffre : c'est le meme exploit, et le canal ne doit pas laisser
            croire que seul le hasard y mene. */
-        if (r && r.ligne) notifyCoffre(ws.addr, { ligne: r.ligne, item: boutique.item(r.item),
-                                                  rarete: (boutique.item(r.item) || {}).rarete,
-                                                  saison: (boutique.item(r.item) || {}).saison });
+        /* L'annonce de la LIGNE seule : un achat au marche n'est pas un
+           tirage, il n'a ni coffre ni numero d'emission a annoncer. */
+        if (r && r.ligne) annonceSure('ligne', () => annonceLigne(r.ligne, boutique.item(r.item)));
         /* ---- ET ON PREVIENT LE VENDEUR ----
          *
          * La reponse ci-dessous part vers `ws`, c'est-a-dire l'ACHETEUR, et
@@ -9849,7 +9948,13 @@ wss.on('connection', (ws) => {
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
       }
-    } catch (e) { send(ws, { type: 'error', error: 'server error' }); }
+    } catch (e) {
+      /* Ce `catch` etait muet : la ReferenceError d'une ligne complete y est
+         tombee sans laisser de trace, et seul le joueur a vu « server error ».
+         Le type du message et la pile suffisent a retrouver le chemin. */
+      console.error('[ws]', m && m.type, (e && e.stack) || e);
+      send(ws, { type: 'error', error: 'server error' });
+    }
   });
 
   ws.on('close', () => {
@@ -10426,7 +10531,8 @@ function traiteEvenements(R, ev) {
      * trois salles, un boss et huit reliques derriere une porte que presque
      * personne ne verrait s'ouvrir.
      *
-     * La porte dure trois minutes et N'APPARTIENT A PERSONNE : c'est ecrit
+     * La porte dure `PORTAIL.duree` (40 s depuis qu'elle fait partie de la
+     * recompense, monde.js) et N'APPARTIENT A PERSONNE : c'est ecrit
      * dans la route qui la franchit, et c'est fait pour qu'on s'y retrouve a
      * plusieurs. Il ne manquait que le signal. Une porte annoncee transforme
      * un evenement solitaire en course, et rend la mecanique lisible : on

@@ -87,6 +87,62 @@ console.log('-- une chose par saison --');
   }
 }
 
+/* ================== 1b. CE QUE LA FICHE DIT SE LIT ==================
+ * Mesure du 12/10/2026 : 7 fruits sur 40 (1005, 2005, 3005, 4005, 5005,
+ * 6102, 6108) disaient « freezes everything within undefined for 2s ».
+ * L'egide tombait dans la branche ecrite pour la stase, et lisait un rayon
+ * qu'elle n'a pas. Rien ne le voyait : la phrase part telle quelle sur la
+ * fiche du joueur. On balaie les 180 objets, sort ET passif. */
+console.log('\n-- chaque phrase de fiche se lit --');
+{
+  const tous = boutique.ITEMS.concat(boutique.ITEMS_DROP || []);
+  ok(tous.length >= 180, `le catalogue entier est balaye (${tous.length} objets)`);
+  const fautes = [];
+  const parCle = {};
+  let nSort = 0, nPassif = 0;
+  for (const o of tous) {
+    const s = Game.sortDuFruit(o), p = Game.passifDe(o);
+    for (const [quoi, v] of [['sort', s], ['passif', p]]) {
+      if (!v) continue;
+      if (quoi === 'sort') nSort++; else nPassif++;
+      if (typeof v.quoi !== 'string' || !v.quoi.trim()
+          || /undefined|NaN|null|\[object/.test(v.quoi + ' ' + v.nom)) {
+        fautes.push(`${o.id} ${o.nom} (${quoi}) : « ${v.quoi} »`);
+      }
+    }
+    if (s) (parCle[s.cle] = parCle[s.cle] || new Set()).add(s.quoi);
+  }
+  eq(fautes.length, 0, `aucune phrase vide ni « undefined » sur ${nSort} pouvoirs et ${nPassif} passifs`
+     + (fautes.length ? ' — ' + fautes.slice(0, 3).join(' ; ') : ''));
+  /* Le MOT de la rarete part avec la fiche au sol, lu dans le catalogue :
+     la page l'ecrit sans en tenir une copie. */
+  const gf = new Game();
+  const sansMot = tous.filter((o) => {
+    const f = gf.ficheAuSol(o);
+    return !f || f.rareteNom !== (boutique.rarete(o.rarete) || {}).nom || !f.rareteNom;
+  });
+  eq(sansMot.length, 0, `les ${tous.length} fiches au sol portent le mot de leur rarete`);
+  /* Chaque phrase ne cite QUE les chiffres de son propre pouvoir : c'est
+     exactement ce que la branche par defaut violait (un rayon pour l'egide). */
+  for (const [cle, phrases] of Object.entries(parCle)) {
+    const Pw = monde.POUVOIRS[cle];
+    const permis = new Set(Object.values(Pw).filter((x) => typeof x === 'number').map(String));
+    for (const q of phrases) {
+      const cites = (q.match(/\d+(?:\.\d+)?/g) || []);
+      ok(cites.length > 0 && cites.every((c) => permis.has(c)),
+         `« ${Pw.nom} » : « ${q} » ne cite que ses propres chiffres (${cites.join(', ')})`);
+    }
+  }
+  /* Et deux pouvoirs differents ne se decrivent pas pareil, au mot pres :
+     l'egide disait « freezes », le verbe de la stase. */
+  const premierMot = Object.entries(parCle).map(([c, ph]) => [c, [...ph][0].split(/\s+/)[0]]);
+  const garde = monde.POUVOIR_PAR_STAT.def;
+  if (parCle[garde] && parCle.stase) {
+    ok([...parCle[garde]][0].split(/\s+/)[0] !== [...parCle.stase][0].split(/\s+/)[0],
+       `la garde (${garde}) ne parle pas comme la stase : ${premierMot.map((x) => x.join('=')).join(', ')}`);
+  }
+}
+
 /* ================== 2. LA FORCE SUIT LA RARETE ================== */
 console.log('\n-- plus c est rare, plus c est fort --');
 {

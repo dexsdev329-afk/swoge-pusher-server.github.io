@@ -26,7 +26,7 @@ const fs = require('fs');
 process.env.DATA_DIR = fs.mkdtempSync('/tmp/marchepot-');
 process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 const cfg = require('./config');
-const ethers = require('./node_modules/ethers');
+const ethers = require('ethers');   // resolu comme partout ailleurs : ./node_modules, ou NODE_PATH dans une copie git (worktree)
 const { Game } = require('./game');
 const P = require('./personnages');
 const monde = require('./monde');

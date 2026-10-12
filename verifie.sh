@@ -1,21 +1,38 @@
 #!/bin/bash
-# Les cinq suites, dans l ordre impose (la colonie SEULE d abord), un verdict par
-# ligne, code de sortie vert seulement si tout passe. Journaux dans _logs/.
-#   ./verifie.sh            les cinq (~25 min)
-#   ./verifie.sh --vite     sans la colonie ni la page (~1 min) : pour un changement
-#                           qui ne touche que le miroir ou le marqueur
+# TOUTES les suites des deux depots, la colonie SEULE d abord, un verdict par
+# ligne, code de sortie vert seulement si tout passe. Journaux dans _logs/<nom>.log.
+# Le nombre de suites lancees et la duree totale s impriment a la fin : les
+# ecrire ici les a rendus faux (cet en-tete disait « les cinq » et « ~1 min »
+# quand la liste en comptait deja 223 — 12/10/2026).
+#   ./verifie.sh            tout, colonie comprise (la colonie seule : ~20 min)
+#   ./verifie.sh --vite     sans les sept suites lentes marquees `[ $VITE -eq 1 ] ||`
+#                           (colonie, releve perp, page colonie, page perp, deux
+#                           chaines reelles, page portefeuille)
+#   SITE_DIR=/chemin/du/site ./verifie.sh   pour verifier une copie du site
+#                           (git worktree) au lieu de /home/user/SWOGE.github.io
 set -uo pipefail
-SRV="$(cd "$(dirname "$0")" && pwd)"; SITE=/home/user/SWOGE.github.io
+SRV="$(cd "$(dirname "$0")" && pwd)"; SITE="${SITE_DIR:-/home/user/SWOGE.github.io}"
 PW="${PW_DIR:-$HOME/.swoge-pw}"
 export NODE_PATH="${NODE_PATH:-$PW/node_modules:$SRV/node_modules}"
 mkdir -p "$SRV/_logs"; VITE=0; [ "${1:-}" = "--vite" ] && VITE=1
-RATE=0; T0=$(date +%s)
+RATE=0; T0=$(date +%s); NB=0
 lance() {  # nom · dossier · commande…
-  local nom=$1 dossier=$2; shift 2; local log="$SRV/_logs/$nom.log"; local t=$(date +%s)
+  local nom=$1 dossier=$2; shift 2; local log="$SRV/_logs/$nom.log"; local t=$(date +%s); NB=$((NB + 1))
   (cd "$dossier" && "$@" > "$log" 2>&1); local code=$?
   local fin; fin=$(grep -E "verifications OK|verifications passees|tout passe|^RATES" "$log" | tail -1)
   printf '  %-8s %-6s %4ss  %s\n' "$nom" "$([ $code -eq 0 ] && echo vert || echo ROUGE)" "$(( $(date +%s) - t ))" "${fin:-$(tail -1 "$log")}"
   [ $code -eq 0 ] || { RATE=1; grep -m3 "  RATE \|EXCEPTION\|Error" "$log" | sed 's/^/           /'; }
+}
+# Les suites du monde ecrivent leur etat : chacune recoit un DATA_DIR neuf.
+# Mesure du 12/10/2026 : sans lui, boutique, classement_monde, marche, perso,
+# potions, rachat, skins et xp ecrivaient dans ./data du depot (journaux de
+# joueurs fictifs). Celles qui posent deja le leur l ecrasent, rien ne change.
+lance_monde() {  # nom · fichier
+  local d; d=$(mktemp -d /tmp/verifie-monde-XXXXXX) || { RATE=1; return; }
+  lance "$1" "$SRV" env DATA_DIR="$d" node "$2"
+  # Rien a garder : le journal est dans _logs/. Sans cette ligne chaque passage
+  # laissait 58 dossiers d etat fictif (234 dans /tmp le 12/10 au soir).
+  case "$d" in /tmp/verifie-monde-?*) rm -rf -- "$d" ;; esac
 }
 [ $VITE -eq 1 ] || lance colonie "$SRV" node ai_colonie_serveur.test.js
 lance etalonnage "$SRV" node etalonnage_boot.test.js
@@ -199,6 +216,73 @@ lance pancake "$SRV" node predict_pancake.test.js   # etage 1 PancakeSwap : côt
 lance pancakereel "$SRV" node predict_pancake_reel.test.js   # etage 2 PancakeSwap : vrais BNB sur fausse chaine — cle, verrous, martingale, stop
 lance pkjournal "$SRV" node predict_pancake_journal.test.js   # journal Pancake en ajout seul (decision / regle separes), remplissage borne lent reprenable, ombres : egalite perdue, annule rembourse, verdict a t >= 2,7
 lance pkrejeu "$SRV" node predict_pancake_rejeu.test.js   # la porte Pancake ACTUELLE rejouee sur 30 004 rounds stockes : 0 pari (mode direct : 18 279, le rejeu n est pas vide)
+# ---- LE MONDE ET LES OBJETS (12/10/2026) ----
+# Cinquante-sept suites qui n etaient dans AUCUNE boucle — exactement la panne de
+# miroir_reel —, plus annonces_monde, nee le meme jour. Une ligne complete
+# repondait « server error » a son gagnant (ReferenceError sur `base0`) et sept
+# fruits disaient « undefined » sur leur fiche, sans qu un seul essai lance par
+# ce script ne le voie. Le bloc entier : ~4 min (236 s mesurees le 12/10).
+# Trois d entre elles chargeaient './node_modules/ethers' en dur et tombaient
+# dans une copie git sans node_modules : elles passent par NODE_PATH comme les
+# autres.
+lance_monde appels      appels.test.js
+lance_monde balise      balise.test.js
+lance_monde objets      boutique.test.js           # « boutique » est deja pris (boutique_esim)
+lance_monde braises     braises.test.js
+lance_monde butin       butin.test.js
+lance_monde cartes      cartes.test.js
+lance_monde cartesrv    cartes_serveur.test.js
+lance_monde cave        cave.test.js               # les pirates rendent du rare : mesure sur le plan, pas sur la table
+lance_monde choc        choc.test.js
+lance_monde classmonde  classement_monde.test.js
+lance_monde coffrenotif coffre_notif.test.js
+lance_monde coffreoff   coffre_offert.test.js
+lance_monde coffresac   coffre_sac.test.js
+lance_monde deuxmondes  deux_mondes.test.js
+lance_monde deuxonglets deux_onglets.test.js
+lance_monde donjon      donjon.test.js
+lance_monde donjonsrv   donjon_serveur.test.js     # ligne de tir libre choisie et affirmee (un rocher la coupait 4 fois sur 64)
+lance_monde donjonsens  donjons_ensemble.test.js
+lance_monde echange     echange.test.js
+lance_monde egide       egide.test.js
+lance_monde equipstock  equipement_stock.test.js
+lance_monde famcombat   familier_combat.test.js
+lance_monde famsoutien  familier_soutien.test.js
+lance_monde famzone     familier_zone.test.js
+lance_monde fiche       fiche_complete.test.js
+lance_monde fioles      fioles.test.js
+lance_monde marche      marche.test.js
+lance_monde marchanim   marche_animaux.test.js
+lance_monde marchpot    marche_potions.test.js
+lance_monde marchsig    marche_signal.test.js
+lance_monde monde       monde.test.js
+lance_monde mondesouv   mondes_ouverts.test.js
+lance_monde nexusmulti  nexus_multi.test.js
+lance_monde obstacles   obstacles.test.js
+lance_monde oeufs       oeufs.test.js
+lance_monde optimus     optimus.test.js
+lance_monde parole      parole.test.js
+lance_monde passifs     passifs.test.js            # dont : aucune phrase vide ni « undefined » sur les 180 objets
+lance_monde perso       perso.test.js
+lance_monde persos      personnages.test.js
+lance_monde portail     portail.test.js
+lance_monde potions     potions.test.js
+lance_monde pvp         pvp.test.js
+lance_monde quetes      quetes.test.js
+lance_monde rachat      rachat.test.js
+lance_monde ramassage   ramassage_auto.test.js
+lance_monde realm       realm.test.js
+lance_monde realmsrv    realm_serveur.test.js
+lance_monde rejoint     rejoint.test.js
+lance_monde repas       repas.test.js
+lance_monde skins       skins.test.js
+lance_monde skinsed     skins_edition.test.js
+lance_monde solnexus    sol_nexus.test.js          # dont : la couleur du sac suit son contenu
+lance_monde tircourse   tir_course.test.js
+lance_monde ville       ville.test.js
+lance_monde xp          xp.test.js
+lance_monde zones       zones.test.js
+lance_monde annmonde    annonces_monde.test.js     # les quatre chemins d une ligne complete, les quatre portes, faux Telegram
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js
@@ -241,10 +325,14 @@ lance fond     "$SITE" node fond_anime.test.js         # fond d ecran anime : su
 lance reference "$SITE" node referencement.test.js
 lance coffre  "$SITE" node coffre.test.js   # le choix du coffre sur les jeux casino : cache sans $SWOGEBET (defaut $SWOGE), apparait avec, retombe sur $SWOGE si le bet vault se vide, choix retenu
 lance casinopages "$SITE" node casino_coffre_pages.test.js   # les 9 pages casino de bout en bout (faux serveur) : chaque mise d ouverture porte le jeton du coffre choisi ; un joueur a 0 $SWOGE / 500 $SWOGEBET peut miser ; sans $SWOGEBET, rien ne change
+# monde_page lit la page ET ce serveur : elle ne tient que si les deux portent le meme lot.
+# Mesure du 12/10/2026 : la page d avant le lot « le drop se lit » contre ce serveur = 19 rates
+# sur le seul bloc du drop. On integre donc le site d abord, ou l on pose SITE_DIR sur sa copie.
+lance mondepage "$SITE" env SWOGE_SERVEUR="$SRV" node monde_page.test.js   # le monde vu de la page, contre CE serveur
 lance paripage "$SITE" node paris_page.test.js   # la page des paris
 lance paridirect "$SITE" node paris_direct.test.js   # le score en direct, du tableau d ESPN jusqu a la ligne de la page ; aucun bouton sur un match commence
 lance pariaccueil "$SITE" node paris_accueil.test.js
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
-echo "  $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
+echo "  $NB suites · $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
 exit $RATE

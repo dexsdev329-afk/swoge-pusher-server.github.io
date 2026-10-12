@@ -627,6 +627,28 @@ function pose(r, espece, x, y, pv) {
     ok(r2.sacs.length > 0, `des sacs sont bien tombes (${r2.sacs.length})`);
     ok(r2.sacs.every((s) => s.contenu.length > 0),
        'et aucun n a de place vide, meme quand le tireur ne rend rien');
+
+    /* ---- LE SAC A LA COULEUR DE CE QUI EST TOMBE ----
+     * Un tirage qui descend d'un cran (plafond epuise, `repli`) tombait dans
+     * le sac de la rarete PROMISE : un sac rouge qui ne contenait qu'un
+     * legendaire. La couleur se lit de loin ; elle doit dire la piece. */
+    const r3 = new Realm({ alea: alea(5), tireObjet: (rarete) => {
+      const lot = require('./boutique').ITEMS_DROP.filter((o) => o.rarete === 'legendaire');
+      const o = lot[0];
+      return o ? { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete, repli: rarete } : null;
+    } });
+    const j3 = r3.rejoint(A, FICHE);
+    r3.monstres = [];
+    const ev3 = { kills: [], touches: [], butins: [] };
+    let tombe = null;
+    for (let i = 0; i < 6000 && !tombe; i++) {
+      r3.sacs = [];
+      r3._abat({ id: 1, espece: 'lime', biome: 'lave', x: j3.x, y: j3.y }, j3, ev3);
+      tombe = r3.sacs.find((s) => s.contenu.some((o) => o.item && o.repli === 'mythique')) || null;
+    }
+    ok(tombe, 'un mythique promis par la lave est tombe en legendaire (repli)');
+    if (tombe) eq(tombe.sac, M.SAC_DE_RARETE.legendaire,
+                  `et son sac est ${M.SAC_DE_RARETE.legendaire}, pas ${M.SAC_DE_RARETE.mythique}`);
   }
 }
 

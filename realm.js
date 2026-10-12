@@ -292,6 +292,10 @@ class Realm {
           const sac = { id: this._nouvelId(), x: s.x, y: s.y,
                         sac: monde.SAC_DE_RARETE[s.butin] || 'or',
                         reste: monde.SAC.duree, contenu: [piece] };
+          /* La couleur de ce qui est TOMBE, pas de ce qui etait promis : un
+             tirage garanti descend d'un cran quand le plafond est epuise
+             (`repli`), et le sac doit le dire. Voir sacs.js. */
+          sacsAuSol.recolore(sac);
           this.sacs.push(sac);
           while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
           if (ev) {
@@ -959,6 +963,8 @@ class Realm {
     if (!contenu.length) return;
     const sac = { id: this._nouvelId(), x: m.x, y: m.y, sac: b.sac,
                   reste: monde.SAC.duree, contenu };
+    /* Meme regle que le depot : la couleur suit la piece reellement tiree. */
+    sacsAuSol.recolore(sac);
     this.sacs.push(sac);
     while (this.sacs.length > monde.SAC.plafond) this.sacs.shift();
     ev.butins = ev.butins || [];
@@ -1090,14 +1096,14 @@ class Realm {
    * Deposer un objet au sol.
    *
    * Il rejoint le sac sur lequel on se tient s'il y reste une place ; sinon un
-   * sac BRUN nait sous nos pieds avec sa minute entiere. C'est ce qui rend
+   * sac nait sous nos pieds avec sa minute entiere. C'est ce qui rend
    * l'echange possible — poser son epee commune, prendre celle qu'on vient de
    * trouver — et c'est aussi comment on donne quelque chose a quelqu'un : le
    * sac est visible de tous, et le premier arrive le prend.
    *
-   * Le brun n'est pas un choix esthetique : un objet depose ne doit pas
-   * ressembler a un butin rare, sinon on traverserait la carte pour une epee
-   * commune que quelqu'un a jetee.
+   * Sa couleur est celle de ce qu'il contient (sacs.js, `recolore`) : une epee
+   * commune deposee reste brune — elle ne doit pas ressembler a un butin rare
+   * qu'elle n'est pas —, un mythique depose est rouge, parce qu'il en est un.
    */
   depose(addr, objet, ev) {
     const j = this.joueurs.get(addr);

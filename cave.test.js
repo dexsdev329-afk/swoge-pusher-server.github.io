@@ -159,6 +159,64 @@ console.log('\n-- un PREMIER donjon --');
   eq(M.RARETE_ANNEAU.donjon, 'mythique', 'la Fonderie, du mythique');
   eq(M.BUTIN_GARANTI.dreadstump, 'epique', 'son fond garantit de l epique');
   eq(M.BUTIN_GARANTI.fonderie, 'relique', 'celui de la Fonderie, une relique');
+
+  /* ---- LA TABLE NE SUFFIT PAS : C'EST L'ETIQUETTE QUI EST LUE ----
+   * Les quatre lignes du dessus etaient vertes pendant que les pirates
+   * rendaient du mythique : `butinDe` lit RARETE_ANNEAU[m.biome], et chaque
+   * creature de donjon naissait avec `biome: 'donjon'`. `cave: 'rare'` n'etait
+   * lu par personne. Mesure du 12/10/2026 avant correction, avec Math.random
+   * comme le Realm (500 plans, 2.10^6 morts) : 0,726 % de mythique par pirate
+   * abattu, 54,6 pirates par cave, 0,40 mythique par cave videe — contre 4
+   * mythiques a 10 exemplaires dans tout le monde ouvert, et un lot que le
+   * rachat recycle (RACHAT_RECYCLE) remplissait a mesure : environ 19 800
+   * $SWOGE de rachat ouvert par cave, verrou de volume mis a part. Ce
+   * fichier tire avec un generateur fixe (`alea`) pour etre reproductible :
+   * ses propres comptes different de ceux-la de quelques pour cent.
+   * On mesure donc sur les creatures que le PLAN fait naitre, par le vrai
+   * tirage, et plus sur la table. */
+  const tirePar = (cle) => {
+    const compte = {}; let morts = 0;
+    for (const g of GRAINES) {
+      const a = alea(g * 7 + 1);
+      for (const m of M.planDeDonjon(cle, alea(g)).peuplement) {
+        if (m.boss) continue;
+        for (let k = 0; k < 2500; k++) {
+          const b = M.butinDe(m.espece, a, m.biome);
+          morts++;
+          const o = b && b.contenu[0] && b.contenu[0].objet;
+          if (o) compte[o] = (compte[o] || 0) + 1;
+        }
+      }
+    }
+    return { compte, morts };
+  };
+  const tc = tirePar('cave');
+  eq(tc.compte.mythique || 0, 0,
+     `aucun mythique sur ${tc.morts} pirates abattus (rare : ${tc.compte.rare || 0})`);
+  ok((tc.compte.rare || 0) > 0 && Object.keys(tc.compte).every((k) => k === 'rare'),
+     `ils rendent du rare, et seulement du rare (${JSON.stringify(tc.compte)})`);
+  const tf = tirePar('forge');
+  ok((tf.compte.mythique || 0) > 0,
+     `et les machines de la Fonderie gardent leur mythique (${tf.compte.mythique || 0} sur ${tf.morts})`);
+
+  /* ---- CHAQUE DONJON PORTE UNE ETIQUETTE QUI SE LIT ----
+   * L'etiquette est maintenant le sol du donjon, pour les QUATRE : le
+   * Sanctuaire et l'Arene portent 'sanctuaire' et 'arena', absents de
+   * RARETE_ANNEAU. Sans effet le 12/10 — ils n'ont aucune espece ordinaire,
+   * leurs invocations sont sansButin et leur boss tire dans BUTIN_GARANTI. Le
+   * jour ou l'on y ajoute des creatures, `butinDe` lirait une rarete
+   * `undefined` et elles ne lacheraient plus rien, sans un mot. On l'affirme
+   * donc pour chaque porte, et on le mesure sur le plan : chaque creature
+   * ordinaire nee dans un donjon a une rarete a tirer. */
+  for (const [cle, D] of Object.entries(M.DONJONS)) {
+    const sol = D.sol || 'donjon';
+    const ordinaires = M.planDeDonjon(cle, alea(3)).peuplement.filter((m) => !m.boss);
+    ok(!!M.RARETE_ANNEAU[sol] || ((D.especes || []).length === 0 && ordinaires.length === 0),
+       `${cle} : son sol « ${sol} » a une rarete (${M.RARETE_ANNEAU[sol] || 'aucune'}), ` +
+       `ou il ne fait naitre aucune creature ordinaire (${ordinaires.length})`);
+    ok(ordinaires.every((m) => m.biome === sol),
+       `${cle} : ses creatures portent le sol du donjon (${[...new Set(ordinaires.map((m) => m.biome))].join(', ') || 'aucune'})`);
+  }
 }
 
 // ================== 7. ELLE TOURNE VRAIMENT

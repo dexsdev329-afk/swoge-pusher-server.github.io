@@ -175,6 +175,18 @@ const PHRASE_PASSIF = {
   reserve: (e) => `your fruit power costs ${Math.round(e.valeur * 100)}% less`,
   justesse: (e) => `${Math.round(e.valeur * 100)}% chance to hit twice as hard`,
 };
+/* ---- LES POUVOIRS DE FRUIT, DITS ----
+ * Meme partage que les passifs : monde.js porte les chiffres (POUVOIRS), ici
+ * on les ecrit. Chaque phrase ne lit QUE des champs de son propre pouvoir —
+ * l'egide n'a ni rayon ni facteur, la sienne n'en cite aucun. */
+const PHRASE_POUVOIR = {
+  foudre: (P) => `${P.facteur}× your best hit, up to ${P.portee} away`,
+  rafale: (P) => `${P.facteur}× fire rate for ${P.duree}s`,
+  /* realm.js `_amorti` et la brulure : sous egide, AUCUNE source ne passe
+     (egide.test.js enumere les cinq). La phrase le dit tel quel. */
+  egide:  (P) => `no damage gets through for ${P.duree}s`,
+  stase:  (P) => `freezes everything within ${P.rayon} for ${P.duree}s`,
+};
 
 const NOM_POUVOIR_FAMILIER = {
   mord: 'Bites monsters', brule: 'Sets enemies on fire',
@@ -7811,7 +7823,11 @@ class Game {
        * partagent les memes saisons et les memes raretes — seul le catalogue
        * sait laquelle se vend.
        */
+      /* Et le MOT de la rarete, pour la meme raison que sa couleur : la fiche
+         l'ecrit (« Epic »), et le traduire cote page aurait demande une
+         seconde table des raretes. Le marche le faisait deja (`rareteNom`). */
       const ligne = { item: o.id, nom: o.nom, cle: o.cle, rarete: o.rarete,
+                      rareteNom: r ? r.nom : null,
                       famille: o.famille, og: !o.drop,
                       couleur: r ? r.couleur : '#8DA0C4',
                       stat: personnages.FAMILLE_STAT[o.famille] || null, bonus };
@@ -8615,9 +8631,12 @@ class Game {
          donc rien a faire dans les plafonds de saison. */
       if (typeof id === 'string' && id.slice(0, 3) === 'oe:') {
         const es = id.slice(3);
+        /* Rarete, mot et couleur du catalogue, par `monde.rareteOeuf` : la
+           meme source que la vue du sol (sacs.js). Le mot manquait — la
+           fiche d'un oeuf ne disait pas « Mythic ». */
+        const ro = boutique.rarete(monde.rareteOeuf(es));
         out.push({ oeuf: es, nom: NOM_OEUF[es] || 'Egg', cle: 'oeuf_' + es,
-                   rarete: es === 'legendaire' ? 'relique' : 'mythique',
-                   couleur: es === 'legendaire' ? '#FFFFFF' : '#FF4655',
+                   rarete: ro.cle, rareteNom: ro.nom, couleur: ro.couleur,
                    quantite: Math.max(1, (p.sacOeufs || {})[es] | 0),
                    note: 'Hatch it at Petworld',
                    place: i });
@@ -8628,6 +8647,7 @@ class Game {
       const r = boutique.rarete(o.rarete);
       const d = personnages.degatsDeObjet(o);
       out.push({ id: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+                 rareteNom: r ? r.nom : null,
                  couleur: r ? r.couleur : '#8DA0C4', saison: o.saison,
                  /* Numerotee, donc payee : voir `bonusDe`. */
                  og: !o.drop,
@@ -8910,11 +8930,19 @@ class Game {
     const cle = monde.POUVOIR_PAR_STAT[stat];
     const P = cle ? monde.POUVOIRS[cle] : null;
     if (!P) return null;
-    const quoi = cle === 'foudre'
-      ? `${P.facteur}× your best hit, up to ${P.portee} away`
-      : cle === 'rafale'
-        ? `${P.facteur}× fire rate for ${P.duree}s`
-        : `freezes everything within ${P.rayon} for ${P.duree}s`;
+    /* ---- UNE PHRASE PAR POUVOIR, JAMAIS UNE PHRASE PAR DEFAUT ----
+     * La phrase etait un ternaire a trois branches : foudre, rafale, et
+     * « tout le reste » ecrit pour la stase. Quand la garde est passee a
+     * l'egide, l'egide est tombee dans « tout le reste » : 7 fruits sur 40
+     * (1005, 2005, 3005, 4005, 5005, 6102, 6108 — mesure du 12/10/2026)
+     * annoncaient « freezes everything within undefined for 2s ». L'egide
+     * ne gele rien et n'a pas de rayon : elle arrete tous les degats.
+     * Un pouvoir sans phrase rend desormais une phrase VIDE, et
+     * passifs.test.js exige une phrase non vide sur les 180 objets : le
+     * prochain pouvoir ajoute sans sa phrase se verra a l'essai, pas sur la
+     * fiche d'un joueur. */
+    const phrase = PHRASE_POUVOIR[cle];
+    const quoi = phrase ? phrase(P) : '';
     return { cle, nom: P.nom, cout: P.cout, recharge: P.recharge, quoi };
   }
 
@@ -8963,6 +8991,7 @@ class Game {
     const b = personnages.bonusesDeObjet(o);
     const sort = Game.sortDuFruit(o);
     return { item: o.id, cle: o.cle, nom: o.nom, rarete: o.rarete,
+             rareteNom: r ? r.nom : null,
              couleur: r ? r.couleur : null, og: !o.drop,
              ...(Object.keys(b).length ? { bonus: b } : {}),
              ...(d ? { degats: d } : {}),
@@ -11944,9 +11973,9 @@ class Game {
                vendeur: a.vendeur, nomVendeur: a.nomVendeur, t: a.t,
                oeuf: a.oeuf,
                item: { cle: 'oeuf_' + a.oeuf, nom: NOM_OEUF[a.oeuf] || 'Egg',
-                       rarete: a.oeuf === 'legendaire' ? 'relique' : 'mythique',
-                       rareteNom: a.oeuf === 'legendaire' ? 'Relic' : 'Mythic',
-                       couleur: a.oeuf === 'legendaire' ? '#FFFFFF' : '#FF4655',
+                       rarete: monde.rareteOeuf(a.oeuf),
+                       rareteNom: boutique.rarete(monde.rareteOeuf(a.oeuf)).nom,
+                       couleur: boutique.rarete(monde.rareteOeuf(a.oeuf)).couleur,
                        genre: 'oeuf' } };
     }
     if (a.fam) {

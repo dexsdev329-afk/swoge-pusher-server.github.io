@@ -38,15 +38,20 @@ const id = () => no++;
 console.log('\n-- le meme sac qu ailleurs --');
 {
   const l = [];
-  const r = sacs.depose(l, 100, 100, A, { item: 7, nom: 'Epee' }, id);
+  const r = sacs.depose(l, 100, 100, A, { item: 7, nom: 'Epee', rarete: 'commun' }, id);
   ok(r && !r.refuse, 'on pose une piece');
   eq(l.length, 1, 'un sac est ne');
   eq(l[0].reste, monde.SAC.duree, `avec la minute entiere (${monde.SAC.duree} s)`);
-  eq(l[0].sac, 'brun', 'un sac BRUN : un objet depose ne doit pas ressembler a un butin rare');
+  eq(l[0].sac, 'brun', 'une epee COMMUNE deposee fait un sac BRUN : elle ne doit pas ressembler a un butin rare');
   /* La vue reseau est celle de sacs.js, donc identique a celle du monde de
      combat : la page n'a qu'une facon de lire un sac. */
   const v = sacs.vue(l[0]);
   ok(v.i && v.x === 100 && v.c.length === 1, `la vue reseau est la meme (${JSON.stringify(v.c)})`);
+  /* Le MOT de la rarete voyage avec la piece quand elle le porte (ficheAuSol
+     le pose) : la fiche l'ecrit sans seconde table des raretes cote page. */
+  const l3 = [];
+  sacs.depose(l3, 0, 0, A, { item: 8, nom: 'Hache', rarete: 'epique', rareteNom: 'Epic' }, id);
+  eq(sacs.vue(l3[0]).c[0].rn, 'Epic', 'la vue porte le mot de la rarete (« rn »)');
 }
 
 // ================== 2. LE RAYON, ET RIEN QUE LE RAYON
@@ -165,6 +170,94 @@ console.log('\n-- l inventaire des exemplaires --');
   const total2 = (inventaire[7] || 0) + l.reduce((t, s) => t + s.contenu.filter((o) => o.item === 7).length, 0);
   eq(total2, 1, 'et apres l avoir repris, toujours un seul');
   ok(pris.item === 7, 'c est bien la meme piece');
+}
+
+// ================== 9. LA COULEUR DIT CE QUE LE SAC CONTIENT
+/*
+ * Mesure du 12/10/2026 : la couleur etait posee a la naissance du sac et
+ * jamais relue. Un mythique depose faisait un sac BRUN ; un mythique pose dans
+ * un sac brun le laissait brun ; un commun pose dans un sac rouge, puis le
+ * mythique repris, laissait un sac rouge ne contenant qu'un commun. La regle :
+ * la couleur de la MEILLEURE place, au rang de monde.SACS.
+ */
+console.log('\n-- la couleur suit le contenu --');
+{
+  const l = [];
+  const piece = (item, rarete) => ({ item, nom: 'P' + item, rarete });
+  sacs.depose(l, 0, 0, A, piece(31, 'mythique'), id);
+  eq(l[0].sac, monde.SAC_DE_RARETE.mythique, `un mythique depose fait un sac ${monde.SAC_DE_RARETE.mythique}, pas brun`);
+  sacs.depose(l, 0, 0, A, piece(32, 'commun'), id);
+  eq(l[0].sac, monde.SAC_DE_RARETE.mythique, 'un commun ajoute ne l eteint pas : la meilleure place decide');
+  const pris = sacs.prend(l, l[0], 0, () => true);
+  eq(pris.sac, monde.SAC_DE_RARETE.mythique, 'le ramassage dit le sac TEL QU ON L A VU en piochant');
+  eq(l[0].sac, 'brun', 'le mythique pris, ce qui reste est un commun : le sac redevient brun');
+  sacs.depose(l, 0, 0, B, piece(33, 'epique'), id);
+  eq(l[0].sac, monde.SAC_DE_RARETE.epique, `un epique pose dans un sac brun le fait ${monde.SAC_DE_RARETE.epique}`);
+  sacs.depose(l, 0, 0, B, { stat: 'att' }, id);
+  eq(l[0].sac, monde.SAC_DE_RARETE.epique, 'une fiole (bleu) ne passe pas devant un epique');
+  sacs.depose(l, 0, 0, B, { oeuf: 'feu' }, id);
+  eq(l[0].sac, monde.OEUF.sac, 'un oeuf passe devant tout, comme dans monde.SACS');
+
+  const l2 = [];
+  sacs.depose(l2, 500, 500, A, { stat: 'def' }, id);
+  eq(l2[0].sac, 'bleu', 'une fiole seule : bleu, comme partout');
+  sacs.depose(l2, 500, 500, A, piece(34, 'rare'), id);
+  eq(l2[0].sac, 'bleu', 'un rare (brun) ne l eteint pas');
+
+  /* ---- ET ELLE NE REVELE RIEN DE PLUS QUE LA VUE ----
+   * La couleur doit se DEDUIRE de ce que la vue reseau envoie deja a ceux qui
+   * voient le sac (rarete de chaque place, oeuf, fiole, potion). Si elle s'en
+   * deduit, elle ne dit rien qu'un joueur ne recoive deja. */
+  const deVue = (v) => {
+    let rang = -1;
+    for (const c of v.c) {
+      const k = c.oe ? monde.OEUF.sac : c.st ? 'bleu' : c.po ? 'brun' : (monde.SAC_DE_RARETE[c.ra] || 'brun');
+      rang = Math.max(rang, monde.SACS.indexOf(k));
+    }
+    return monde.SACS[rang];
+  };
+  for (const sac of l.concat(l2)) {
+    const v = sacs.vue(sac);
+    eq(v.s, deVue(v), `la couleur « ${v.s} » se deduit de la vue seule (${v.c.length} place(s))`);
+  }
+
+  /* ---- L'OEUF AU SOL PORTE SA COULEUR ET SON MOT ----
+   * Relecture du 12/10/2026 : rouge dans le sac du joueur, rien au sol. Chaque
+   * espece recoit au sol la couleur et le mot que le catalogue donne a sa
+   * rarete (`monde.rareteOeuf`, la regle que lit aussi `sacPour`), et le
+   * prisme est une relique, pas un mythique. */
+  const boutique = require('./boutique');
+  const l3 = [];
+  for (const es of monde.OEUFS) sacs.depose(l3, 900, 900, A, { oeuf: es }, id);
+  const v3 = sacs.vue(l3[0]);
+  for (const c of v3.c) {
+    const r = boutique.rarete(monde.rareteOeuf(c.oe));
+    ok(!!r && c.co === r.couleur && c.rn === r.nom,
+       `un oeuf « ${c.oe} » au sol : ${c.rn} ${c.co}, comme son catalogue (${r && r.nom} ${r && r.couleur})`);
+  }
+  eq(monde.rareteOeuf('legendaire'), 'relique', 'le prisme est une relique');
+
+  /* ---- LA TEINTE D'UN SAC DE RARETE EST CELLE DE SA PIECE ----
+   * L'en-tete « Mythic drop » se peignait d'un rouge de la page (#F2685E) a
+   * cote de la barre de la piece (#FF4655). Le serveur envoie `sc` : la
+   * couleur de la piece qui fait la couleur du sac, et rien pour les sacs
+   * dont la teinte n'est celle d'aucune piece (brun, bleu, oeuf). */
+  const coul = (r) => boutique.rarete(r).couleur;
+  const pc = (item, r) => ({ item, nom: 'P' + item, rarete: r, couleur: coul(r) });
+  for (const r of ['epique', 'legendaire', 'mythique', 'relique']) {
+    const l4 = [];
+    sacs.depose(l4, 1500, 1500, A, pc(60, 'commun'), id);
+    sacs.depose(l4, 1500, 1500, A, pc(61, r), id);
+    const v4 = sacs.vue(l4[0]);
+    eq(v4.sc, coul(r), `un sac ${v4.s} (${r}) a la teinte de sa piece, ${coul(r)}`);
+  }
+  const brun = []; sacs.depose(brun, 1700, 1700, A, pc(62, 'rare'), id);
+  const bleu = []; sacs.depose(bleu, 1900, 1900, A, { stat: 'vit' }, id);
+  const oeufS = []; sacs.depose(oeufS, 2100, 2100, A, { oeuf: 'glace' }, id);
+  ok([brun, bleu, oeufS].every((x) => sacs.vue(x[0]).sc === undefined),
+     `brun, bleu et oeuf n envoient pas de teinte (${[brun, bleu, oeufS].map((x) => x[0].sac).join(', ')}) : la page garde la sienne`);
+  ok(monde.OEUFS.filter((e) => e !== 'legendaire').every((e) => monde.rareteOeuf(e) === 'mythique'),
+     'les cinq autres especes sont mythiques');
 }
 
 console.log(`\nsol_nexus.test.js — ${n} verifications, 0 echec(s)`);

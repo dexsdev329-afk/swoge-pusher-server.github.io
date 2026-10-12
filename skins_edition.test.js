@@ -47,7 +47,7 @@ const EXEMPLAIRES_OR = 2, PRIX_OR = 20000;
 skins.EDITIONS[CIBLE_OR] = { exemplaires: EXEMPLAIRES_OR, prix: PRIX_OR, monnaie: 'or' };
 
 const { Game } = require('./game');
-const ethers = require('./node_modules/ethers');
+const ethers = require('ethers');   // resolu comme partout ailleurs : ./node_modules, ou NODE_PATH dans une copie git (worktree)
 const cfg = require('./config');
 const W = (x) => ethers.utils.parseUnits(String(x), cfg.DECIMALS);
 

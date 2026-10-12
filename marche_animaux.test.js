@@ -32,7 +32,7 @@ process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 const { Game } = require('./game');
 const monde = require('./monde');
 const cfg = require('./config');
-const ethers = require('./node_modules/ethers');
+const ethers = require('ethers');   // resolu comme partout ailleurs : ./node_modules, ou NODE_PATH dans une copie git (worktree)
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
