@@ -299,6 +299,10 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     v7 = c7.etat();
     ok(v7.tournament.retired === 3 && v7.tournament.recentlyRetired.some((r) => r.id === X.id && r.pnl === -4) && /never tried/.test(v7.tournament.rule),
        'la vue : 3 retires, le registre recent avec leur bilan, la regle en clair');
+    /* 12/10 : la regle du tournoi renvoyait au score (« the skill score is what counts ») sans dire qu il n est pas
+       valide aux prix extremes, ce que la page dit desormais a cote (audit du 11/10). */
+    ok(/the skill score is what counts, and at extreme prices \(favourites at 90¢ and up\) it is not valid yet\.$/.test(v7.tournament.rule),
+       'la regle du tournoi dit que le score n est pas valide aux prix extremes');
     ok(v7.ranking.filter((r) => r.type !== 'baseline').every((r) => r.nextJudgedAt >= 500) && v7.ranking.find((r) => r.id === 'coin').nextJudgedAt === null,
        'chaque strategie dit a quel palier elle sera jugee ; un temoin, jamais');
 
@@ -339,12 +343,22 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
        '100 paris mais 30 fenetres : pas de verdict, et on dit pourquoi (les actifs bougent ensemble)');
     const z315 = { nf: 60, fs: 3.15, fs2: 1 };
     const v315 = P.verdictAgent(Object.assign({}, base, z315), 405);
-    ok(/^Promising, not proven: skill 3\.1 per window over 60 windows, below the 3\.7 bar that testing 405 strategies requires/.test(v315),
-       'le cas du 30/09 (3,15, en gain) sur 405 essayees : « prometteur », pas « un edge » [' + v315.slice(0, 60) + ']');
+    /* 12/10 : « Promising, not proven » laissait croire qu un etat « prouve » existe, et zF ≥ 2 sort lui aussi
+       bien plus souvent par hasard sur les favoris (voir verdictAgent) : « unconfirmed », avec la reserve. */
+    ok(/^Promising, unconfirmed: skill 3\.1 per window over 60 windows, below the 3\.7 bar that testing 405 strategies requires/.test(v315)
+       && /favourites at 90¢ and up/.test(v315) && !/proven|\bedge\b/i.test(v315),
+       'le cas du 30/09 (3,15, en gain) sur 405 essayees : « prometteur », non confirme, la reserve sur les favoris ; ni « proven » ni « edge » [' + v315.slice(0, 60) + ']');
     const fort = Object.assign({}, base, { nf: 80, fs: 4, fs2: 1 });
-    ok(/^Edge on paper: skill 4\.0.*Not confirmed yet: 0\/100 bets re-priced on the real order book 2 s later/.test(P.verdictAgent(fort, 405)), 'au-dessus de la barre sur le papier : « edge de papier », pas encore confirme sur le vrai carnet');
-    ok(/^Edge on paper only: .*at the order book 2 s later it makes −\$12\.00 over 120 bets\. Not tradable as is\.$/.test(P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: -12 }), 405)), 'au carnet relu 2 s plus tard il perd : « pas jouable tel quel »');
-    ok(/^Evidence of an edge after fees: skill 4\.0.*holds on the real order book 2 s later \(\$55\.00 over 120/.test(P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: 55 }), 405)), 'et seulement s il tient sur le vrai carnet : la phrase qui dit « edge »');
+    /* 11/10 : au-dessus de la barre, une CANDIDATE — jamais « edge » ni « proven », meme quand elle tient
+       au carnet relu (la barre n est pas valide aux prix extremes : voir verdictAgent). */
+    const vFort = P.verdictAgent(fort, 405), vPerd = P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: -12 }), 405),
+      vTient = P.verdictAgent(Object.assign({}, fort, { la: 120, laReel: 55 }), 405);
+    ok(/^Candidate, unconfirmed: skill 4\.0.*; 0\/100 bets re-priced on the real order book 2 s later\. The bar is not valid at extreme prices yet/.test(vFort),
+       'au-dessus de la barre sur le papier : « candidate, non confirmee », pas encore relue sur le vrai carnet');
+    ok(/^Candidate on paper only: .*at the order book 2 s later it makes −\$12\.00 over 120 bets\. Not tradable as is\.$/.test(vPerd), 'au carnet relu 2 s plus tard il perd : « pas jouable tel quel »');
+    ok(/^Candidate, unconfirmed: skill 4\.0.*; \$55\.00 over 120 bets on the real order book 2 s later\. The bar is not valid at extreme prices yet/.test(vTient),
+       'meme quand elle tient sur le vrai carnet : toujours « candidate », la barre pas encore valide aux prix extremes');
+    ok(![vFort, vPerd, vTient].some((v) => /edge|proven/i.test(v)), 'aucune des trois phrases au-dessus de la barre ne dit « edge » ni « proven »');
     const perd = (z) => P.verdictAgent(Object.assign({}, base, { pnl: -5, nf: 80, fs: z, fs2: 1 }), 405);
     ok(!/edge after fees/.test(perd(4)) && /^No edge: loses after the spread and fees \(skill 0\.5/.test(perd(0.5)),
        'bat les prix mais perd apres frais : jamais « edge »');
@@ -379,11 +393,11 @@ const mk = () => P.cree({ attente: async () => {}, dossier, lire, hl, maintenant
     Object.assign(E9.agents[idc], { nf: 60, fs: 3.15, fs2: 1 });
     const ev = c9.etat().evidence;
     ok(ev.minWindows === 50 && ev.tested === 405 && pres(ev.bar, 3.66, 0.02) && ev.measured === 1 && ev.proven === 0 && ev.promising === 1
-       && ev.leaders[0].id === idc && ev.leaders[0].skillPerWindow === 3.15 && /72%/.test(ev.rule),
+       && ev.leaders[0].id === idc && ev.leaders[0].skillPerWindow === 3.15 && /72%/.test(ev.rule) && /only a candidate, unconfirmed/.test(ev.rule) && !/edge|proven/i.test(ev.rule),
        'la vue : 1 strategie mesuree, 0 prouvee, 1 prometteuse, la barre (3,66 pour 405), la regle en clair');
     ok(ev.closest.length === 5 && ev.closest[0].id === 'crowd' && ev.closest[0].windows === 3, 'et celles qui approchent des 50 fenetres, pour voir venir les suivantes');
     const carte = c9.etat().agents.find((a) => a.id === idc);
-    ok(carte && carte.windows === 60 && carte.skillPerWindow === 3.15 && /^Promising, not proven/.test(carte.verdict), 'la carte : score par fenetre, nombre de fenetres, verdict prudent');
+    ok(carte && carte.windows === 60 && carte.skillPerWindow === 3.15 && /^Promising, unconfirmed/.test(carte.verdict) && !/proven/i.test(carte.verdict), 'la carte : score par fenetre, nombre de fenetres, verdict prudent');
     fs.rmSync(d9, { recursive: true, force: true });
   }
 

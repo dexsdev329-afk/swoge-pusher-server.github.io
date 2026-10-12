@@ -418,13 +418,26 @@ function verdictAgent(a, essayees) {
   if (nf < FENETRES_ASSEZ) return 'Too few independent windows to judge (' + nf + '/' + FENETRES_ASSEZ + ' counted since 30 Sep): the four coins move together, so bets in the same 15 minutes count as one.';
   const z = zFenetre(a) || 0, N = Math.max(1, essayees || 1), b = barre(N), dit = 'skill ' + z.toFixed(1) + ' per window over ' + nf + ' windows';
   if (z >= b && a.pnl > 0) {
-    /* Un edge de papier n est un resultat que s il tient aux prix REELLEMENT echanges (voir REEL_DELAI_S). */
+    /* Au-dessus de la barre : une CANDIDATE, jamais « edge » (audit du 11/10, instantane de 22:24 UTC).
+       La barre suppose zF ~ normale ; sous H0 (aucun avantage, y ~ Bernoulli(prix paye)), simulation de
+       200 000 series de 185 fenetres a 91-99 ¢ : P(zF ≥ 3,98) = 0,126 %, contre 0,0034 % suppose — 37 fois
+       plus ; a 40-60 ¢ : 0,004 %, comme suppose. La seule « prouvee » du jour, P·Crowd>90¢ · 7:00–5:00
+       (419 paris, 413 gagnes, zF 4,24), paie ~95,5 ¢ en moyenne : son z par pari a variance attendue vaut
+       3,01, sous la barre. Et les gardees du tournoi perdent APRES selection : −0,60 $ par pari sur
+       89 050, contre −0,92 $ pour Coin. Le texte seul change ; la barre et le calcul restent (un seuil se
+       change sur mesure, pas sur un audit de page). Le carnet relu apres le delai d un ordre reste dit. */
     const la = a.la || 0, sur = ', above the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires', d = DELAI_ORDRE_MS / 1000;
-    if (la < RESOLUS_ASSEZ) return 'Edge on paper: ' + dit + sur + '. Not confirmed yet: ' + la + '/' + RESOLUS_ASSEZ + ' bets re-priced on the real order book ' + d + ' s later.';
-    if ((a.laReel || 0) <= 0) return 'Edge on paper only: ' + dit + sur + ', but at the order book ' + d + ' s later it makes ' + (a.laReel < 0 ? '−$' : '$') + Math.abs(a.laReel || 0).toFixed(2) + ' over ' + la + ' bets. Not tradable as is.';
-    return 'Evidence of an edge after fees: ' + dit + sur + ', and it holds on the real order book ' + d + ' s later ($' + a.laReel.toFixed(2) + ' over ' + la + ' bets).';
+    const pasValide = 'The bar is not valid at extreme prices yet (favourites at 90¢ and up clear it by luck far more often than it assumes).';
+    if (la < RESOLUS_ASSEZ) return 'Candidate, unconfirmed: ' + dit + sur + '; ' + la + '/' + RESOLUS_ASSEZ + ' bets re-priced on the real order book ' + d + ' s later. ' + pasValide;
+    if ((a.laReel || 0) <= 0) return 'Candidate on paper only: ' + dit + sur + ', but at the order book ' + d + ' s later it makes ' + (a.laReel < 0 ? '−$' : '$') + Math.abs(a.laReel || 0).toFixed(2) + ' over ' + la + ' bets. Not tradable as is.';
+    return 'Candidate, unconfirmed: ' + dit + sur + '; $' + a.laReel.toFixed(2) + ' over ' + la + ' bets on the real order book ' + d + ' s later. ' + pasValide;
   }
-  if (z >= 2) return 'Promising, not proven: ' + dit + ', below the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires — could still be luck.';
+  /* « Promising » repose sur le meme zF que la barre, gonfle lui aussi aux prix extremes (relecture du 12/10,
+     H0 : y ~ Bernoulli(prix paye), graine fixe, 100 000 series a 91-99 ¢ : P(zF ≥ 2) = 7,3 % sur 50 fenetres,
+     5,3 % sur 100, 4,4 % sur 185, contre 2,3 % suppose ; P(zF ≥ 3) = 2,2 %, 1,2 %, 0,76 %, contre 0,135 % ;
+     a 40-60 ¢ : 2,2 % et 0,11 %, comme suppose). « not proven » laissait croire qu un etat prouve existe :
+     « unconfirmed », et la reserve sur les favoris. Texte seul : le seuil de 2 ne change pas. */
+  if (z >= 2) return 'Promising, unconfirmed: ' + dit + ', below the ' + b.toFixed(1) + ' bar that testing ' + N + ' strategies requires — could still be luck, all the more on favourites at 90¢ and up, where a score this high comes by luck far more often than the bar assumes.';
   if (a.pnl < 0) return 'No edge: loses after the spread and fees (' + dit + ').';
   return 'No evidence of an edge (' + dit + ').';
 }
@@ -868,7 +881,7 @@ function cree(deps) {
       rule: 'Only bets settled AFTER a strategy passed its first check count here; what it made before is what got it kept, and proves nothing. A kept strategy retired later still counts. Coin, over the same period, shows what luck and fees give. No verdict under ' + SEUIL_TOURNOI + ' settled bets after selection.' };
     const tournament = { threshold: SEUIL_TOURNOI, slots: SLOTS_STRATEGIES, controls: AG.filter((a) => estTemoin(a.id)).length,
       running: AG.length, retired: retires.length, parametricTried: essayesParam.size, parametricUntried: PARAM.distincts - essayesParam.size,
-      rule: 'A strategy still in the red after ' + SEUIL_TOURNOI + ' settled bets is retired and replaced by a parameter set never tried before; one in profit is judged again ' + SEUIL_TOURNOI + ' bets later. The 5 original agents are controls and are never retired. Surviving a check is not proof of an edge: with fees and the spread, roughly 1 strategy in 8 with no edge still passes 500 bets by luck — the skill score is what counts.',
+      rule: 'A strategy still in the red after ' + SEUIL_TOURNOI + ' settled bets is retired and replaced by a parameter set never tried before; one in profit is judged again ' + SEUIL_TOURNOI + ' bets later. The 5 original agents are controls and are never retired. Surviving a check is not proof of an edge: with fees and the spread, roughly 1 strategy in 8 with no edge still passes 500 bets by luck — the skill score is what counts, and at extreme prices (favourites at 90¢ and up) it is not valid yet.',
       recentlyRetired: retires.slice(0, 30) };
     /* La preuve (voir FENETRES_ASSEZ et barre) : ou en est-on d un resultat ? Les strategies qui
        ont assez de fenetres, classees par score par fenetre, contre la barre du nombre essaye. */
@@ -882,8 +895,10 @@ function cree(deps) {
       /* Celles qui approchent du seuil de mesure : on voit venir les prochaines a juger. */
       closest: classement.filter((c) => c.windows < FENETRES_ASSEZ).sort((x, y) => y.windows - x.windows).slice(0, 5)
         .map((c) => ({ id: c.id, name: c.name, windows: c.windows, skillPerWindow: c.skillPerWindow, pnl: c.pnl })),
+      /* `proven` garde son nom (le site le lit), mais il compte des CANDIDATES : voir verdictAgent,
+         audit du 11/10 — la barre n est pas valide aux prix extremes tant qu elle n est pas recalculee. */
       rule: 'Bets placed in the same 15 minutes count as one observation: BTC, ETH, SOL and XRP finish the same way about 72% of the time. A strategy is only measured after ' + FENETRES_ASSEZ +
-        ' windows counted since ' + new Date(E.fenetresDepuis).toISOString().slice(0, 10) + ', and only called an edge above the bar set by the number of strategies tested (' + essayees + ' so far: ' + b.toFixed(2) + '), and in profit after fees.' };
+        ' windows counted since ' + new Date(E.fenetresDepuis).toISOString().slice(0, 10) + '. Above the bar set by the number of strategies tested (' + essayees + ' so far: ' + b.toFixed(2) + ') and in profit after fees, it is only a candidate, unconfirmed: at extreme prices (favourites at 90¢ and up) the per-window score clears that bar by luck far more often than the bar assumes.' };
 
     return { ok: true, depuis: new Date(E.depuis).toISOString(), stakeUsd: MISE_USD, bankUsd: BANQUE0, minResolved: RESOLUS_ASSEZ,
       totalStrategies: AG.length, displayedStrategies: aAfficher.length, ranking: classement, summary: resume, tournament, survivors, evidence, reality,

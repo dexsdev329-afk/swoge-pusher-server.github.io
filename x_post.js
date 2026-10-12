@@ -756,7 +756,8 @@ const PRODUITS = [
       /* Pas « every new token » (seconde relecture du 11/10) : l observatoire lit UNE page de
          GeckoTerminal new_pools (20 pools) par chaine et par cycle de 3 min (observatoire.js:15-17, 106,
          236) — un echantillon, et un jeton sans pool n est jamais vu. La meta description des deux pages
-         du site dit encore « Every new token » : a corriger dans le site. */
+         du site disait aussi « Every new token » : corrigee le 11/10 au soir (« A sample of new … tokens —
+         the 20 newest pools every 3 minutes »). */
       { id: 'sol-eth', nom: 'Solana AI and Ethereum AI', texte: 'Solana AI and Ethereum AI follow new tokens on their chain from their first price to 30 minutes later, and a paper colony buys some at real quotes, fees included, against a blind control.',
         preuve: 'serveur observatoire.js:8-19, 73 (HORIZON_MIN 30), 236 (new_pools page 1) ; site swoge_sol_ai.html:8, swoge_eth_ai.html:8 (devis Jupiter / KyberSwap, temoin aveugle)' },
       { id: 'chat', nom: 'SWOGE Agents', texte: 'SWOGE Agents: chat with Claude, ChatGPT and Grok and create images and videos, with no subscription. Each request is billed at its actual cost.',
