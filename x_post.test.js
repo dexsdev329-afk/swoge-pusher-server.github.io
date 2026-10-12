@@ -363,6 +363,18 @@ const cfg = require('./config');
          && ['bet', 'casino', 'world', 'wallet', 'ai'].every((c) => x.PRODUITS.some((p) => p.cle === c))
          && heureHG > '12:30' && heureHG < '17:00',
        'le post « hidden gem » : ' + (hg && hg.texte.length) + ' caracteres sans lien, aucun chiffre ni promesse de rendement, produits de PRODUITS, seul a ' + heureHG + ' ET');
+    /* 12/10 : l annonce du CTO, piece jointe du ticket Etherscan. Elle part TELLE QUELLE (paragraphes et adresse
+     * intacts) seulement si elle tient avec le lien ; l adresse est celle du jeton configure, au caractere pres ;
+     * la date du renoncement est celle de la tx 0xdd81…2fe8 (07/07/2026) ; aucun cours, aucune promesse. */
+    const cto = x.PROGRAMMES.find((p) => p.nom === 'cto-officiel');
+    const adresses = cto ? (cto.texte.match(/0x[0-9a-fA-F]{40}/g) || []) : [];
+    const heureCTO = cto && new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(cto.a);
+    ok(cto && cto.texte.length + cto.lien.length + 2 <= 280 && cto.lien === 'https://swoleeswoge.dog'
+         && adresses.length === 1 && adresses[0] === require('./config').SWOGE_TOKEN
+         && /community takeover \(CTO\)/.test(cto.texte) && /renounced ownership on July 7, 2026/.test(cto.texte) && /For 90\+ days/.test(cto.texte)
+         && !/\b(x\d|moon|pump|guarantee|profit|returns?|price target|buy now|nfa|ape)\b/i.test(cto.texte + ' ' + cto.sujet)
+         && heureCTO > '12:30' && heureCTO < '17:00',
+       'l annonce CTO : ' + (cto && cto.texte.length + cto.lien.length + 2) + ' caracteres avec le lien (<= 280), l adresse du jeton configure, renoncement du 07/07, seule a ' + heureCTO + ' ET');
     const cles = x.PROGRAMMES.map((p) => new Date(p.a).toISOString().slice(0, 10) + '#' + p.nom.slice(0, 24));
     ok(new Set(cles).size === cles.length, 'chaque post programme a sa propre cle de journal (' + cles.length + ')');
   }

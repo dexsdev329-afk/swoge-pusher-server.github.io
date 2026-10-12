@@ -2146,6 +2146,29 @@ const PROGRAMMES = [
       + 'Still under the radar. Most of CT hasn\'t found it yet. #RobinhoodChain',
     prompt: 'kneeling in a dark rocky cave at night, brushing dust off a huge glowing green gemstone half-buried in the ground; the gem lights up his face and the cave walls; '
       + 'a small lantern beside him, tiny sparkles floating in the air; amazed confident grin, cinematic lighting' },
+  /* 12/10/2026 : « fais une annonce sur X auto, programme-la » — l annonce du CTO que demande Etherscan. RobinScan
+   * (robin.etherscan.io, l explorateur d Etherscan pour Robinhood Chain) n affiche ni logo ni liens pour $SWOGE, et sa
+   * mise a jour exige une signature du deployeur, injoignable. Le guide d Etherscan
+   * (info.etherscan.com/how-to-verify-address-ownership, lu le 12/10) prevoit ce cas : ticket « General Inquiry » avec
+   * « the community takeover announcement from official channels like X ». Ce post EST cette piece jointe.
+   * Faits verifies le 12/10 par le RPC officiel :
+   *   - le renoncement : tx 0xdd81251b…b32fe8, de 0xeD73…924E vers le jeton, selecteur 0x715018a6 (renounceOwnership),
+   *     07/07/2026 18:36 UTC (bloc 3 748 536) ; owner() = 0x0 aujourd hui.
+   *   - l adresse ecrite est celle de config.SWOGE_TOKEN (l essai les compare : une faute de frappe ne part pas).
+   *   - un AUTRE « Swole Doge (SWOGE) » existe sur Robinhood Chain (0xdb87…9b03, paire du 20/07, theswoge.xyz) : d ou la
+   *     derniere ligne, sans le nommer ni l accuser.
+   *   - « For 90+ days » : le proprietaire, le 12/10 (« ca fait 90 jours, on est un CTO ») ; le renoncement date de 97 jours.
+   * 272 caracteres avec le lien (<= 280, essai) : au-dela, nettoie() ecraserait les paragraphes. Aucun chiffre de cours.
+   * Poste SEUL a 13:30 ET (17:30 UTC), entre les creneaux de 12:30 et 17:00. Le lien (0,20 $) : le site officiel est la
+   * deuxieme preuve que demande Etherscan. Image : prompt dedie, pattes-de-chien verifiees par genereImageVerifiee. */
+  { nom: 'cto-officiel', a: Date.parse('2026-10-12T17:30:00Z'), lien: 'https://swoleeswoge.dog',
+    sujet: 'Official announcement: $SWOGE is a community takeover (CTO). The original developer renounced ownership of the contract on July 7, 2026, and the community has run the project for more than 90 days. The official contract on Robinhood Chain is 0x8a166Fb41Cd659a0a43396272FF73973Ce29F817.',
+    texte: '📢 $SWOGE is a community takeover (CTO).\n\n'
+      + 'The dev renounced ownership on July 7, 2026. For 90+ days, $SWOGE has been run by its community.\n\n'
+      + 'Official contract (Robinhood Chain):\n0x8a166Fb41Cd659a0a43396272FF73973Ce29F817\n\n'
+      + 'Always check the contract.',
+    prompt: 'planting a big flag with a glowing paw print on top of a green hill at sunrise, a crowd of small cheering shiba inu dogs behind him '
+      + 'raising their paws, golden confetti in the air; proud confident grin, cinematic lighting' },
 ];
 async function programmes(o) {
   const t = (o && o.maintenant) || Date.now();
