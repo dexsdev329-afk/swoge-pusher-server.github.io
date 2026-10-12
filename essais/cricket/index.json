@@ -1,0 +1,255 @@
+{
+ "source": "en-tete ESPN du cricket (seul index de toutes les ligues)",
+ "modele": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=AAAAMMJJ",
+ "releve": "2026-10-12, 19:45-19:54Z, depuis ce conteneur, une requete par seconde au plus (54 appels a l en-tete, 5 refus 502)",
+ "elagage": "seules les rencontres utiles aux essais (paires et ids ci-dessous), seuls les champs lus par scores_espn.releveCricket ; forme {sports:[{leagues:[{id,name,events}]}]} conservee",
+ "paires": [
+  "Pakistan|Sri Lanka",
+  "India|West Indies",
+  "Hong Kong|Maldives",
+  "Afghanistan|India",
+  "Bahamas|Cayman Islands",
+  "Indonesia|South Korea",
+  "Boland|Easterns",
+  "Manchester Super Giants (Men)|Trent Rockets (Men)"
+ ],
+ "ids": [
+  "1554713",
+  "1546542",
+  "1512889"
+ ],
+ "derives": "aucun fichier derive ici : les cas derives (forfait = scores vides de 1550709 ; deux candidats a 1 h = 1555138 avance a 02:00Z ; winner en chaine \"true\" sur 1529231 ; timeValid false sur 1550709 ; copie divergente de 1550709 sous le 12/10) ; et, relecture du 12/10 au soir : id 1 encore « in », scores « 0 » ou « forfeit » sur 1550709 ; 1552798 sans date lisible ou retiree de la copie du 24/09 (jumelle absente) ; vainqueur inverse de 1529229 (correction ESPN) ; 1550709 recopiee en « Pakistan Women v Sri Lanka Women », Women T20 ; 1550709 et 1554578 deplacees a il y a 6 h dans paris_import.test.js sont fabriques dans scores_espn_cricket.test.js (et paris_import.test.js) et dits comme tels. Le forfait reel 1540298 (releve le 12/10 apres-midi) n a pas ete retrouve dans les 48 journees lisibles du soir.",
+ "fichiers": {
+  "entete_20260718.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260718",
+   "releve": "2026-10-12T19:47:20Z",
+   "http": 200,
+   "octets": 50277,
+   "rencontres": 8,
+   "gardees": [
+    "1512889"
+   ]
+  },
+  "entete_20260815.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260815",
+   "releve": "2026-10-12T19:46:43Z",
+   "http": 200,
+   "octets": 119437,
+   "rencontres": 16,
+   "gardees": []
+  },
+  "entete_20260816.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260816",
+   "releve": "2026-10-12T19:51:40Z",
+   "http": 200,
+   "octets": 123260,
+   "rencontres": 19,
+   "gardees": [
+    "1521264"
+   ]
+  },
+  "entete_20260923.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260923",
+   "releve": "2026-10-12T19:47:45Z",
+   "http": 200,
+   "octets": 80872,
+   "rencontres": 12,
+   "gardees": []
+  },
+  "entete_20260924.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260924",
+   "releve": "2026-10-12T19:47:47Z",
+   "http": 200,
+   "octets": 167960,
+   "rencontres": 25,
+   "gardees": [
+    "1552795",
+    "1552798"
+   ]
+  },
+  "entete_20260925.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260925",
+   "releve": "2026-10-12T19:47:48Z",
+   "http": 200,
+   "octets": 143884,
+   "rencontres": 26,
+   "gardees": []
+  },
+  "entete_20260927.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260927",
+   "releve": "2026-10-12T19:47:51Z",
+   "http": 200,
+   "octets": 121763,
+   "rencontres": 20,
+   "gardees": [
+    "1529227"
+   ]
+  },
+  "entete_20260928.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260928",
+   "releve": "2026-10-12T19:47:52Z",
+   "http": 200,
+   "octets": 39480,
+   "rencontres": 6,
+   "gardees": [
+    "1552773"
+   ]
+  },
+  "entete_20260929.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260929",
+   "releve": "2026-10-12T19:47:54Z",
+   "http": 200,
+   "octets": 98868,
+   "rencontres": 17,
+   "gardees": []
+  },
+  "entete_20261002.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261002",
+   "releve": "2026-10-12T19:45:49Z",
+   "http": 200,
+   "octets": 82363,
+   "rencontres": 13,
+   "gardees": []
+  },
+  "entete_20261003.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261003",
+   "releve": "2026-10-12T19:45:50Z",
+   "http": 200,
+   "octets": 133593,
+   "rencontres": 22,
+   "gardees": [
+    "1529229",
+    "1555135"
+   ]
+  },
+  "entete_20261004.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261004",
+   "releve": "2026-10-12T19:45:52Z",
+   "http": 200,
+   "octets": 103310,
+   "rencontres": 18,
+   "gardees": [
+    "1555136"
+   ]
+  },
+  "entete_20261005.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261005",
+   "releve": "2026-10-12T19:45:54Z",
+   "http": 200,
+   "octets": 91945,
+   "rencontres": 15,
+   "gardees": [
+    "1555137",
+    "1555138"
+   ]
+  },
+  "entete_20261006.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261006",
+   "releve": "2026-10-12T19:45:55Z",
+   "http": 200,
+   "octets": 101011,
+   "rencontres": 17,
+   "gardees": [
+    "1529230"
+   ]
+  },
+  "entete_20261007.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261007",
+   "releve": "2026-10-12T19:45:56Z",
+   "http": 200,
+   "octets": 76651,
+   "rencontres": 12,
+   "gardees": []
+  },
+  "entete_20261008.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261008",
+   "releve": "2026-10-12T19:45:58Z",
+   "http": 200,
+   "octets": 87225,
+   "rencontres": 17,
+   "gardees": [
+    "1551858"
+   ]
+  },
+  "entete_20261009.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261009",
+   "releve": "2026-10-12T19:46:00Z",
+   "http": 200,
+   "octets": 159846,
+   "rencontres": 22,
+   "gardees": [
+    "1529231",
+    "1550708"
+   ]
+  },
+  "entete_20261010.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261010",
+   "releve": "2026-10-12T19:46:01Z",
+   "http": 200,
+   "octets": 81668,
+   "rencontres": 12,
+   "gardees": []
+  },
+  "entete_20261011.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261011",
+   "releve": "2026-10-12T19:46:03Z",
+   "http": 200,
+   "octets": 266555,
+   "rencontres": 47,
+   "gardees": [
+    "1529232",
+    "1546542",
+    "1554713",
+    "1550709"
+   ]
+  },
+  "entete_20261012.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261012",
+   "releve": "2026-10-12T19:46:04Z",
+   "http": 200,
+   "octets": 184327,
+   "rencontres": 35,
+   "gardees": [
+    "1546542",
+    "1554578"
+   ]
+  },
+  "entete_20261013.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261013",
+   "releve": "2026-10-12T19:45:34Z",
+   "http": 200,
+   "octets": 183197,
+   "rencontres": 36,
+   "gardees": [
+    "1546542",
+    "1550710"
+   ]
+  },
+  "entete_20261014.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261014",
+   "releve": "2026-10-12T19:45:35Z",
+   "http": 200,
+   "octets": 150582,
+   "rencontres": 34,
+   "gardees": [
+    "1529233",
+    "1546542"
+   ]
+  },
+  "entete_20261015.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20261015",
+   "releve": "2026-10-12T19:51:38Z",
+   "http": 200,
+   "octets": 22707,
+   "rencontres": 5,
+   "gardees": []
+  },
+  "entete_20260817_502.json": {
+   "url": "https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=20260817",
+   "releve": "2026-10-12T19:52:47Z",
+   "http": 502,
+   "octets": 48,
+   "note": "refus reel : HTTP 502, corps {\"code\":2502,...} ; meme reponse a 19:54:08Z ; dates=20260816 a rendu 502 a 19:47:18Z puis 200 a 19:51:40Z"
+  }
+ }
+}

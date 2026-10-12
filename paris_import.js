@@ -138,9 +138,22 @@ const LIGUES_DEFAUT = [
    * dire. Ouvrir un marche dont on sait que le prix est faux, c'est offrir de
    * l'argent a qui le remarque. La NFL arrive donc a la semaine 1. */
   'nfl=americanfootball_nfl',
-  /* Cricket : uniquement les formats LIMITES, qui se decident toujours. Le
-     format Test finit reellement par un nul une fois sur trois et n'a pas
-     de troisieme issue ici — l'ajouter paierait le mauvais camp. */
+  /* Cricket : uniquement les formats LIMITES. Le format Test finit reellement
+     par un nul une fois sur trois et n'a pas de troisieme issue ici —
+     l'ajouter paierait le mauvais camp.
+     ---- MAIS UN FORMAT LIMITE NE SE DECIDE PAS TOUJOURS (12/10/2026) ----
+     Ce commentaire disait « qui se decident toujours » : c'est faux. Mesure
+     sur l'en-tete d'ESPN le 12/10 apres-midi : 20 matchs limites termines
+     sur 202 (9,9 %) sans vainqueur net — egalite, sans resultat, abandon,
+     statut inconnu, forfait. Relu le soir sur 460 matchs limites « post »
+     (48 en-tetes du 18/07 au 15/10, 626 rencontres distinctes) : 35 (7,6 %) —
+     3 egalites, 8 sans resultat, 20 abandons, 4 « Final » sans donnees ;
+     T20I seuls : 14 sur 112. Le nul reste hors des issues (en format limite,
+     l'egalite se joue au super over ou reste une egalite), mais ces matchs
+     ne se reglent jamais seuls : scores_espn.releveCricket ne rend
+     une lettre que sur status.type.id 1 avec un seul vainqueur et deux
+     scores, envoie egalite, sans resultat et abandon a la main, et rien
+     d'autre. */
   'cricket=cricket_the_hundred',
   'cricket=cricket_international_t20',
   'cricket=cricket_t20_blast',
@@ -691,6 +704,10 @@ function etatImport() {
     /* Les refus du tableau d'ESPN aujourd'hui, par tableau : une panne qui ne
        se lit que dans le journal ne se voit pas (08/10/2026). */
     espnRefus: espn.refusDuJour(),
+    /* Le cricket par l'en-tete d'ESPN (12/10/2026) : la derniere passe, le
+       compte par issue (regle, main, rien, sans, ambigu, heure, loin, panne)
+       et les journees refusees — null avant la premiere passe. */
+    cricket: (() => { try { return espn.etatCricket(); } catch (e) { return { erreur: String(e.message || e) }; } })(),
     /* Le prix du marche, championnat par championnat : derniere releve, et
        combien de rencontres a venir sont au prix ou SUSPENDUES — une
        suspension ne se voit pas sur la page, qui n'affiche que l'ouvert. */
@@ -1483,6 +1500,14 @@ async function importeScores(aRegler, opts) {
    * Il sert au verrou d'heure reelle du tennis (tennis_verrou.js), pas encore
    * au reglement : le brancher ici serait un autre lot, avec sa mesure.
    *
+   * Le cricket (12/10/2026) passe par l'EN-TETE d'ESPN (`espn.finies` ->
+   * releveCricket), un jour par requete : une lettre sur status.type.id 1
+   * seulement (et payee AUTO_DELAI_MIN apres sa premiere lecture, voir
+   * `trieReglements`), la main avec sa raison sur 3 (egalite), 5 (sans
+   * resultat), 6 (abandon) ou une heure ESPN plus tot que la notre, rien
+   * sinon. Une rencontre qu'il rend (lettre ou main) ne paie plus de
+   * /scores : The Odds API ne le reglait de toute facon pas (« 215/3 »).
+   *
    * Une panne d'ESPN ne casse rien : `finies` rend une liste vide et tout
    * repasse par le chemin d'avant. C'est le meme raisonnement que partout
    * ailleurs ici — une source gratuite qui s'ajoute ne doit jamais pouvoir
@@ -1505,7 +1530,10 @@ async function importeScores(aRegler, opts) {
     m.debut <= tGratuit && tGratuit - m.debut <= fenEspn
     && (typeof aRegler !== 'function' || aRegler(m.id)));
   let gratuites = [];
-  try { gratuites = await espn.finies(candidats); }
+  /* `catalogue` (12/10/2026) : le cricket y voit nos AUTRES rencontres des
+     memes noms, pour que deux des notres ne prennent jamais la meme rencontre
+     ESPN quand une seule porte un pari. `espn` : les essais seulement. */
+  try { gratuites = await espn.finies(candidats, Object.assign({ catalogue: paris.catalogue().matchs }, o.espn || {})); }
   catch (e) { console.log('[espn] injoignable : ' + (e.message || e)); }
   const dejaVues = new Set(gratuites.map((f) => f.id));
   if (gratuites.length) {
@@ -1516,7 +1544,8 @@ async function importeScores(aRegler, opts) {
    * y couterait douze fois par jour ce que la quotidienne paie une fois. Elle
    * rend donc ce qu'ESPN a tranche, et s'arrete la ; le repli payant reste a
    * la quotidienne (et a chaque demarrage). reglement_cadence.test.js (b) le
-   * tient avec un cricket parie qu'ESPN ne couvre pas : 0 credit. */
+   * tient avec un cricket parie que l'en-tete d'ESPN lit en cours (id 0) et
+   * ne tranche pas : 0 credit. */
   if (o.payant === false) return gratuites.filter((f) => ouverts.has(f.id));
 
   /* On n'interroge QUE les ligues qui ont une rencontre finie a rattraper.
@@ -2911,6 +2940,24 @@ function trieReglements(finis, expositionDe, now) {
       mains.push(Object.assign({ raison: `finie depuis trop peu (${Math.round(depuis)} min)` }, f, { attente: true }));
       continue;
     }
+    /* ---- LE CRICKET : AUTO_DELAI_MIN DEPUIS LA PREMIERE LECTURE DU RESULTAT (relecture du 12/10/2026) ----
+     * Le mur ci-dessus compte depuis le coup d'envoi et suppose la duree d'un
+     * football (110 min). Un T20 dure ~3 h 20, un ODI ~8 h : un id 1 d'ESPN
+     * se payait des la premiere passe qui le lisait, sans les 90 min laissees
+     * a une correction (essai « ODI a 490 min », scores_espn_cricket.test.js).
+     * La fin reelle n'est pas publiee (`endDate` d'ESPN vaut le lendemain a
+     * 23:59) : on compte depuis la premiere lecture du MEME verdict
+     * (`vuFini`, scores_espn.releveCricket). Sans elle, on attend. */
+    if (f.source === 'espn' && f.resultat && (f.sport === 'cricket' || (m && m.sport === 'cricket'))) {
+      const vu = Number(f.vuFini);
+      const age = vu > 0 ? (t - vu) / 60000 : null;
+      if (age === null || age < AUTO_DELAI_MIN) {
+        mains.push(Object.assign({ raison: age === null
+          ? 'cricket : resultat ESPN sans heure de premiere lecture'
+          : `cricket : resultat ESPN lu depuis ${Math.round(age)} min (${AUTO_DELAI_MIN} min attendues depuis la premiere lecture)` }, f, { attente: true }));
+        continue;
+      }
+    }
     if (expo > AUTO_PLAFOND) {
       mains.push(Object.assign({ raison: `exposition ${Math.round(expo)} > plafond ${AUTO_PLAFOND}` }, f));
       continue;
@@ -2929,7 +2976,9 @@ function trieReglements(finis, expositionDe, now) {
  *    commencees depuis moins de 36 h, pariees ou non ; le tennis seulement
  *    avec un pari (son API core est lourde : un appel par tournoi) ; et celles
  *    encore dans leur fenetre de suivi. Une rencontre sans tableau gratuit
- *    (cricket hors T20 international) ne se lit pas : elle n'entre pas.
+ *    ne se lit pas : elle n'entre pas. Le cricket n'en a plus aucun depuis le
+ *    12/10/2026 (son 'cricket/8039' etait la Coupe du monde ODI 2027) : il se
+ *    lit a l'en-tete (`espn.finies` -> releveCricket), que l'ombre ne lit pas.
  *  - Elle lit `espn.releve`, qui rend TOUS les etats, et non `espn.finies`,
  *    qui ecarte ce qui n'est pas fini : une rencontre deja reglable qui
  *    revient a un etat non fini (reprise, abandon) est la correction la plus

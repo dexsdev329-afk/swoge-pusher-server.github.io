@@ -93,8 +93,20 @@ const SCORES = {
 };
 
 const SPORTS_LISTE = [];
+/* ---- L'EN-TETE DU CRICKET (12/10/2026) ----
+ * Le cricket se lit a l'en-tete d'ESPN (scores_espn.releveCricket). Il lui
+ * faut une reponse d'en-tete VALIDE : `{ events: [] }` est un refus (pas de
+ * sports[0].leagues), et tout cricket parie passait alors par la branche
+ * « panne » au lieu de celle qu'on veut mesurer. Par defaut, un en-tete sans
+ * rencontre ; le § 2 ter y pose deux vraies rencontres (essais/cricket/). */
+const ENTETE_CRICKET = { evs: [], demandes: [] };
 global.fetch = async (url) => {
   const u = new URL(String(url));
+  if (u.hostname === 'site.web.api.espn.com' && u.pathname === '/apis/v2/scoreboard/header') {
+    ENTETE_CRICKET.demandes.push(u.searchParams.get('dates'));
+    const corps = { sports: [{ leagues: [{ id: '24707', events: JSON.parse(JSON.stringify(ENTETE_CRICKET.evs)) }] }] };
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => corps };
+  }
   /* ---- ESPN N'EST PAS THE ODDS API ----
    * Le reglement consulte d'abord les tableaux publics d'ESPN, qui sont
    * gratuits. Ce banc-la compte les CREDITS, donc les appels payants : laisser
@@ -643,6 +655,53 @@ const cotes = require('./cotes');
     fs.writeFileSync(CAT, JSON.stringify(cat2, null, 1));
     paris.charge(CAT);
     for (const [f, v] of [[QUOTA, quotaAvant], [CLASSES, classesAvant]]) { if (v === null) { try { fs.unlinkSync(f); } catch (e) {} } else fs.writeFileSync(f, v); }
+  }
+
+  // ==== 2 ter. LE CRICKET DE BOUT EN BOUT : EN-TETE ESPN -> importeScores -> trieReglements (relecture du 12/10/2026)
+  /*
+   * L'intention : une rencontre que l'en-tete rend (lettre ou main) ne paie
+   * plus de /scores, la lettre arrive dans NOTRE orientation jusqu'au tri, et
+   * le tri ne la paie qu'AUTO_DELAI_MIN apres sa premiere lecture. Deux vraies
+   * rencontres des copies (essais/cricket/) : 1550709 (Pakistan bat Sri Lanka)
+   * et 1554578 (Hong Kong v Maldives, sans resultat). DERIVE : leur date est
+   * deplacee a il y a 6 h, pour que l'essai ne depende pas du jour ou il tourne.
+   */
+  {
+    const cat = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    if (!cat.sports.some((x) => x.cle === 'cricket')) cat.sports.push({ cle: 'cricket', nom: 'Cricket', actif: true });
+    const debut = new Date(Math.floor(HIER / 60000) * 60000).toISOString();
+    const cri = (id, dom, ext) => ({ id, sport: 'cricket', competition: 'Essai', pays: '', domicile: dom, exterieur: ext,
+      debut, cotes: { 1: 1.8, 2: 1.95 }, source: { fournisseur: 'the-odds-api', ligue: 'cricket_international_t20', evenement: id } });
+    cat.matchs.push(cri('cri-pak', 'Pakistan', 'Sri Lanka'), cri('cri-nr', 'Hong Kong', 'Maldives'));
+    fs.writeFileSync(CAT, JSON.stringify(cat, null, 1));
+    const copie = (j, id) => {
+      const c = JSON.parse(fs.readFileSync(path.join(__dirname, 'essais', 'cricket', 'entete_' + j + '.json'), 'utf8'));
+      for (const l of c.sports[0].leagues) for (const ev of l.events) if (String(ev.id) === id) return Object.assign(ev, { date: debut });
+      throw new Error(id + ' absente de la copie ' + j);
+    };
+    ENTETE_CRICKET.evs = [copie('20261011', '1550709'), copie('20261012', '1554578')];
+    ENTETE_CRICKET.demandes.length = 0;
+    appels.length = 0;
+    let finisC;
+    try { finisC = await imp.importeScores((id) => id === 'cri-pak' || id === 'cri-nr'); }
+    finally { ENTETE_CRICKET.evs = []; }
+    eq(appels.filter((a) => a.quoi === 'scores').length, 0, 'aucun /scores paye : les deux sont rendues par l en-tete (gratuit)');
+    eq(ENTETE_CRICKET.demandes.length, 3, 'trois journees demandees a l en-tete (meme jour pour les deux)');
+    const par = Object.fromEntries(finisC.map((x) => [x.id, x]));
+    eq(par['cri-pak'] && par['cri-pak'].resultat, '1', 'Pakistan (notre domicile) a gagne : 1');
+    ok(par['cri-pak'] && par['cri-pak'].vuFini > 0, 'avec l heure de sa premiere lecture');
+    ok(par['cri-nr'] && par['cri-nr'].resultat === null && /sans resultat/.test(par['cri-nr'].aMain), 'Hong Kong v Maldives : a la main — ' + (par['cri-nr'] && par['cri-nr'].aMain));
+    let t = imp.trieReglements(finisC, () => 0, Date.now());
+    eq(t.auto.length, 0, 'au tri, tout de suite : rien n est paye');
+    const pak = t.mains.find((x) => x.id === 'cri-pak'), nr = t.mains.find((x) => x.id === 'cri-nr');
+    ok(pak && pak.attente && /lu depuis 0 min/.test(pak.raison), 'la victoire attend : ' + (pak && pak.raison));
+    ok(nr && !nr.attente && nr.raison === par['cri-nr'].aMain, 'le sans-resultat est a la main, raison de l en-tete');
+    t = imp.trieReglements(finisC, () => 0, Date.now() + imp.AUTO_DELAI_MIN * 60000 + 1000);
+    eq(t.auto.map((x) => x.id + '=' + x.resultat).join(','), 'cri-pak=1', imp.AUTO_DELAI_MIN + ' min apres la premiere lecture : la victoire se regle, dans notre orientation');
+    const cat2 = JSON.parse(fs.readFileSync(CAT, 'utf8'));
+    cat2.matchs = cat2.matchs.filter((m) => !['cri-pak', 'cri-nr'].includes(m.id));
+    fs.writeFileSync(CAT, JSON.stringify(cat2, null, 1));
+    paris.charge(CAT);
   }
 
   // ==== 3. l'etalonnage coute 1 par ligue, et un seul marche / une seule region

@@ -53,9 +53,10 @@ const prixLigues = require('./prix_ligues');
  *
  * `issues` n'est pas un detail de presentation : c'est la question « ce sport
  * peut-il finir a egalite ». Se tromper ne casse rien et paie le mauvais camp.
- * Le cricket en est l'exemple : en format limite il se decide toujours, mais
- * le format TEST finit a egalite une fois sur trois. Il n'est pas suivi POUR
- * CETTE RAISON, et la ligne le dit a l'endroit ou quelqu'un ira l'ajouter.
+ * Le cricket en est l'exemple : le format TEST finit a egalite une fois sur
+ * trois. Il n'est pas suivi POUR CETTE RAISON, et la ligne le dit a l'endroit
+ * ou quelqu'un ira l'ajouter. (Le format limite ne se decide pas « toujours »
+ * non plus : voir la ligne du cricket.)
  */
 const SPORTS = {
   foot: { nom: 'Football', issues: ['1', 'N', '2'], equipes: true, terrain: 65 },
@@ -69,7 +70,12 @@ const SPORTS = {
      une cinquantaine de points Elo. Il a nettement baisse depuis vingt ans,
      on ne le surestime pas. */
   nfl: { nom: 'NFL', issues: ['1', '2'], equipes: true, terrain: 55 },
-  /* Le cricket EN FORMAT LIMITE — Hundred, T20, ODI — se decide toujours.
+  /* Le cricket EN FORMAT LIMITE — Hundred, T20, ODI — n'a pas de nul :
+     l'egalite se joue au super over ou reste une egalite. Il ne se decide
+     pourtant PAS toujours : 20 matchs limites termines sur 202 (9,9 %) sans
+     vainqueur net a l'en-tete d'ESPN le 12/10/2026 (egalite, sans resultat,
+     abandon, statut inconnu, forfait) ; ceux-la ne se reglent jamais seuls
+     (scores_espn.releveCricket : la main ou rien).
      Le format TEST, lui, se termine reellement par un nul une fois sur
      trois : il n'est deliberement pas suivi, faute d'une troisieme issue
      ici. Ajouter `cricket_test_match` au calendrier sans ajouter le nul

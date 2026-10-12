@@ -7,7 +7,8 @@
  *   a. Mode « observe » (defaut) : la passe de 2 h ne paie RIEN, ne remet
  *      RIEN a `signale` (donc ne regle et ne publie rien) et ecrit l'ombre.
  *   b. Mode « regle » : elle remet ce qu'ESPN tranche, et ne paie toujours
- *      rien — meme avec un cricket parie qu'ESPN ne couvre pas.
+ *      rien — meme avec un cricket parie que l'en-tete d'ESPN LIT mais ne
+ *      tranche pas encore (en cours, status.type.id 0 : 12/10/2026).
  *   c. La fenetre : la passe frequente ne demande jamais un MOIS a ESPN
  *      (7 Mo en MLB toutes les 2 h) ; la quotidienne garde ses 30 jours.
  *   d. Une seule releve de scores a la fois : lancees dans la meme
@@ -59,7 +60,7 @@ const T0 = Date.now();
 const ESPN = {};          // chemin -> [evenements]
 const PANNE = new Set();  // chemins qui rendent 500
 const TENNIS = { index: [], tournois: {} };
-const espnUrls = [], coreUrls = [], odds = [];
+const espnUrls = [], coreUrls = [], odds = [], enteteUrls = [];
 let RETARD_ESPN = 0, RETARD_ODDS = 0;
 const SCORES = { cricket_odi: [] };
 function evEspn(id, dom, ext, quand, sd, se, etat, statut) {
@@ -94,6 +95,21 @@ global.fetch = async (url) => {
     return { ok: true, status: 200,
              headers: { get: (k) => ({ 'x-requests-remaining': String(20000 - total), 'x-requests-used': String(total), 'x-requests-last': String(cout) }[k.toLowerCase()] || null) },
              json: async () => corps, text: async () => JSON.stringify(corps) };
+  }
+  /* ---- L'EN-TETE DU CRICKET (12/10/2026) ----
+   * Une reponse VALIDE, ou l'ODI parie est en cours (id 0, « in ») : la
+   * passe frequente le lit et ne le tranche pas. Avant, cet hote levait
+   * « hote interdit », et le « 0 credit » du cricket tenait par la branche
+   * panne, pas par celle qu'on veut tenir. Rencontre FABRIQUEE a la forme
+   * de l'en-tete reel (essais/cricket/). */
+  if (u.hostname === 'site.web.api.espn.com' && u.pathname === '/apis/v2/scoreboard/header') {
+    enteteUrls.push(String(url));
+    const ev = { id: '9100001', date: new Date(debutDe('cri-odi')).toISOString(), timeValid: true, name: 'India v Australia',
+      class: { generalClassCard: 'ODI', name: 'One-Day Internationals' },
+      fullStatus: { type: { id: '0', description: 'In Progress', detail: '2nd innings', shortDetail: '2nd innings', state: 'in' } },
+      competitors: [{ displayName: 'India', homeAway: 'home', winner: false, score: '287/6' },
+                    { displayName: 'Australia', homeAway: 'away', winner: false, score: '112/2 (21/50 ov, target 288)' }] };
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ sports: [{ leagues: [{ id: '99999', events: [ev] }] }] }) };
   }
   throw new Error('hote interdit dans cet essai : ' + u.hostname);
 };
@@ -216,7 +232,8 @@ let rj = require('./reglement_journal');
       eq(signales[0] && signales[0].o && signales[0].o.passe, 'frequente', 'avec { passe: frequente }');
       const ids = signales[0] ? signales[0].f.map((f) => f.id).sort() : [];
       ok(ids.includes('liga-fini') && ids.includes('tennis-pari'), 'ce qu ESPN tranche (football, tennis) : ' + ids.join(','));
-      ok(!ids.includes('cri-odi'), 'pas le cricket qu ESPN ne couvre pas');
+      ok(enteteUrls.length > 0, 'le cricket parie est LU a l en-tete : ' + enteteUrls.length + ' journee(s)');
+      ok(!ids.includes('cri-odi'), 'pas le cricket en cours (id 0) : lu, apparie, pas tranche');
       eq(creditsOdds(), 0, '0 credit : aucun /scores paye, meme pour le cricket parie');
       eq(odds.length, 0, 'aucun appel du tout vers The Odds API');
     } finally { ctl.arrete(); }

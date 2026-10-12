@@ -59,7 +59,12 @@ const CHEMINS = {
   soccer_uefa_champs_league: 'soccer/uefa.champions',
   basketball_nba: 'basketball/nba',
   americanfootball_nfl: 'football/nfl',
-  cricket_international_t20: 'cricket/8039',
+  /* ---- PLUS AUCUNE CLE CRICKET ICI (12/10/2026) ----
+   * `cricket_international_t20` lisait 'cricket/8039' : c'est la Coupe du
+   * monde ODI 2027, 0 rencontre avant 10/2027 (releve du 12/10). Les T20I et
+   * ODI bilateraux ont un id PAR TOURNEE (24707, 24289) : aucun tableau fixe
+   * ne couvre une cle cricket. Le cricket se lit dans l'EN-TETE d'ESPN, jour
+   * par jour (`releveCricket`, plus bas) ; `releve` ne le lit jamais. */
   /* Les treize du 18 septembre 2026. Chacune a repondu depuis ce serveur ce
      jour-la, jour par jour — le tableau REFUSE une fenetre de dix jours
      (400, « Failed to get events endpoint ») ; depuis le 08/10 il refuse
@@ -296,13 +301,16 @@ function requetes(deb, fin) {
  * une ligne au journal au PREMIER refus de chaque tableau et de chaque jour —
  * pas a chaque requete : le direct relit toutes les 45 s. */
 const REFUS = new Map();
-function compte(u, refus, pourquoi) {
+/* `nom` (12/10/2026) : le tableau, quand l'adresse n'en porte pas — l'en-tete
+   du cricket (`cricket/entete`) n'a pas de `/scoreboard` dans son chemin. */
+function compte(u, refus, pourquoi, nom) {
   const m = /sports\/(.+?)\/scoreboard/.exec(String(u));
-  const cle = new Date().toISOString().slice(0, 10) + '|' + (m ? m[1] : '?');
+  const tab = nom || (m ? m[1] : null);
+  const cle = new Date().toISOString().slice(0, 10) + '|' + (tab || '?');
   const e = REFUS.get(cle) || { requetes: 0, refus: 0, dernier: '' };
   e.requetes++;
   if (refus) {
-    if (!e.refus) console.log(`[espn] refus sur ${m ? m[1] : u} : ${pourquoi} — ${String(u).split('?')[1] || ''}`);
+    if (!e.refus) console.log(`[espn] refus sur ${tab || u} : ${pourquoi} — ${String(u).split('?')[1] || ''}`);
     e.refus++; e.dernier = pourquoi;
   }
   REFUS.set(cle, e);
@@ -496,6 +504,14 @@ async function releve(matchs, opts) {
   for (const m of matchs || []) {
     const l = m && m.source && m.source.ligue;
     if (!l || !CHEMINS[l]) continue;
+    /* ---- LE CRICKET NE PASSE JAMAIS PAR ICI (12/10/2026) ----
+     * `lis` lit un score de cricket « 215/3 » en NaN (rien), mais un abandon
+     * ou un report en « 0-0 » et 'N' : `Number('')` vaut 0. Seul `!s.fini`
+     * arretait ce faux nul dans `finies` — et `fini` ne doit pas devenir
+     * `state === 'post'` (abandon, sans resultat et « Final » sans donnees
+     * sont « post »). Meme si une cle cricket revenait dans CHEMINS, elle
+     * resterait hors d'ici : le cricket se lit par `releveCricket`. */
+    if (estCricket(m)) continue;
     if (!parLigue.has(l)) parLigue.set(l, []);
     parLigue.get(l).push(m);
   }
@@ -1005,6 +1021,505 @@ async function releveTennisTableau(matchs, opts) {
   return { par, rencontres: lignes, tours };
 }
 
+/*
+ * ==================== LE CRICKET, PAR L'EN-TETE D'ESPN (12/10/2026) ====================
+ *
+ * ---- pourquoi pas un tableau par ligue, comme le football ----
+ * La cle `cricket_international_t20` lisait 'cricket/8039' : la Coupe du monde
+ * ODI 2027, 0 rencontre avant 10/2027. Les T20I et ODI bilateraux ont un id
+ * PAR TOURNEE (24707 Sri Lanka au Pakistan, 24289 West Indies en Inde), la
+ * Coupe du monde T20 le sien (8604), The Hundred 19601 (hommes) et 21376
+ * (femmes), le Blast 8053, et l'ODI n'a pas de competition unique : aucun
+ * chemin fixe ne couvre une cle. Le cricket ne s'est donc JAMAIS regle seul.
+ *
+ * Le seul index de toutes les ligues est l'EN-TETE :
+ *   https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=AAAAMMJJ
+ * Mesure du 12/10/2026, 17:30-17:45Z, 68 appels : 39 rencontres de 11
+ * tableaux, 53 comparaisons avec les tableaux et les summaries, 0 ecart sur le
+ * statut, le vainqueur, les noms et le score. Relu de 19:45 a 19:54Z (54
+ * appels a l'en-tete, 48 journees lisibles du 18/07 au 15/10, 626 rencontres
+ * distinctes) pour les copies des essais (essais/cricket/index.json).
+ *
+ * ---- ce que l'en-tete impose ----
+ *  - `dates` est la date LOCALE du match : on demande J-1, J et J+1 autour du
+ *    jour UTC de notre debut, UN JOUR PAR REQUETE (une fenetre
+ *    AAAAMMJJ-AAAAMMJJ rend 404 ; le mois coupe a 300 evenements). Une
+ *    rencontre limitee n'est en general que sous sa date (1 sur 626 sous deux
+ *    jours : 1552312, les 12 et 13/09) : deux copies d'une rencontre doivent
+ *    dire la meme chose, sinon rien n'est tranche.
+ *  - les dates anciennes rendent des 502 intermittents (HTTP 502, corps
+ *    {"code":2502}) : 14 sur 68 appels le 12/10 apres-midi, 5 sur 54 le soir
+ *    (16/08 deux fois sur trois, 17/08 deux fois sur deux, 01/09). UN REFUS
+ *    N'EST JAMAIS UNE LISTE VIDE : une seule des trois journees refusee, et la
+ *    rencontre n'est pas tranchee a cette passe — un candidat manquant ferait
+ *    passer pour unique celui qui reste. Une journee refusee est redemandee
+ *    UNE fois en fin de passe ; la passe suivante redemande ; sinon, la main.
+ *  - le resultat se lit sur `fullStatus.type.id`, ET SUR LUI SEUL :
+ *    `description` vaut « Result » pour 1, 3 et 4, `detail` « Final » pour 1,
+ *    3, 5, 6 et 0-post. Sur 626 rencontres distinctes : id 1 porte exactement
+ *    un `winner` vrai 491 fois sur 491 (toutes « post »), aucun autre id n'en
+ *    porte. Ce qu'on en fait (`verdictCricket`) :
+ *      1    victoire (DLS comprise), « post », un seul vainqueur, deux scores
+ *           qui commencent par des runs              -> '1' | '2'
+ *      5    sans resultat (score partiel possible : « 104/3 (13/20 ov) »)
+ *      6    abandon
+ *      3    egalite, super over ou non (son vainqueur n'est que dans le texte :
+ *           1551858) -> a la main : aucun remboursement automatique n'existe
+ *           (game.rembourseMatch n'est appele que par la route d'admin
+ *           /paris/rembourse, server.js), et nos deux issues ne disent pas qui
+ *           gagne une egalite ; la raison est ecrite, la rencontre est annoncee
+ *           et ne paie plus de /scores (The Odds API ne regle pas le cricket)
+ *      4    nul (formats longs) ; 0 prevu, en cours, ou « Final » sans donnees
+ *           (state post : 5 sur 626) ; 112 stumps ; 113 reporte (state post)
+ *      et tout id inconnu              -> rien (la main ensuite)
+ *  - `winner` est un BOOLEEN dans l'en-tete, une CHAINE "true"/"false" dans le
+ *    tableau et le summary (tableau 19601 relu le 12/10 : "true") : les deux
+ *    se lisent, rien d'autre (« TRUE », 1…) ne vaut vainqueur.
+ *  - un id 1 avec vainqueur peut etre un FORFAIT sans balle jouee (1540298,
+ *    releve du 12/10 apres-midi : scores '' et linescores []) : il faut un
+ *    score DES DEUX COTES qui commence par des runs (/^\d+/), et des runs
+ *    quelque part. Releve du soir : les 982 scores des 491 id 1 commencent
+ *    tous par des runs (« 215/3 », « 84 (18.3/20 ov, target 216) »,
+ *    « 312 & 140/4 »…), le plus petit est 13 (1554542) ; et les 491 sont
+ *    « post » — un id 1 encore « in » ne se paie pas.
+ *  - le texte du resultat n'emploie pas `displayName` (« U.S.A. won » pour
+ *    « United States of America », « W Province ») : on n'apparie et ne
+ *    tranche JAMAIS par le texte, seulement par les camps.
+ *  - une tournee porte deux formats : 24289 joue l'ODI India v West Indies le
+ *    03/10 puis des T20I les 06, 09, 11 et 14/10 ; 24707 les T20I puis les ODI
+ *    a cinq jours. `class.generalClassCard` doit dire le format de la cle
+ *    (FORMAT_CRICKET), sinon rien.
+ *  - series de cinq matchs a deux ou trois jours, et DOUBLES PROGRAMMES a
+ *    quatre heures, memes noms (quatre releves du 23/09 au 05/10 ; Bahamas v
+ *    Cayman Islands le 24/09 : 15:30 gagne, 19:30 sans resultat) : on regarde
+ *    les rencontres des memes noms a 12 h, on ne prend que la plus proche, a
+ *    MOINS DE 2 H de notre heure, et a 2 h au moins de plus que la suivante
+ *    (`apparieCricket`, mesure et raison au-dessus de CRICKET_ACCEPTE_MS) ; et
+ *    deux de NOS rencontres ne prennent jamais la meme rencontre ESPN.
+ *  - ESPN la fait commencer AVANT notre heure : elle a ete vendue pendant le
+ *    jeu, la main (CRICKET_AVANCE_MS).
+ *  - `timeValid: false` : 6 lignes sur 981 (une ligue feminine domestique,
+ *    hors de nos formats) ; un candidat a l'heure non valide ne tranche rien.
+ *  - un match non couvert peut rester « in », id 0, plus de 12 h : rien.
+ *
+ * ---- les noms ----
+ * `meme` (normalise + ALIAS), comme partout. Les deux rencontres ouvertes du
+ * 12/10 (Pakistan v Sri Lanka le 13/10 a 13:00Z, 1550710 ; India v West
+ * Indies le 14/10 a 13:30Z, 1529233) portent les MEMES noms, la meme heure et
+ * le meme domicile au catalogue public et a l'en-tete. The Hundred s'ecrit
+ * « Trent Rockets (Men) » chez ESPN : sans ligne d'ALIAS relevee a la saison
+ * prochaine (les noms The Odds API de 2026 n'ont pas ete vus), il ne
+ * s'apparie pas — il part a la main, jamais par ressemblance.
+ *
+ * ---- le rythme ----
+ * Une requete a la fois, une par seconde au plus (`CRICKET_PAUSE_MS`), en
+ * file pour tout le module : la releve ne demande que les rencontres pariees
+ * (`aRegler`) et leurs voisines du catalogue, trois jours chacune, une fois
+ * par jour demande, dans un budget de 60 s par passe (CRICKET_BUDGET_MS).
+ *
+ * ---- ce qui se dit ----
+ * Une ligne de journal par rencontre et par passe QUAND SON ISSUE CHANGE
+ * (regle, main, rien, sans, ambigu, heure, loin, panne, avec la rencontre
+ * ESPN, son id de statut et la raison), et le compte de la derniere passe
+ * dans `etatCricket()` (etatImport().cricket) : un en-tete qui change de forme
+ * se verrait sinon comme des paris qui restent, en silence, a regler.
+ */
+const ENTETE_CRICKET = 'https://site.web.api.espn.com/apis/v2/scoreboard/header?sport=cricket&lang=en&region=us&dates=';
+/* La cle The Odds API -> la seule `class.generalClassCard` qui la tranche.
+   Releve dans l'en-tete le 12/10/2026 (626 rencontres) : « T20I » (120,
+   international 3 ; les T20I feminins sont « Women T20 », 46) ; « ODI » (30,
+   international 2 ; « Women's ODI » a part, 9) ; le Blast (8053 : 1512887 et
+   1512889 le 18/07) et The Hundred masculin (19601 : 1521259 le 10/08,
+   1521264 le 16/08) sont « Twenty20 » — The Hundred feminin (21376) est
+   « Women's T20 ». Une cle absente d'ici n'est jamais lue. */
+const FORMAT_CRICKET = Object.freeze({
+  cricket_international_t20: 'T20I',
+  cricket_odi: 'ODI',
+  cricket_t20_blast: 'Twenty20',
+  cricket_the_hundred: 'Twenty20',
+});
+/* La fenetre ou l'on REGARDE les rencontres des memes noms (pour voir une
+   jumelle), pas celle ou l'on en accepte une. */
+const CRICKET_TOLERANCE_MS = 12 * 3600000;
+/* ---- ACCEPTER UNE RENCONTRE : A MOINS DE 2 H, ET NETTEMENT LA PLUS PROCHE (relecture du 12/10/2026) ----
+ * Le plus petit ecart entre deux rencontres des MEMES noms est de 4 h (626
+ * rencontres distinctes, 48 en-tetes du 18/07 au 15/10 : quatre doubles
+ * programmes, 1552795/1552798, 1552796/1552799, 1555386/1552797,
+ * 1555137/1555138 ; le suivant est a 20 h). L'ecart entre l'heure de The Odds
+ * API et celle d'ESPN n'est mesure que sur 2 rencontres : 0 min (les deux
+ * seules rencontres de cricket du catalogue public, relu le 12/10 a 20:20Z ;
+ * aucun catalogue plus ancien n'en garde).
+ *  - la plus proche doit etre a MOINS DE 2 H de notre heure, la moitie de
+ *    4 h : si notre rencontre manque a l'en-tete, sa jumelle est a 4 h de sa
+ *    vraie heure, donc a plus de 2 h de la notre tant que The Odds API et
+ *    ESPN different de moins de 2 h. La tolerance etait de 12 h : « Cayman
+ *    Islands v Bahamas » de 19:30 sans 1552798 prenait la victoire de 15:30
+ *    (essai « jumelle absente ») — un paiement faux pour un match sans
+ *    resultat.
+ *  - la suivante doit etre a 2 h DE PLUS que la plus proche : ce sont les
+ *    DISTANCES A NOTRE HEURE qui comptent, pas l'ecart entre les deux
+ *    rencontres ESPN (qui valait toujours 4 h). Un debut a 17:20 ou 17:30
+ *    entre 15:30 et 19:30 prenait l'une ou l'autre au hasard de l'ordre.
+ *  - une rencontre des memes noms a la date illisible : rien (heure).
+ * Ce qui tombe hors de ces bornes n'est pas tranche : la main, par
+ * /paris/aregler. */
+const CRICKET_ACCEPTE_MS = 2 * 3600000;
+const CRICKET_DOUBLON_MS = 2 * 3600000;
+/* ---- ESPN LA FAIT COMMENCER AVANT NOTRE HEURE : LA MAIN (relecture du 12/10/2026) ----
+ * Les paris ferment a NOTRE heure (`paris.ouvert`), et pour le cricket aucun
+ * verrou d'heure reelle ne la corrige : HEURES_REELLES ne lit que les
+ * tableaux, et le cricket n'en a aucun. Une rencontre qu'ESPN fait commencer
+ * plus tot a donc ete vendue PENDANT le jeu : un verdict ESPN sur elle ne se
+ * paie pas seul, il part a la main avec l'heure ESPN, pour reperer les tickets
+ * poses apres. Mesure : 0 min d'ecart sur les 2 rencontres de cricket du
+ * catalogue (12/10). En NHL, The Odds API etait 9 a 10 min APRES ESPN sur 10
+ * rencontres sur 11 (08/10, paris.js) : si le cricket le faisait aussi, chaque
+ * minute serait une vente en jeu. La borne est la resolution de l'heure ESPN,
+ * la minute. Un decalage systematique se lira dans le journal (une ligne par
+ * rencontre) des le 13/10. */
+const CRICKET_AVANCE_MS = 60000;
+const CRICKET_PAUSE_MS = 1000;
+/* ---- LE BUDGET D'UNE PASSE (relecture du 12/10/2026) ----
+ * `finies` attend le cricket avant de rendre le football et le tennis deja
+ * lus. Un ESPN lent (abandon a 8 s) sur 25 jours paries ferait ~4 min. Passe
+ * 60 s, les journees restantes sont refusees : leurs rencontres sont « panne »
+ * (rien rendu, la passe suivante redemande). Une journee refusee par ESPN est
+ * redemandee UNE fois en fin de passe : le 502 de l'en-tete est intermittent
+ * (le 16/08 a repondu une fois sur trois le 12/10 au soir). */
+const CRICKET_BUDGET_MS = 60000;
+
+/** Une rencontre de cricket ? Par le sport OU par la cle : l'un suffit. */
+function estCricket(m) {
+  return !!m && (m.sport === 'cricket' || /^cricket_/.test(String((m.source && m.source.ligue) || '')));
+}
+/** Les trois journees a demander : J-1, J, J+1 autour du jour UTC du debut. */
+function joursCricket(debut) {
+  if (!isFinite(debut)) return [];
+  return [jour(debut - 86400000), jour(debut), jour(debut + 86400000)];
+}
+
+/* `winner` vrai : le booleen de l'en-tete, ou la chaine du tableau. */
+const vainqueurCricket = (x) => !!x && (x.winner === true || x.winner === 'true');
+/** Une rencontre de l'en-tete, reduite a ce qu'on lit. null si elle n'a pas deux camps nommes. */
+function lisCricket(ev, ligue) {
+  if (!ev || typeof ev !== 'object' || !Array.isArray(ev.competitors) || ev.competitors.length !== 2) return null;
+  const camp = (x) => ({
+    nom: String((x && x.displayName) || '').trim(),
+    gagne: vainqueurCricket(x),
+    score: x && x.score !== undefined && x.score !== null ? String(x.score).trim() : '',
+  });
+  const a = camp(ev.competitors[0]), b = camp(ev.competitors[1]);
+  if (!a.nom || !b.nom) return null;
+  const st = (ev.fullStatus && typeof ev.fullStatus === 'object') ? ev.fullStatus : {};
+  const t = (st.type && typeof st.type === 'object') ? st.type : {};
+  const quand = Date.parse(ev.date);
+  return { id: ev.id !== undefined && ev.id !== null ? String(ev.id) : null,
+           ligue: ligue !== undefined && ligue !== null ? String(ligue) : null,
+           quand: isFinite(quand) ? quand : 0, heureValide: ev.timeValid !== false && isFinite(quand),
+           carte: String((ev.class && ev.class.generalClassCard) || ''),
+           statutId: t.id !== undefined && t.id !== null ? String(t.id) : '',
+           etat: String(t.state || ''), statut: String(t.description || ''),
+           resume: String(st.longSummary || '').slice(0, 120), a, b };
+}
+/* Ce qui doit etre identique entre deux copies d'une meme rencontre. */
+const signatureCricket = (r) => [r.statutId, r.carte, r.quand, r.a.nom, r.a.gagne, r.a.score, r.b.nom, r.b.gagne, r.b.score].join('|');
+/* Des runs en tete du score (« 215/3 », « 84 (18.3/20 ov, target 216) »). */
+const runsCricket = (s) => { const x = /^(\d+)/.exec(String(s || '')); return x ? Number(x[1]) : null; };
+
+/**
+ * Le verdict d'une rencontre de l'en-tete, sur `fullStatus.type.id` seul :
+ *   { gagnant: 'a' | 'b' }   id 1, « post », un seul vainqueur, deux scores
+ *                            qui commencent par des runs, des runs quelque part ;
+ *   { main: '...' }          id 3 (egalite), 5 (sans resultat), 6 (abandon) ;
+ *   { rien: '...' }          tout le reste, forfait compris.
+ * 'a'/'b' sont les camps DE L'EN-TETE (competitors[0]/[1]), jamais les notres.
+ */
+function verdictCricket(r) {
+  if (!r) return { rien: 'rencontre illisible' };
+  if (r.statutId === '1') {
+    if (r.etat !== 'post') return { rien: `id 1 encore « ${r.etat || 'sans etat'} »` };
+    const n = (r.a.gagne ? 1 : 0) + (r.b.gagne ? 1 : 0);
+    if (n !== 1) return { rien: `id 1 avec ${n} vainqueur(s)` };
+    const ra = runsCricket(r.a.score), rb = runsCricket(r.b.score);
+    if (ra === null || rb === null || ra + rb === 0) return { rien: 'id 1 sans score joue des deux cotes (forfait sans balle jouee ?)' };
+    return { gagnant: r.a.gagne ? 'a' : 'b' };
+  }
+  if (r.statutId === '3') return { main: 'egalite' };
+  if (r.statutId === '5') return { main: 'sans resultat' };
+  if (r.statutId === '6') return { main: 'abandon' };
+  return { rien: `status.type.id ${r.statutId || 'absent'}${r.statut ? ' (' + r.statut + ')' : ''}` };
+}
+
+/* La file des requetes a l'en-tete : une a la fois pour tout le module, et
+   CRICKET_PAUSE_MS entre deux departs (`pauseMs` pour les essais). */
+let FILE_ENTETE = Promise.resolve();
+let DERNIER_ENTETE = 0;
+function enFileEntete(fn) {
+  const p = FILE_ENTETE.then(fn, fn);
+  FILE_ENTETE = p.catch(() => {});
+  return p;
+}
+/**
+ * Une journee de l'en-tete : { evs: [rencontres lues] } ou { refus: 'pourquoi' }.
+ * Refus = statut non-200 (le 502 {"code":2502}), abandon a 8 s, corps sans
+ * `sports[0].leagues` — jamais une liste vide. Compte dans `refusDuJour()`
+ * sous 'cricket/entete'.
+ */
+function enteteCricket(j, opts) {
+  const o = opts || {};
+  return enFileEntete(async () => {
+    const pause = typeof o.pauseMs === 'number' && o.pauseMs >= 0 ? o.pauseMs : CRICKET_PAUSE_MS;
+    const attente = DERNIER_ENTETE + pause - Date.now();
+    if (attente > 0) await new Promise((r) => setTimeout(r, attente));
+    DERNIER_ENTETE = Date.now();
+    const u = ENTETE_CRICKET + j;
+    const f = o.prendre || fetch;
+    const refuse = (pourquoi) => { compte(u, true, pourquoi, 'cricket/entete'); return { refus: pourquoi }; };
+    const ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    const minuterie = ctl ? setTimeout(() => ctl.abort(), 8000) : null;
+    try {
+      const rep = await f(u, ctl ? { signal: ctl.signal } : undefined);
+      if (!rep || !rep.ok) return refuse('statut ' + ((rep && rep.status) || '?'));
+      const corps = await rep.json();
+      const sp = corps && Array.isArray(corps.sports) ? corps.sports[0] : null;
+      if (!sp || !Array.isArray(sp.leagues))
+        return refuse('reponse sans sports[0].leagues' + (corps && corps.code ? ' (code ' + corps.code + ')' : ''));
+      const evs = [];
+      for (const l of sp.leagues) {
+        for (const ev of Array.isArray(l && l.events) ? l.events : []) {
+          try { const r = lisCricket(ev, l && l.id); if (r) evs.push(r); } catch (e) { /* une rencontre illisible n'emporte qu'elle */ }
+        }
+      }
+      compte(u, false, null, 'cricket/entete');
+      return { evs };
+    } catch (e) {
+      return refuse((e && e.name === 'AbortError') ? 'abandon a 8 s' : String((e && e.message) || e).slice(0, 80));
+    } finally { if (minuterie) clearTimeout(minuterie); }
+  });
+}
+
+/* Les deux memes camps, dans un sens ou dans l'autre : 'droit' (notre
+   domicile est leur premier camp), 'envers', ou null. */
+function sensCricket(dom, ext, a, b) {
+  if (meme(dom, a) && meme(ext, b)) return 'droit';
+  if (meme(dom, b) && meme(ext, a)) return 'envers';
+  return null;
+}
+
+/**
+ * Une rencontre de NOTRE catalogue contre les rencontres lues : les deux noms
+ * (`meme`, dans un sens ou l'autre), vues a 12 h, la plus proche seulement si
+ * elle est a moins de 2 h ET a 2 h de moins que la suivante. Rend
+ * { sans } | { heure } | { ambigu: n } | { loin: ms } | { r, droit, d } —
+ * `droit` : notre domicile est le premier camp de l'en-tete.
+ */
+function apparieCricket(m, rencontres) {
+  const cands = [];
+  let illisible = false;
+  for (const r of rencontres || []) {
+    const sens = sensCricket(m.domicile, m.exterieur, r.a.nom, r.b.nom);
+    if (!sens) continue;
+    if (!(r.quand > 0)) { illisible = true; continue; }
+    const d = Math.abs(r.quand - m.debut);
+    if (d > CRICKET_TOLERANCE_MS) continue;
+    cands.push({ d, r, droit: sens === 'droit' });
+  }
+  /* une rencontre des memes noms sans date lisible peut etre la notre : on
+     ne sait pas l'ecarter, donc rien n'est tranche */
+  if (illisible || cands.some((c) => !c.r.heureValide)) return { heure: true };
+  if (!cands.length) return { sans: true };
+  cands.sort((x, y) => x.d - y.d);
+  if (cands.length > 1 && cands[1].d - cands[0].d < CRICKET_DOUBLON_MS) return { ambigu: cands.length };
+  if (cands[0].d >= CRICKET_ACCEPTE_MS) return { loin: cands[0].d };
+  return cands[0];
+}
+
+/* ---- LE RESULTAT DOIT TENIR AUTO_DELAI_MIN (relecture du 12/10/2026) ----
+ * Le delai du reglement (`trieReglements`, AUTO_DELAI_MIN + 110 = 200 min
+ * depuis le coup d'envoi) laisse au football 90 min apres sa fin pour qu'une
+ * saisie fausse soit corrigee. Un T20 dure ~3 h 20, un ODI ~8 h : compte
+ * depuis le coup d'envoi, ce mur tombe avant la fin, et un id 1 se payait des
+ * la premiere passe qui le lisait — 0 min de correction (essai « ODI a
+ * 490 min »). La fin reelle n'est nulle part : `endDate` vaut le lendemain a
+ * 23:59 (relu sur les 626 rencontres du 12/10), et le delai entre la fin et
+ * le passage a id 1 n'est pas mesure. On retient donc l'heure de la PREMIERE
+ * lecture du meme verdict (rencontre ESPN, id, vainqueur, scores, sens) :
+ * `vuFini`, que trieReglements exige vieux d'AUTO_DELAI_MIN. Un verdict qui
+ * change, ou qui disparait, repart de zero ; une passe en panne ne dit rien
+ * et ne l'efface pas. En memoire : un redemarrage fait attendre une passe de
+ * plus, jamais une de moins. */
+const VU_FINI_CRICKET = new Map();
+/* La derniere issue DITE par rencontre (une ligne de journal quand elle
+   change), et le compte de la derniere passe (`etatCricket`). */
+const ISSUE_CRICKET = new Map();
+let ETAT_CRICKET = null;
+const borne = (map) => { while (map.size > 2000) map.delete(map.keys().next().value); };
+const isoMin = (t) => new Date(t).toISOString().slice(0, 16) + 'Z';
+
+/**
+ * LA RELEVE DU CRICKET. `matchs` : le lot de `finies` (seules les cles de
+ * FORMAT_CRICKET sont lues). `opts.catalogue` (facultatif) : tout le
+ * catalogue, pour voir nos AUTRES rencontres des memes noms a 12 h — deux des
+ * notres ne prennent jamais la meme rencontre ESPN, meme quand une seule porte
+ * un pari. Rendu :
+ *   par    : Map id -> { espn, ligueEspn, carte, statutId, etat, quand,
+ *            resultat ('1' notre domicile | '2' notre exterieur) et vuFini,
+ *            OU aMain (la raison) OU raison (rien de tranche) } — les seules
+ *            rencontres appariees sans doute ;
+ *   lignes : une par rencontre : 'regle' | 'main' | 'rien' | 'sans' |
+ *            'ambigu' | 'heure' | 'loin' | 'panne', avec sa raison ;
+ *   jours  : { AAAAMMJJ: 'ok' | 'refus : pourquoi' }.
+ */
+async function releveCricket(matchs, opts) {
+  const o = opts || {};
+  const t0 = Date.now();
+  const maintenant = Number(o.maintenant) || Date.now();
+  const par = new Map(), lignes = [], jours = {};
+  const lisible = (m) => !!(m && m.source && FORMAT_CRICKET[m.source.ligue] && isFinite(m.debut));
+  const lot = (matchs || []).filter(lisible);
+  if (!lot.length) return { par, lignes, jours };
+  /* les voisines : nos autres rencontres non fermees des memes noms a 12 h
+     d'une rencontre du lot (fermees, elles partent a la main de toute facon) */
+  const dansLot = new Set(lot.map((m) => m.id));
+  const voisines = (Array.isArray(o.catalogue) ? o.catalogue : []).filter((v) => lisible(v) && !dansLot.has(v.id) && !v.ferme
+    && lot.some((m) => Math.abs(v.debut - m.debut) <= CRICKET_TOLERANCE_MS && sensCricket(m.domicile, m.exterieur, v.domicile, v.exterieur)));
+  const tous = lot.concat(voisines);
+
+  const budget = typeof o.budgetMs === 'number' && o.budgetMs >= 0 ? o.budgetMs : CRICKET_BUDGET_MS;
+  const demande = (j) => (Date.now() - t0 > budget
+    ? Promise.resolve({ refus: `budget de la passe depasse (${Math.round(budget / 1000)} s)`, budget: true })
+    : enteteCricket(j, o));
+  const aDemander = [...new Set([].concat(...tous.map((m) => joursCricket(m.debut))))].sort();
+  const lus = new Map();
+  for (const j of aDemander) lus.set(j, await demande(j));
+  for (const j of aDemander) {
+    const x = lus.get(j);
+    if (!x.refus || x.budget) continue;
+    const y = await demande(j);
+    lus.set(j, y.refus ? { refus: x.refus + ', puis ' + y.refus } : y);
+  }
+  for (const j of aDemander) jours[j] = lus.get(j).refus ? 'refus : ' + lus.get(j).refus : 'ok';
+
+  /* l'appariement de chacune, voisines comprises */
+  const choix = new Map();
+  for (const m of tous) {
+    const js = joursCricket(m.debut);
+    const refuses = js.filter((j) => lus.get(j).refus);
+    if (refuses.length) { choix.set(m.id, { panne: refuses.map((j) => j + ' (' + lus.get(j).refus + ')').join(', ') }); continue; }
+    /* chaque rencontre une fois ; deux copies qui different : incoherente */
+    const parId = new Map(), incoherents = new Set();
+    const cle = (r) => (r.id !== null ? r.id : signatureCricket(r));
+    for (const j of js) {
+      for (const r of lus.get(j).evs) {
+        const deja = parId.get(cle(r));
+        if (!deja) parId.set(cle(r), r);
+        else if (signatureCricket(deja) !== signatureCricket(r)) incoherents.add(cle(r));
+      }
+    }
+    const x = apparieCricket(m, [...parId.values()]);
+    if (x.r) x.incoherent = incoherents.has(cle(x.r));
+    choix.set(m.id, x);
+  }
+  /* une rencontre ESPN -> lesquelles des notres (non fermees) la prennent */
+  const preneurs = new Map();
+  for (const m of tous) {
+    const x = choix.get(m.id);
+    if (!x.r || m.ferme) continue;
+    const k = x.r.id !== null ? x.r.id : signatureCricket(x.r);
+    if (!preneurs.has(k)) preneurs.set(k, []);
+    preneurs.get(k).push(m.id);
+  }
+
+  /* une voisine qu'on n'a pas pu lire peut prendre la meme rencontre ESPN :
+     on ne le sait pas, donc rien n'est tranche pour celle du lot non plus */
+  const voisinesEnPanne = (m) => tous.filter((v) => v.id !== m.id && !v.ferme && choix.get(v.id).panne
+    && Math.abs(v.debut - m.debut) <= CRICKET_TOLERANCE_MS && sensCricket(m.domicile, m.exterieur, v.domicile, v.exterieur));
+
+  for (const m of lot) {
+    const l = { id: m.id, ligue: m.source.ligue, debut: m.debut, dom: m.domicile, ext: m.exterieur };
+    lignes.push(l);
+    let x = choix.get(m.id);
+    const vp = x.panne ? [] : voisinesEnPanne(m);
+    if (vp.length) x = { panne: 'voisine(s) du catalogue illisible(s) : ' + vp.map((v) => v.id + ' — ' + choix.get(v.id).panne).join(' ; ') };
+    if (!x.r) {
+      /* une panne ne dit rien : la premiere lecture d'un verdict reste */
+      if (x.panne) { l.resultat = 'panne'; l.raison = 'en-tete refuse : ' + x.panne; continue; }
+      VU_FINI_CRICKET.delete(m.id);
+      if (x.sans) { l.resultat = 'sans'; l.raison = 'aucune rencontre de ces deux noms a 12 h'; }
+      else if (x.heure) { l.resultat = 'heure'; l.raison = 'une rencontre de ces noms a une heure ESPN non valide (timeValid false ou date illisible)'; }
+      else if (x.ambigu) { l.resultat = 'ambigu'; l.raison = `${x.ambigu} rencontres de ces noms, la plus proche n est pas a 2 h de moins que la suivante`; }
+      else { l.resultat = 'loin'; l.raison = `la plus proche des rencontres de ces noms est a ${Math.round(x.loin / 60000)} min de notre heure (moins de 2 h exigees)`; }
+      continue;
+    }
+    const r = x.r;
+    const s = { espn: r.id, ligueEspn: r.ligue, carte: r.carte, statutId: r.statutId, etat: r.etat, quand: r.quand,
+                dom: m.domicile, ext: m.exterieur };
+    par.set(m.id, s);
+    Object.assign(l, { espn: r.id, ligueEspn: r.ligue, statutId: r.statutId, etat: r.etat });
+    const autres = m.ferme ? [] : (preneurs.get(r.id !== null ? r.id : signatureCricket(r)) || []).filter((id) => id !== m.id);
+    const avance = m.debut - r.quand;
+    if (autres.length) {
+      s.raison = `la rencontre ESPN ${r.id} est prise aussi par ${autres.join(', ')} : une rencontre ESPN pour ${autres.length + 1} des notres`;
+    } else if (x.incoherent) {
+      s.raison = 'deux copies de la rencontre different d un jour a l autre';
+    } else if (r.carte !== FORMAT_CRICKET[m.source.ligue]) {
+      s.raison = `format ${r.carte || 'inconnu'} chez ESPN, ${FORMAT_CRICKET[m.source.ligue]} attendu pour ${m.source.ligue}`;
+    } else {
+      const v = verdictCricket(r);
+      /* ESPN la fait commencer avant notre heure : vendue pendant le jeu */
+      const tot = avance > CRICKET_AVANCE_MS
+        ? ` ; ESPN la fait commencer a ${isoMin(r.quand)}, ${Math.round(avance / 60000)} min avant notre heure (${isoMin(m.debut)}) : verifier les tickets poses apres ${isoMin(r.quand)}`
+        : '';
+      if (v.gagnant) {
+        /* dans NOTRE orientation : le camp qui porte le nom de notre domicile */
+        const lettre = ((v.gagnant === 'a') === x.droit) ? '1' : '2';
+        if (tot) s.aMain = `cricket : ESPN donne ${lettre} (rencontre ${r.id})` + tot + ', puis regler a la main';
+        else {
+          s.resultat = lettre;
+          const sig = [r.id, r.statutId, v.gagnant, r.a.score, r.b.score, x.droit].join('|');
+          const deja = VU_FINI_CRICKET.get(m.id);
+          if (!deja || deja.sig !== sig) VU_FINI_CRICKET.set(m.id, { sig, t: maintenant });
+          borne(VU_FINI_CRICKET);
+          s.vuFini = VU_FINI_CRICKET.get(m.id).t;
+        }
+      } else if (v.main) {
+        s.aMain = `cricket : ${v.main} sur ESPN (rencontre ${r.id}, status.type.id ${r.statutId}) : aucun vainqueur dans nos deux issues, `
+                + 'aucun remboursement automatique, a trancher a la main' + tot;
+      } else s.raison = v.rien;
+    }
+    if (!s.resultat) VU_FINI_CRICKET.delete(m.id);
+    l.resultat = s.resultat ? 'regle' : s.aMain ? 'main' : autres.length ? 'ambigu' : 'rien';
+    if (s.resultat) l.lettre = s.resultat;
+    if (s.raison || s.aMain) l.raison = s.raison || s.aMain;
+  }
+
+  /* ---- CE QUI SE DIT (relecture du 12/10/2026) ----
+   * Une ligne par rencontre quand son issue change, et le compte de la passe.
+   * Avant, 'sans', 'ambigu', 'rien' ou 'panne' ne laissaient aucune trace :
+   * un en-tete qui change de forme aurait laisse les paris a regler en
+   * silence, et le delai fin -> id 1 du 13/10 ne se serait pas lu. */
+  const compteIssues = {};
+  for (const l of lignes) {
+    compteIssues[l.resultat] = (compteIssues[l.resultat] || 0) + 1;
+    const dit = [l.resultat, l.lettre || '', l.espn || '', l.statutId || '', l.etat || '', l.raison || ''].join('|');
+    if (ISSUE_CRICKET.get(l.id) === dit) continue;
+    ISSUE_CRICKET.set(l.id, dit);
+    borne(ISSUE_CRICKET);
+    console.log(`[espn] cricket ${l.id} (${l.dom} v ${l.ext}, ${l.ligue}, ${isoMin(l.debut)}) : ${l.resultat}`
+      + (l.lettre ? ' ' + l.lettre : '')
+      + (l.espn ? ` — ESPN ${l.espn} (ligue ${l.ligueEspn}) id ${l.statutId || '?'} ${l.etat || '?'}` : '')
+      + (l.raison ? ' — ' + l.raison : ''));
+  }
+  const refusees = Object.entries(jours).filter(([, v]) => v !== 'ok').map(([j, v]) => j + ' ' + v);
+  ETAT_CRICKET = { t: new Date(maintenant).toISOString(), rencontres: lot.length, voisines: voisines.length,
+                   issues: compteIssues, journees: aDemander.length, refusees, dureeMs: Date.now() - t0,
+                   lignes: lignes.slice(0, 40).map((l) => ({ id: l.id, resultat: l.resultat, lettre: l.lettre || null,
+                     espn: l.espn || null, statutId: l.statutId || null, raison: l.raison || null })) };
+  return { par, lignes, jours };
+}
+/** La derniere passe du cricket : rencontres, compte par issue, journees refusees (null avant la premiere). */
+function etatCricket() { return ETAT_CRICKET; }
+
 /** Les rencontres FINIES, au format que `reglementAuto` attend deja. */
 async function finies(matchs, opts) {
   const vus = await releve(matchs, opts);
@@ -1012,6 +1527,8 @@ async function finies(matchs, opts) {
   for (const m of matchs || []) {
     const s = vus.get(m.id);
     if (!s || !s.fini || !s.score) continue;
+    /* jamais un score de cricket par ce chemin (« 0-0 » et 'N' d'un abandon) */
+    if (estCricket(m)) continue;
     const f = { id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
                 score: s.score, resultat: s.resultat, source: 'espn' };
     /* ---- LE FOOTBALL SE REGLE A 90 MINUTES (08/10/2026) ----
@@ -1039,6 +1556,28 @@ async function finies(matchs, opts) {
     if (!s || !s.fini || !s.resultat) continue;
     out.push({ id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
                resultat: s.resultat, source: 'espn' });
+  }
+  /* ---- LE CRICKET : UNE LETTRE, OU LA MAIN AVEC SA RAISON (12/10/2026) ----
+   * Comme le tennis, deux issues et pas de score lisible comme « 2-1 » : la
+   * LETTRE seule, dans notre orientation (`releveCricket`), avec `vuFini`,
+   * l'heure de la premiere lecture du meme verdict : `trieReglements` exige
+   * AUTO_DELAI_MIN depuis elle. Egalite, sans resultat, abandon, ou ESPN qui
+   * la fait commencer avant notre heure : `aMain`, que `trieReglements`
+   * envoie a la main avant toute autre raison, et qui retient le /scores paye
+   * de The Odds API (il ne regle pas le cricket : « 215/3 » n'est pas un
+   * nombre). Tout le reste n'est pas rendu. Dans son propre try : une panne
+   * du cricket ne fait jamais perdre le football ni le tennis deja lus. */
+  let cri = null;
+  try { cri = await releveCricket(matchs, opts); }
+  catch (e) { console.log('[espn] cricket : ' + ((e && e.message) || e)); cri = null; }
+  for (const m of matchs || []) {
+    const s = cri && cri.par.get(m.id);
+    if (!s || !(s.resultat === '1' || s.resultat === '2' || s.aMain)) continue;
+    const f = { id: m.id, sport: m.sport, domicile: m.domicile, exterieur: m.exterieur,
+                resultat: s.resultat || null, source: 'espn' };
+    if (!s.resultat) f.aMain = s.aMain;
+    else f.vuFini = s.vuFini;
+    out.push(f);
   }
   return out;
 }
@@ -1078,4 +1617,8 @@ module.exports = { CHEMINS, ALIAS, normalise, meme, lis, faitsDe, tableau, reque
                    /* le verrou d'heure reelle du tennis (11/10/2026) : le tableau public atp/wta */
                    CHEMINS_TENNIS, SIMPLE_DU_TOUR, TENNIS_JOURS_MAX, joursTennis, normaliseJoueur, ALIAS_TENNIS, memeJoueur,
                    jeuxJoues, lisTennis, rencontresTennis, TENNIS_HEURE_MS, TENNIS_DATE_AVANT_MS, TENNIS_DATE_APRES_MS, memeJourTennis,
-                   apparieTennis, releveTennisTableau };
+                   apparieTennis, releveTennisTableau,
+                   /* le cricket par l'en-tete (12/10/2026) */
+                   ENTETE_CRICKET, FORMAT_CRICKET, CRICKET_TOLERANCE_MS, CRICKET_ACCEPTE_MS, CRICKET_DOUBLON_MS, CRICKET_AVANCE_MS,
+                   CRICKET_PAUSE_MS, CRICKET_BUDGET_MS,
+                   estCricket, joursCricket, lisCricket, verdictCricket, apparieCricket, enteteCricket, releveCricket, etatCricket };
