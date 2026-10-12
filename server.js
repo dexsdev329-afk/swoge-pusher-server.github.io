@@ -275,6 +275,7 @@ const skins = require('./skins');
 let calendrierAuto = null;          // les minuteries de l alimentation
 let enJeu = null;                   // les minuteries du direct en jeu (lot 7, observation)
 let tennisArme = null;              // les minuteries du verrou du tennis (11/10/2026, eteint par defaut)
+let communaute = null;              // new holder / believer / paper hand + releve (11/10/2026, TG_COMMUNAUTE, eteint par defaut)
 let xQuotidien = null;
 let tgCmd = null;
 let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
@@ -507,11 +508,25 @@ function lienJeu(jeu, libelle) {
   return '\n<a href="' + base + '/' + page + '">' + (libelle || 'Play this table') + ' \u2197</a>';
 }
 
-function notifyTableWin(addr, jeu, { net, staked, payout, note }) {
+/* ---- LE GAIN S'ANNONCE DANS SON JETON (11/10/2026) ----
+ * Demande du proprietaire : « manque les notifs quand ca gagne au casino et
+ * que c'est en $SWOGEBET qu'il a mise ». Treize appels etaient gardes par
+ * `jeton !== 'swogebet'` (muets en $SWOGEBET), et le Crash, sans garde,
+ * annoncait un gain $SWOGEBET en ecrivant « $SWOGE » — un faux chiffre public.
+ * Le jeton est passe en 4e argument ; absent = $SWOGE, texte inchange octet
+ * pour octet pour tous les appels $SWOGE.
+ * LE MEME SEUIL `NOTIFY_WIN_MIN` : meme unite (jetons entiers, 18 decimales
+ * pour les deux coffres, cfg.DECIMALS ; memes plafonds de mise CASINO_MAX_BET
+ * et SMASH_MAX_BET quel que soit le jeton) et meme ordre de valeur — DexScreener
+ * du 11/10/2026 : 1 $SWOGEBET = 0,00008047 $, 1 $SWOGE = 0,0000458 $, soit
+ * 500 $SWOGEBET ~ 0,040 $ contre 500 $SWOGE ~ 0,023 $ (rapport 1,76). Un seuil
+ * propre n'aurait rien coupe de different a ce rapport-la. */
+function notifyTableWin(addr, jeu, { net, staked, payout, note }, jeton) {
   if (!(net >= cfg.NOTIFY_WIN_MIN)) return;
+  const sym = Game.jetonMise(jeton) === 'swogebet' ? '$SWOGEBET' : '$SWOGE';
   tg.notifyPhoto(imageJeu(jeu),
             `🃏 <b>${NOM_TABLE[jeu] || jeu}</b>\n` +
-            `${escHtml(game._p(addr).name)} won <b>+${fmtAmt(String(net))} $SWOGE</b> 🐕\n` +
+            `${escHtml(game._p(addr).name)} won <b>+${fmtAmt(String(net))} ${sym}</b> 🐕\n` +
             `Stake ${fmtAmt(String(staked))} · returned ${fmtAmt(String(payout))}` +
             (note ? ` · ${note}` : '') + lienJeu(jeu));
 }
@@ -1525,8 +1540,11 @@ function crashDiffuse(ev) {
   const publique = require('./crash').retraitPublic(ev);
   broadcast({ ...publique, name: game._p(ev.addr).name });
   toAddr(ev.addr, { type: 'crashRetrait', ...ev, moi: true });
+  /* `ev.jeton` est pose par game._crediteRetrait ; seule la copie publique
+     (retraitPublic) le retire. Sans lui, un encaissement $SWOGEBET partait
+     sur le canal en « $SWOGE » (bug corrige le 11/10/2026). */
   notifyTableWin(ev.addr, 'crash', { net: ev.net, staked: ev.mise, payout: ev.payout,
-                                     note: `${ev.multi.toFixed(2)}× cash out` });
+                                     note: `${ev.multi.toFixed(2)}× cash out` }, ev.jeton);
 }
 
 
@@ -6270,6 +6288,15 @@ const server = http.createServer(async (req, res) => {
     return res.end(png);
   }
 
+  /* Les images des annonces de communaute (communaute.js) : une par genre,
+     generees une fois, sur le volume. Meme garde de nom que /x/image. */
+  if (path.startsWith('/communaute/image/')) {
+    const png = require('./communaute').litImage(path.slice('/communaute/image/'.length).replace(/\.png$/, ''));
+    if (!png) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400', 'content-length': png.length });
+    return res.end(png);
+  }
+
   /* Reposter le jour meme apres une cle ou une permission corrigee : le
      journal avait abandonne la journee au troisieme refus. Administrateur
      seulement, en POST, comme l import. */
@@ -7371,9 +7398,11 @@ wss.on('connection', (ws) => {
         if (r === null) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
         if (r.error) return send(ws, { type: 'error', error: r.error });
         persistSoon();
-        // Une manche $SWOGEBET ne nourrit NI le canal $SWOGE NI le classement.
-        if (m.jeton !== 'swogebet') notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
-                                           payout: r.payout, note: `${r.mult}×` });
+        // Une manche $SWOGEBET ne nourrit pas le classement (game._manche) ;
+        // elle s'annonce, dans SON jeton (11/10/2026). game.spin ne rend pas
+        // le jeton : on passe celui que le moteur a retenu (Game.jetonMise).
+        notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
+                                           payout: r.payout, note: `${r.mult}×` }, Game.jetonMise(m.jeton));
         return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, bet: r.bet,
                           jeton: m.jeton === 'swogebet' ? 'swogebet' : 'swoge',
                           balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
@@ -7385,7 +7414,17 @@ wss.on('connection', (ws) => {
           const r = m.type === 'volcanoSpin' ? game.volcanoSpin(ws.addr, m.bet, m.jeton) : game.volcanoBuyBonus(ws.addr, m.bet, m.jeton);
           if (r.error) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'spin', { net: r.payout - r.bet, staked: r.bet, payout: r.payout });
+          /* Le Buy Bonus coute la mise x VOLCANO_BONUS_COST_MULT (33) : le
+             benefice se compte sur ce COUT (r.cost), pas sur la mise de base.
+             Relecture du 12/10/2026 : « won +300 · Stake 10 · returned 310 »
+             partait pour un bonus paye 330 (perte reelle de -20) ; sur 20 000
+             bonus simules (volcano.runBonus) au seuil de production 500, 71 %
+             des annonces a partir de la mise 500 etaient des pertes. Correction
+             voulue du texte $SWOGE du seul Buy Bonus : mise = cout, une perte ne
+             s annonce plus. Un tour normal n a pas de `cost` : inchange. */
+          const engage = r.cost || r.bet;
+          notifyTableWin(ws.addr, 'spin', { net: r.payout - engage, staked: engage, payout: r.payout,
+                                            note: r.cost ? 'bonus bought' : undefined }, r.jeton);
           send(ws, { type: 'volcanoResult', ...r });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -7411,8 +7450,8 @@ wss.on('connection', (ws) => {
             const gainAnn = (a.pp ? a.pp.gain : 0) + (a.tp ? a.tp.gain : 0) + (a.ins ? a.ins.gain : 0);
             const engage = (st.doubled ? st.bet * 2 : st.bet) + miseAnn;
             const rendu = st.payout + gainAnn;
-            if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bj', { net: rendu - engage, staked: engage,
-                                            payout: rendu, note: st.result });
+            notifyTableWin(ws.addr, 'bj', { net: rendu - engage, staked: engage,
+                                            payout: rendu, note: st.result }, st.jeton);
           }
           send(ws, { type: 'bj', state: st });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9274,7 +9313,10 @@ wss.on('connection', (ws) => {
           persistSoon();
           // Une main peut se conclure des la donne (Pair Plus / bonus AA paye
           // alors que le joueur se couche) : le gain doit s'annoncer ici aussi.
-          if (st.stage === 'done' && st.result && st.jeton !== 'swogebet') notifyTableWin(ws.addr, st.game, st.result);
+          // Relecture du 12/10/2026 : game.casinoDeal rend aujourd'hui TOUJOURS
+          // stage 'decide' (game.js) — branche morte, gardee pour le jour ou une
+          // donne se conclurait d'elle-meme ; le gain partirait alors dans son jeton.
+          if (st.stage === 'done' && st.result) notifyTableWin(ws.addr, st.game, st.result, st.jeton);
           send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
         return;
@@ -9283,7 +9325,7 @@ wss.on('connection', (ws) => {
         try {
           const st = game.casinoDecide(ws.addr, !!m.play);
           persistSoon();
-          if (st.result && st.jeton !== 'swogebet') notifyTableWin(ws.addr, st.game, st.result);
+          if (st.result) notifyTableWin(ws.addr, st.game, st.result, st.jeton);
           send(ws, { type: 'casino', state: st, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9315,8 +9357,8 @@ wss.on('connection', (ws) => {
           persistSoon();
           // Le multiplicateur atteint est ce qui rend l'annonce interessante :
           // «+3000» dit combien, «x16.20 en 4 pas» dit comment.
-          if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
-                                            note: `${st.multi.toFixed(2)}× in ${st.pas} step${st.pas > 1 ? 's' : ''}` });
+          notifyTableWin(ws.addr, 'hilo', { net: st.net, staked: st.mise, payout: st.payout,
+                                            note: `${st.multi.toFixed(2)}× in ${st.pas} step${st.pas > 1 ? 's' : ''}` }, st.jeton);
           send(ws, { type: 'hilo', state: st, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9347,8 +9389,8 @@ wss.on('connection', (ws) => {
           const st = game.minesCashOut(ws.addr);
           persistSoon();
           // le nombre de bombes et de cases dit tout du risque pris
-          if (st.jeton !== 'swogebet') notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
-                                             note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` });
+          notifyTableWin(ws.addr, 'mines', { net: st.net, staked: st.mise, payout: st.payout,
+                                             note: `${st.multi.toFixed(2)}× on ${st.ouvertes.length} tile${st.ouvertes.length > 1 ? 's' : ''}, ${st.nbMines} mine${st.nbMines > 1 ? 's' : ''}` }, st.jeton);
           send(ws, { type: 'mines', state: st, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9380,8 +9422,8 @@ wss.on('connection', (ws) => {
         try {
           const r = game.plinkoDrop(ws.addr, m.bet, m.rows, m.risk, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
-                                              note: `${r.multi.toFixed(2)}× on ${r.rangees} rows, ${r.risque} risk` });
+          notifyTableWin(ws.addr, 'plinko', { net: r.net, staked: r.mise, payout: r.payout,
+                                              note: `${r.multi.toFixed(2)}× on ${r.rangees} rows, ${r.risque} risk` }, r.jeton);
           send(ws, { type: 'plinko', drop: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9393,10 +9435,10 @@ wss.on('connection', (ws) => {
         try {
           const r = game.chenilSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'chenil', { net: r.net, staked: r.mise, payout: r.payout,
+          notifyTableWin(ws.addr, 'chenil', { net: r.net, staked: r.mise, payout: r.payout,
                                               note: r.ouvre
                                                 ? `${r.multi.toFixed(2)}× · ${r.toursGratuits} free spins`
-                                                : `${r.multi.toFixed(2)}×` });
+                                                : `${r.multi.toFixed(2)}×` }, r.jeton);
           send(ws, { type: 'chenil', tour: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9408,10 +9450,10 @@ wss.on('connection', (ws) => {
         try {
           const r = game.dodSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.mise, payout: r.payout,
+          notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.mise, payout: r.payout,
                                            note: r.mode
                                              ? `${r.multi.toFixed(2)}× · ${r.mode === 'deader' ? 'Deader' : 'Dead'} Spins`
-                                             : `${r.multi.toFixed(2)}×` });
+                                             : `${r.multi.toFixed(2)}×` }, r.jeton);
           send(ws, { type: 'dod', tour: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9421,8 +9463,8 @@ wss.on('connection', (ws) => {
         try {
           const r = game.dodAchat(ws.addr, m.bet, m.cran, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.cout, payout: r.payout,
-                                           note: `${r.cran} bought · ${r.multi.toFixed(2)}×` });
+          notifyTableWin(ws.addr, 'dod', { net: r.net, staked: r.cout, payout: r.payout,
+                                           note: `${r.cran} bought · ${r.multi.toFixed(2)}×` }, r.jeton);
           send(ws, { type: 'dod', tour: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9434,10 +9476,10 @@ wss.on('connection', (ws) => {
         try {
           const r = game.bonanzaSpin(ws.addr, m.bet, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
+          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.mise, payout: r.payout,
                                                note: r.toursGratuits
                                                  ? `${r.multi.toFixed(2)}× with ${r.toursGratuits} free spins`
-                                                 : `${r.multi.toFixed(2)}×` });
+                                                 : `${r.multi.toFixed(2)}×` }, r.jeton);
           send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -9449,8 +9491,8 @@ wss.on('connection', (ws) => {
         try {
           const r = game.bonanzaAchat(ws.addr, m.bet, m.jeton);
           persistSoon();
-          if (r.jeton !== 'swogebet') notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.cout, payout: r.payout,
-                                               note: `bonus bought · ${r.multi.toFixed(2)}×` });
+          notifyTableWin(ws.addr, 'bonanza', { net: r.net, staked: r.cout, payout: r.payout,
+                                               note: `bonus bought · ${r.multi.toFixed(2)}×` }, r.jeton);
           send(ws, { type: 'bonanza', tour: r, balance: game.balanceStr(ws.addr),
                      betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
         } catch (e) { send(ws, { type: 'error', error: e.message }); }
@@ -11124,6 +11166,33 @@ server.listen(cfg.PORT, () => {
     catalogue: () => paris.catalogue().matchs,
     pose: (par, t) => paris.poseHeuresReelles(par, t),
   });
+  /* ---- LA COMMUNAUTE $SWOGE SUR TELEGRAM (11/10/2026) ----
+   * New holder / Believer / Paper hand et le releve quotidien, sur le canal
+   * PUBLIC (ce sont des annonces de communaute, comme les depots). ETEINT tant
+   * que TG_COMMUNAUTE est vide : aucune minuterie, aucune requete. Le noeud
+   * officiel seulement (Blockscout repond par un defi Cloudflare). La maison
+   * n est jamais un detenteur : memes adresses que les compteurs (AI_OWNER,
+   * COMPTEURS_MAISON, X402_PAYTO — le tresor —, inscriptions), plus les
+   * comptes maison, le portefeuille de gaz x402, le signataire, les deux
+   * coffres et le portefeuille dedie du launchpad V4 (relecture du 12/10 : il
+   * echange SWOGE ↔ jeton de test et recoit 10 000 $SWOGE, il aurait compte
+   * comme detenteur). Voir communaute.js. */
+  communaute = require('./communaute').planifie({
+    tg: { notify: (t) => tg.notify(t), notifyPhoto: (p, t) => tg.notifyPhoto(p, t) },
+    maison: () => {
+      const m = new Set(adressesMaison());
+      for (const a of cfg.COMPTES_MAISON) m.add(a);
+      if (x402V && x402V.porteGaz) m.add(x402V.porteGaz.toLowerCase());
+      if (chain.signerAddress) m.add(chain.signerAddress.toLowerCase());
+      for (const a of [cfg.VAULT_ADDRESS, cfg.BET_VAULT_ADDRESS]) if (a) m.add(String(a).toLowerCase());
+      /* le deployeur V4 et son jumeau WETH partagent le meme portefeuille (deployeur_v4.json) ;
+         son adresse seulement, sans jamais creer la cle */
+      const dv4 = deploiementV4.adresse();
+      if (dv4) m.add(dv4);
+      return m;
+    },
+    imageCle: !!process.env.OPENAI_API_KEY,     // sa PRESENCE, jamais sa valeur
+  });
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */
@@ -11165,6 +11234,7 @@ function shutdown() {
   if (calendrierAuto) calendrierAuto.arrete();
   if (enJeu) enJeu.arrete();
   if (tennisArme) tennisArme.arrete();
+  if (communaute) communaute.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();

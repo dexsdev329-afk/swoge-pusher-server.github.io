@@ -104,6 +104,18 @@ function cree(deps) {
     }
   }
   function chaine() { if (!C) C = (deps.chaine || chaineEthers)(cle(), A); return C; }
+  /* L'ADRESSE du portefeuille dedie, pour les listes de la maison (communaute.js,
+     12/10/2026) : lue si la cle existe deja, JAMAIS creee ici (null sinon), sans
+     construire de fournisseur. La cle ne sort pas de cette fonction. */
+  let adresseLue = null;
+  function adresse() {
+    if (C && C.adresse) return String(C.adresse).toLowerCase();
+    if (adresseLue) return adresseLue;
+    let cleLue;
+    try { cleLue = JSON.parse(fs.readFileSync(FCLE, 'utf8')).cle; } catch (e) { return null; }
+    try { adresseLue = new (require('ethers').Wallet)(cleLue).address.toLowerCase(); } catch (e) { return null; }
+    return adresseLue;
+  }
 
   const P = A.constructeur;
   const FRAIS = BigInt(P.creationFeeWei);
@@ -304,7 +316,7 @@ function cree(deps) {
     minuterie = d;
   }
 
-  return { tour, etat, charge, demarre, _etat: () => E, ETH_MIN_WEI };
+  return { tour, etat, charge, demarre, adresse, _etat: () => E, ETH_MIN_WEI };
 }
 
 /* ---- les SEULES operations de chaine du portefeuille dedie (ethers v5) ---- */

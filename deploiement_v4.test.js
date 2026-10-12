@@ -272,8 +272,13 @@ function monde(o) {
   console.log('\n-- 5. la cle --');
   {
     const dossier3 = fs.mkdtempSync(path.join(os.tmpdir(), 'dep4-'));
+    /* 12/10/2026 : l adresse pour les listes de la maison (communaute.js) — jamais de cle creee par cette lecture */
+    const d0 = D.cree({ dossier: dossier3, artefact: A });
+    ok(d0.adresse() === null && !fs.existsSync(path.join(dossier3, 'deployeur_v4.json')), 'adresse() sans cle : null, et AUCUNE cle creee');
     const d3 = D.cree({ dossier: dossier3, artefact: A, chaine: (cle) => ({ adresse: new (require('ethers').Wallet)(cle).address }) });
     const v = d3.etat(), f = path.join(dossier3, 'deployeur_v4.json');
+    const dLu = D.cree({ dossier: dossier3, artefact: A });
+    ok(dLu.adresse() === v.deployer.toLowerCase() && !String(dLu.adresse()).includes(JSON.parse(fs.readFileSync(f, 'utf8')).cle.slice(2, 20)), 'adresse() avec la cle sur le volume : l adresse du deployeur, jamais la cle');
     const cle = JSON.parse(fs.readFileSync(f, 'utf8')).cle;
     ok(/^0x[0-9a-f]{64}$/.test(cle) && (fs.statSync(f).mode & 0o777) === 0o600, 'la cle est creee une fois, en 0600, dans DATA_DIR');
     ok(/^0x[0-9a-fA-F]{40}$/.test(v.deployer) && !JSON.stringify(v).includes(cle.slice(2)), 'la vue publique donne l ADRESSE, jamais la cle');
