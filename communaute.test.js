@@ -425,7 +425,9 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
     ok(/^🆕 <b>New holder<\/b>\n/.test(r.msg[0].texte) && !/welcome back/.test(r.msg[0].texte), 'New holder : ' + r.msg[0].texte);
     ok(r.msg[0].texte.includes(N1) && !r.msg[0].texte.includes(ROUTEUR), 'le BENEFICIAIRE est annonce, jamais le routeur');
     ok(/bought <b>2\.0M \$SWOGE<\/b> \(~\$92\)/.test(r.msg[0].texte), 'montant en jetons et en dollars (2 M × 0,0000458 $)');
-    ok(/👥 6 holders \(.+ in 24h\) · 🆕 1 new today · 🌊 [\d.]+% of supply outside pools/.test(r.msg[0].texte), 'la ligne de communaute : ' + r.msg[0].texte.split('\n')[2]);
+    /* 12/10 au soir : la part hors piscines (« outside pools ») est detaillee par piscine, et le $SWOGE de la piscine ETH est dit ;
+       l intention demeure : detenteurs, nouveaux du jour et part tenue hors piscines sur chaque annonce */
+    ok(/👥 6 holders \(.+ in 24h\) · 🆕 1 new today\n🌊 [\d.]+% held by wallets · pools: [\d.]+% ETH · [\d.]+% \$SWOGEBET\n🛒 [\d.,]+[kMB]? \$SWOGE available to buy in the ETH pools?\n/.test(r.msg[0].texte), 'la ligne de communaute : ' + r.msg[0].texte.split('\n').slice(2, 5).join(' | '));
     ok(r.msg[0].texte.includes('https://explorateur.exemple/tx/' + r.h), 'le lien de la transaction');
     egal(r.msg[0].photo, null, 'pas d image sur le disque : texte seul');
     ok(r.msg[0].fichier && r.msg[0].fichier.annonces[r.h], 'l etat (transaction marquee) est ECRIT avant l envoi');
@@ -640,7 +642,9 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
     egal(rel.length, 1, '13:00 a Paris : le releve part');
     const t = rel[0].texte;
     ok(/📈 <b>\$SWOGE community · daily report<\/b>\n👥 <b>5 holders<\/b>/.test(t), 'releve : detenteurs maintenant (5, juste sous le titre) : ' + t.split('\n')[1]);
-    ok(/\n🌊 <b>[\d.]+%<\/b> of supply outside the pools\n/.test(t), 'releve : part hors piscines');
+    /* la part des portefeuilles, puis le detail des piscines par jeton d en face, puis ce qui reste a acheter cote ETH */
+    ok(/\n🌊 <b>[\d.]+%<\/b> of supply held by wallets · pools: [\d.]+% ETH · [\d.]+% \$SWOGEBET\n🛒 <b>[\d.,]+[kMB]? \$SWOGE<\/b> available to buy in the ETH pools?\n\n/.test(t),
+       'releve : portefeuilles, detail des piscines, reste cote ETH : ' + t.split('\n').filter((l) => /🌊|🛒/.test(l)).join(' | '));
     /* le tableau par jour est devenu la ligne 📅 : les detenteurs de fin de journee des 7 jours, puis maintenant */
     const S7 = J.etat(), suite = suiteReleve(t) || [];
     const jours7 = ['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'];
@@ -1396,13 +1400,18 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
       S.horaires = [{ t: now - 24 * H, n: 900 }];
       S.evts = [];
       for (let i = 0; i < 994; i++) for (const g of ['nouveau', 'believer', 'paper', 'partielle']) S.evts.push([now - H, g, adr('a', i)]);
+      /* les piscines au pire : trois familles a deux chiffres (ETH, $SWOGEBET, autre) et le reste cote ETH
+         au format le plus long de fmtJetons (« 99.9M ») ; production le 12/10 : 20.6 % ETH, 11.8 % $SWOGEBET */
+      const e18 = 10n ** 18n;
+      for (const [a, v] of [[PAIRE, 60e6], [V3W, 39.9e6], [V3, 118e6], [PM4, 100e6]]) S.soldes.set(a, BigInt(v) * e18);
+      ok([PAIRE, V3W, V3, PM4].every((a) => S.pools.has(a)), 'S6 les quatre piscines du pire sont bien des piscines');
       const t = IX.texteReleve(now, { eth: -12.34, usd: 1234.5, p0: 1, p1: 1 });
       const n0 = t.replace(/<[^>]*>/g, '').length;
       ok(n0 < 1024, 'S6 au pire (999 detenteurs, 994 par case sur 7 jours, 9 999 sous 1 000, ~11 000 au compte brut, +1 234 % en $) : sous 1 024 signes : ' + n0);
       /* tout ce que le releve montre encore, avec les memes nombres ; l ETH (-12 %) dans la variante ETH de la ligne ;
          premieres fois, sorties, partielles et transferts (994 chacun) ne sont plus dans le releve */
       const tEth = IX.texteReleve(now, { eth: -12.34, usd: null, p0: 1, p1: 1 });
-      ok(/👥 <b>999 holders<\/b> \(\+99 in 24h\)\n📊 Chart: <b>\+1,235%<\/b> this week\n🌊 <b>[\d.]+%<\/b> of supply outside the pools\n/.test(t) &&
+      ok(/👥 <b>999 holders<\/b> \(\+99 in 24h\)\n📊 Chart: <b>\+1,235%<\/b> this week\n🌊 <b>[\d.]+%<\/b> of supply held by wallets · pools: [\d.]+% ETH · [\d.]+% \$SWOGEBET · [\d.]+% other\n🛒 <b>[\d.,]+[kMB]? \$SWOGE<\/b> available to buy in the ETH pools?\n\n/.test(t) &&
          /📊 Chart: <b>-12%<\/b> this week \(in ETH\)\n/.test(tEth) &&
          /\n<b>Last 24h<\/b>\n🆕 994 new holders · 💎 994 believers · 🧻 994 paper hands\n/.test(t) &&
          /\n<b>This week<\/b>\n👥 <b>±0<\/b> holders · 🆕 994 new · 💎 994 believers\n📅 999 → 999 → 999 → 999 → 999 → 999 → 999 → 999\n/.test(t) &&
@@ -1831,6 +1840,128 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
       t = IX.texteReleve(now, null);
       ok(ligne(t) === `📅 – → 821 → – → 841 → 851 → 861 → – → ${n}` && (suiteReleve(t) || []).length === 8,
          'T11 J−7 et J−1 sans photo : « – » aux deux bouts, toujours 8 entrees, maintenant a la fin : ' + ligne(t));
+    }
+  }
+
+  // ================================================== 14. depuis quand il tenait, et la phrase de la paper hand (12/10, soir)
+  /* Le proprietaire, sur une annonce reelle : « tu pourrais rajouter ca fait combien de jours qu il hold,
+     ou une phrase drole du genre ». Intention : la duree dite est celle de CETTE tenue (depuis le dernier
+     passage au-dessus de 1 000), juste meme pour un detenteur entre bien avant la fenetre et sur un noeud
+     dont la cadence n est pas celle supposee ; la phrase suit le gain ou la perte LUS, sans insulte. */
+  {
+    const toutes = [].concat(...Object.values(M.BLAGUES_PAPER));
+    const blague = (t) => ((String(t).match(/\n<i>([^<]+)<\/i>\n/) || [])[1]) || null;
+    /* --- P1 les fonctions pures --- */
+    egal(M.dureeTenue(30 * 1000), '1 minute', 'P1 une vente dans la minute : « 1 minute », jamais « 0 minutes »');
+    egal(M.dureeTenue(45 * MIN), '45 minutes', 'P1 sous 2 h : en minutes');
+    egal(M.dureeTenue(2 * H), '2 hours', 'P1 a 2 h : en heures');
+    egal(M.dureeTenue(47 * H), '47 hours', 'P1 sous 48 h : en heures');
+    egal(M.dureeTenue(12.4 * 24 * H), '12 days', 'P1 au-dela : en jours arrondis');
+    ok(['gain', 'perte', 'autre'].every((f) => M.BLAGUES_PAPER[f].length >= 3), 'P1 trois phrases au moins par famille');
+    ok(toutes.every((b) => !/\b(ass|fuck|shit|bitch|idiot|stupid|loser|scam|rug)/i.test(b) && !/[<>&]/.test(b) && b.length <= 80),
+       'P1 aucune phrase grossiere ni accusatrice, rien qui casse le HTML, 80 signes au plus');
+    const hx = (i) => '0x' + (0x100000 + i).toString(16).padStart(64, 'a');
+    ok(M.blaguePaper({ h: hx(7), venteLue: true, pnl: 90 }) === M.blaguePaper({ h: hx(7), venteLue: true, pnl: 90 }), 'P1 la meme tx donne la meme phrase (rejeu, reconstruction)');
+    const fam = (ev) => Object.keys(M.BLAGUES_PAPER).find((f) => M.BLAGUES_PAPER[f].includes(M.blaguePaper(ev)));
+    egal(fam({ h: hx(1), venteLue: true, pnl: 90 }), 'gain', 'P1 vendu en gain : une phrase de la famille « gain »');
+    egal(fam({ h: hx(1), venteLue: true, pnl: -30 }), 'perte', 'P1 vendu a perte : « perte » (jamais « sold low » a qui a gagne, et l inverse)');
+    egal(fam({ h: hx(1), venteLue: true, pnl: 0.5 }), 'autre', 'P1 a l equilibre (±1 %) : « autre »');
+    egal(fam({ h: hx(1), venteLue: false, pnl: 90 }), 'autre', 'P1 prix de vente illisible : « autre », le gain suppose n est pas lu');
+    egal(fam({ h: hx(1), venteLue: true, pnl: null }), 'autre', 'P1 prix d achat inconnu : « autre »');
+    egal(new Set(Array.from({ length: 30 }, (_, i) => M.blaguePaper({ h: hx(i), venteLue: true, pnl: 90 }))).size, M.BLAGUES_PAPER.gain.length,
+         'P1 sur 30 tx, toutes les phrases d une famille sortent (le choix tourne)');
+    /* --- P2 au tic : entree puis sortie 70 min plus tard ; au retour, la duree repart de la nouvelle entree --- */
+    {
+      const { I: IX, pas } = await scene();
+      const Q = N(200);
+      const r0 = await pas([[PAIRE, Q, 2e6]]);
+      ok(r0.msg.length === 1 && /New holder/.test(r0.msg[0].texte) && !/and left after|<i>/.test(r0.msg[0].texte), 'P2 un achat ne porte ni duree ni phrase');
+      const entree1 = IX.etat().tenue[Q];
+      ok(typeof entree1 === 'number', 'P2 l achat qui passe le seuil pose l heure d entree');
+      let r = await pas([[Q, PAIRE, 2e6]]);
+      ok(r.msg.length === 1 && /^🧻 <b>Paper hand<\/b>/.test(r.msg[0].texte) && /and left after (69|70|71) minutes\n/.test(r.msg[0].texte),
+         'P2 sortie 70 min apres l entree : « and left after 70 minutes » : ' + (r.msg[0] || {}).texte);
+      ok(toutes.includes(blague(r.msg[0].texte)), 'P2 la phrase, en italique, tiree de BLAGUES_PAPER : ' + blague(r.msg[0].texte));
+      ok(!(Q in IX.etat().tenue), 'P2 la sortie efface l heure d entree');
+      await pas([[PAIRE, Q, 3e6]]);          // le retour (son « welcome back » se tait : meme famille dans les 24 h)
+      ok(IX.etat().tenue[Q] > entree1 + 2 * H - 5 * MIN, 'P2 le retour pose une NOUVELLE heure d entree');
+      r = await pas([[Q, PAIRE, 3e6]], { ecart: 25 * H });
+      ok(r.msg.length === 1 && /and left after 25 hours\n/.test(r.msg[0].texte),
+         'P2 au retour, la duree compte depuis la nouvelle entree (25 h), pas depuis la premiere : ' + (r.msg[0] || {}).texte);
+    }
+    /* --- P3 un detenteur entre AVANT la fenetre, sur un noeud a 90 ms (le module suppose 103,54) : les ancres depuis la frappe --- */
+    {
+      const { I: IX, pas } = await scene({ monde: { cadence: 90 } });
+      const S = IX.etat();
+      ok(S.ancres.length > 10 && S.ancres[0][0] === M.BLOC_FRAPPE && S.ancres.every((a, i) => i === 0 || a[0] > S.ancres[i - 1][0]),
+         'P3 les ancres partent de la frappe, dans l ordre des blocs (' + S.ancres.length + ')');
+      const ecart = (a, quand) => Math.abs(S.tenue[a] - Date.parse(quand)) / H;
+      ok(ecart(U2, '2026-10-04T10:00:00Z') < 2, 'P3 U2 (entre le 04/10) : heure d entree lue a moins de 2 h : ' + ecart(U2, '2026-10-04T10:00:00Z').toFixed(2) + ' h');
+      ok(ecart(E1, '2026-09-20T10:00:00Z') < 2, 'P3 E1 (entre le 20/09, avant les 9 ancres quotidiennes) : a moins de 2 h, pas a ~40 h comme une extrapolation depuis la pointe : ' + ecart(E1, '2026-09-20T10:00:00Z').toFixed(2) + ' h');
+      const r = await pas([[U2, PAIRE, 2e6]]);
+      ok(r.msg.length === 1 && /and left after 6 days\n/.test(r.msg[0].texte), 'P3 U2 vend le 10/10 : « and left after 6 days » : ' + (r.msg[0] || {}).texte);
+      delete S.tenue[U1];
+      const r2 = await pas([[U1, PAIRE, 5e6]]);
+      ok(r2.msg.length === 1 && /and left\n/.test(r2.msg[0].texte) && !/and left after/.test(r2.msg[0].texte), 'P3 heure d entree inconnue : « and left », sans duree inventee : ' + (r2.msg[0] || {}).texte);
+    }
+    /* --- P4 un etat au schema 2 (sans `tenue`) est reconstruit une fois et recoit les heures d entree --- */
+    {
+      const { W: X, pas } = await scene();
+      await pas([[PAIRE, N(210), 2e6]]);
+      const f = lit(X.dossier); f.schema = 2; delete f.tenue;
+      fs.writeFileSync(path.join(X.dossier, 'communaute.json'), JSON.stringify(f));
+      const I2 = X.fabrique();
+      X.C.now += 30 * MIN;
+      const [r] = await muet(() => I2.tic());
+      const s2 = I2.etat();
+      ok(r.fait === 'construit' && s2.schema === M.SCHEMA && M.SCHEMA === 3 && typeof s2.tenue[N(210)] === 'number' && typeof s2.tenue[U2] === 'number',
+         'P4 schema 2 sans heures d entree : reconstruit, et les heures d entree sont posees : ' + JSON.stringify(r).slice(0, 60));
+      ok(typeof lit(X.dossier).tenue[N(210)] === 'number', 'P4 et ecrites sur le disque');
+    }
+  }
+
+  // ================================================== 15. les piscines detaillees, et ce qui reste a acheter cote ETH (12/10, soir)
+  /* Le proprietaire, sur le relevé : « 67.5% outside pools alors que je vois 20 % qui reste dans le pool ;
+     0xc129… contient du swoge car c est quand t achetes du $SWOGEBET », puis « rajoute combien il reste dans
+     le pool disponible a acheter ». Intention : chaque piscine est rangee sous le jeton d EN FACE (WETH →
+     « ETH », $SWOGEBET → « $SWOGEBET », le reste → « other »), les parts somment avec les portefeuilles a
+     100 %, et le reste a acheter est le solde des SEULES piscines ETH — celles ou l on paie en ETH. */
+  {
+    /* --- Q1 les fonctions pures --- */
+    egal(M.SWOGEBET, SWOGEBET, 'Q1 le $SWOGEBET du module est le jeton du launchpad');
+    egal(M.detailPools(null), '', 'Q1 sans circulation : rien, jamais « pools: »');
+    egal(M.detailPools({ eth: 20.64, swogebet: 11.83, autre: 0.0049 }), ' · pools: 20.6% ETH · 11.8% $SWOGEBET',
+         'Q1 les chiffres du 12/10 : ETH puis $SWOGEBET, « other » sous 0,05 % : cache');
+    egal(M.detailPools({ eth: 0.04, swogebet: 0, autre: 0 }), '', 'Q1 toutes sous 0,05 % : aucune liste vide');
+    egal(M.detailPools({ eth: 1, swogebet: 2, autre: 3 }), ' · pools: 1.0% ETH · 2.0% $SWOGEBET · 3.0% other', 'Q1 chaque etiquette sur sa part');
+    /* --- Q2 dans un monde construit : les parts sont les soldes des piscines, rangees par jeton d en face --- */
+    {
+      const { W: X, I: IX, pas } = await scene();
+      const r = await pas([[PAIRE, N(220), 2e6]]);
+      const S = IX.etat(), tok = (a) => Number((S.soldes.get(a) || 0n) / 10n ** 12n) / 1e6;
+      const circ = -tok(ZERO) - tok(MORT), eth = tok(PAIRE) + tok(V3W), bet = tok(V3);
+      ok(S.autres[PAIRE] === WETH && S.autres[V3W] === WETH && S.autres[V3] === SWOGEBET && bet > 0 && Math.abs(eth / bet - 1) > 0.5,
+         'Q2 le decor : deux piscines ETH, une $SWOGEBET, aux soldes assez differents pour qu une etiquette echangee se voie');
+      const l = ((r.msg[0] || {}).texte || '').match(/🌊 ([\d.]+)% held by wallets · pools: ([\d.]+)% ETH · ([\d.]+)% \$SWOGEBET( · ([\d.]+)% other)?\n🛒 ([^ ]+) \$SWOGE available to buy in the ETH pools\n/);
+      ok(!!l, 'Q2 la ligne detaillee est la : ' + ((r.msg[0] || {}).texte || '').split('\n').filter((x) => /🌊|🛒/.test(x)).join(' | '));
+      if (l) {
+        const [w, pe, pb, po] = [l[1], l[2], l[3], l[5] || '0'].map(Number);
+        ok(Math.abs(pe - 100 * eth / circ) <= 0.05, `Q2 la part ETH est le solde des deux piscines ETH (${pe} contre ${(100 * eth / circ).toFixed(2)})`);
+        ok(Math.abs(pb - 100 * bet / circ) <= 0.05, `Q2 la part $SWOGEBET est le solde de la v3 $SWOGEBET (${pb} contre ${(100 * bet / circ).toFixed(2)})`);
+        ok(Math.abs(w + pe + pb + po - 100) <= 0.2, `Q2 portefeuilles + piscines = 100 % (${w} + ${pe} + ${pb} + ${po})`);
+        egal(l[6], M.fmtJetons(eth), 'Q2 le reste a acheter est le solde des piscines ETH, pas celui de la $SWOGEBET');
+      }
+      /* --- Q3 une seule piscine ETH garnie : « pool » au singulier ; aucune : pas de ligne 🛒 --- */
+      /* le livre est confronte a la chaine a chaque tic : on vide la v3 SWOGE/WETH SUR la chaine (retrait de liquidite) */
+      const rl = await pas([[V3W, E1, 20e6]], { liquidite: V3W });
+      egal(rl.x && rl.x.fait !== 'erreur' && rl.msg.length, 0, 'Q3 le retrait de liquidite passe, sans annonce');
+      const r3 = await pas([[PAIRE, N(221), 2e6]]);
+      ok(/\n🛒 [^ ]+ \$SWOGE available to buy in the ETH pool\n/.test((r3.msg[0] || {}).texte || ''), 'Q3 une seule piscine ETH garnie : « pool » : ' + ((r3.msg[0] || {}).texte || '').split('\n').filter((x) => /🛒/.test(x)));
+      /* le releve se calcule sur le livre, sans tic : on y vide aussi la paire pour le cas « aucune » */
+      IX.etat().soldes.set(PAIRE, 0n);
+      const tr = IX.texteReleve(X.C.now);
+      ok(!/🛒/.test(tr) && / of supply held by wallets · pools: [\d.]+% \$SWOGEBET\n\n/.test(tr),
+         'Q3 aucune piscine ETH garnie : ni ligne 🛒, ni « 0.0% ETH » : ' + tr.split('\n').filter((x) => /🌊|🛒/.test(x)).join(' | '));
     }
   }
 

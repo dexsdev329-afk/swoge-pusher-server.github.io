@@ -349,8 +349,63 @@ const SEUIL_LIEN = 1000n * E18;                  // = SEUIL_DETENTEUR (plus bas)
 
 /* La version de l etat qui porte tout ce qui precede : un etat ecrit avant (sans
    couts, liens, cours) est RECONSTRUIT une fois, en gardant ce qui a deja ete
-   dit (annonces, recharges, releves) — jamais remis a neuf (VERSION_ETAT). */
-const SCHEMA = 2;
+   dit (annonces, recharges, releves) — jamais remis a neuf (VERSION_ETAT).
+   3 (12/10/2026) : `tenue` (voir TENUE) — un etat au schema 2 n a pas l heure
+   d entree de ses detenteurs, il est reconstruit une fois. */
+const SCHEMA = 3;
+
+/* ---- TENUE : DEPUIS QUAND IL TENAIT (12/10/2026) ----
+ * Le proprietaire, sur une annonce « Paper hand » : « tu pourrais rajouter ca
+ * fait combien de jours qu il hold, ou une phrase drole ». `tenue` : adresse →
+ * l heure (ms) ou elle a PASSE le seuil de detenteur pour la derniere fois,
+ * par n importe quel chemin (achat, envoi, airdrop) ; effacee quand elle
+ * redescend sous le seuil. Une paper hand dit donc depuis combien de temps elle
+ * tenait CETTE fois (« and left after 12 days »), lu AVANT l effacement.
+ * L heure d un bloc ancien ne s extrapole pas depuis la pointe : mesure du
+ * 12/10 sur le RPC officiel, de la frappe (07/07) a la pointe en 10 segments,
+ * la cadence moyenne varie de 100,13 a 102,42 ms/bloc ; extrapoler a 103,54 ms
+ * depuis la pointe tombe 62,6 h trop tot au bloc 3 700 000. La construction pose
+ * donc des ancres reelles depuis la frappe (une tous les ~10 jours, ANCRE_PAS),
+ * en plus des 9 quotidiennes : ~9 eth_getBlockByNumber de plus, dans le meme
+ * lot. Deux segments voisins different d au plus 0,9 ms/bloc, soit ~2 h sur
+ * 10 jours au pire : au-dela de 48 h la duree s ecrit en JOURS arrondis. */
+const ANCRE_PAS = 8640000;                        // ~10 jours a ~100 ms/bloc
+
+/* ---- LES PISCINES, DETAILLEES (12/10/2026) ----
+ * Le proprietaire, sur « 67.5% of supply outside pools » : « alors que je vois
+ * 20 % qui restent dans le pool ; ce wallet 0xc129… contient du swoge car c est
+ * quand t achetes du swogebet ». Mesure du 12/10 sur le RPC officiel :
+ * circulation 986 590 882 (brule 13 409 118), paire v2 SWOGE/WETH 203 633 333
+ * (20,64 %), v3 $SWOGEBET/SWOGE 0xc129… 116 754 480 (11,83 %), PoolManager v4
+ * 47 987 (0,00 %) : 32,48 % en piscines, 67,52 % dehors — le chiffre etait
+ * juste, le libelle ne disait pas que la piscine $SWOGEBET en est une. La
+ * ligne dit donc chaque famille par l AUTRE jeton de la piscine (S.autres) :
+ * WETH → « ETH », $SWOGEBET → « $SWOGEBET », le reste (PoolManager v4, USDG,
+ * jetons du launchpad) → « other » ; une famille sous 0,05 % ne s ecrit pas.
+ * Meme soir, le proprietaire : « rajoute combien il reste dans le pool
+ * disponible a acheter » — le $SWOGE des piscines contre WETH, la ou l on
+ * achete avec de l ETH (203,6 M le 12/10). Un AMM ne vend pas tout son stock au
+ * meme prix : c est ce qu il contient, pas ce qu un achat obtiendrait. */
+const SWOGEBET = '0xc0aed547862fba5d7d9fbf3cb14204cd756c8bea';  // = config.SWOGEBET_TOKEN, swogebet_achats.js
+const PART_POOL_MIN = 0.05;
+
+/* ---- LA PHRASE DE LA PAPER HAND (12/10/2026) ----
+ * Meme demande. Une phrase moqueuse, jamais une insulte ni un mot grossier : le
+ * bot parle au nom du projet sur le canal PUBLIC et vise un portefeuille reel.
+ * Elle suit ce qui est LU (gain, perte, ou inconnu) pour ne jamais dire « sold
+ * low » a quelqu un qui a vendu en gain ; choisie par le hash de la tx, donc la
+ * meme a chaque rejeu. */
+const BLAGUES_PAPER = {
+  gain: ['Took the profit and skipped the rest of the workout. 🏋️',
+         'Cashed out at the warm-up. The doge keeps lifting. 💪',
+         'Sold the gym membership right before the gains. 🐕'],
+  perte: ['Bought high, sold low. Leg day skipped again. 🦵',
+          'Paper hands fold, swole hands hold. 💎',
+          'Thanks for the cheap bags, ser. 🙏'],
+  autre: ['One less hand, more doge for the rest of us. 🐕',
+          'Paper hands detected. The pack keeps lifting. 💪',
+          'Left the gym after the warm-up. 🏋️'],
+};
 
 /* ---- LE SEUIL DE DETENTEUR : 1 000 $SWOGE ----
  * Sonde du 11/10/2026 : 0 adresse dans [1 ; 100), 541 dans [100 ; 1 000) dont
@@ -534,6 +589,31 @@ function pct(x) {
   return (x < 0 && s !== '0.0' ? '-' : '+') + s + '%';
 }
 const pluriel = (n, mot, pl) => `${n} ${n === 1 ? mot : (pl || mot + 's')}`;
+/** Une duree de tenue lisible (voir TENUE) : minutes sous 2 h, heures sous
+ *  48 h, jours arrondis au-dela (l interpolation des ancres vaut ~2 h). */
+function dureeTenue(ms) {
+  const min = Math.round(ms / 60000);
+  if (min < 120) return pluriel(Math.max(1, min), 'minute');
+  if (ms < 48 * 3600000) return pluriel(Math.round(ms / 3600000), 'hour');
+  return pluriel(Math.round(ms / 86400000), 'day');
+}
+/** Le detail des piscines (voir LES PISCINES, DETAILLEES) : « · pools: 20.6% ETH · 11.8% $SWOGEBET ». */
+function detailPools(parts) {
+  if (!parts) return '';
+  const l = [];
+  if (parts.eth >= PART_POOL_MIN) l.push(`${parts.eth.toFixed(1)}% ETH`);
+  if (parts.swogebet >= PART_POOL_MIN) l.push(`${parts.swogebet.toFixed(1)}% $SWOGEBET`);
+  if (parts.autre >= PART_POOL_MIN) l.push(`${parts.autre.toFixed(1)}% other`);
+  return l.length ? ` · pools: ${l.join(' · ')}` : '';
+}
+/** La phrase d une paper hand (voir BLAGUES_PAPER) : sa famille suit le gain
+ *  ou la perte LUS, le choix le hash de la tx. */
+function blaguePaper(ev) {
+  const lu = ev && ev.venteLue && typeof ev.pnl === 'number' && isFinite(ev.pnl) && Math.abs(ev.pnl) >= EQUILIBRE_PCT;
+  const l = BLAGUES_PAPER[lu ? (ev.pnl > 0 ? 'gain' : 'perte') : 'autre'];
+  const h = /^0x[0-9a-fA-F]{6,}/.test(String(ev && ev.h)) ? parseInt(String(ev.h).slice(-6), 16) : 0;
+  return l[h % l.length];
+}
 /** Prix en ETH d un Sync de la paire v2 (token0 = WETH, token1 = $SWOGE). */
 function prixDeSync(data) {
   if (!/^0x[0-9a-fA-F]{128}/.test(String(data))) return null;
@@ -609,7 +689,7 @@ function cree(deps0) {
     return { v: VERSION_ETAT, schema: 1, construit: false, curseur: 0, soldes: new Map(), codes: {}, pools: new Set(), autres: {},
              deja: new Set(), jours: {}, photos: {}, horaires: [], ancres: [], annonces: {}, dernier: {},
              heure: null, releves: {}, prix: null, compteurs: {}, appels: 0, refus429: 0, jourCourant: null, controleH: null,
-             couts: {}, liens: {}, vus: new Set(), coursW: [], evts: [] };
+             couts: {}, liens: {}, vus: new Set(), coursW: [], evts: [], tenue: {} };
   }
   /* Ce qu une (re)construction garde de l etat precedent : ce qui a deja ete
      DIT (annonces, recharges, releves), les compteurs et le cours. Tout ce qui
@@ -625,7 +705,7 @@ function cree(deps0) {
       pools: [...S.pools], autres: S.autres, deja: [...S.deja], jours: S.jours, photos: S.photos, horaires: S.horaires,
       ancres: S.ancres, annonces: S.annonces, dernier: S.dernier, heure: S.heure, releves: S.releves,
       prix: S.prix, compteurs: S.compteurs, appels: S.appels, refus429: S.refus429, jourCourant: S.jourCourant,
-      controleH: S.controleH, schema: S.schema, couts: S.couts, liens: S.liens, vus: [...S.vus], coursW: S.coursW, evts: S.evts });
+      controleH: S.controleH, schema: S.schema, couts: S.couts, liens: S.liens, vus: [...S.vus], coursW: S.coursW, evts: S.evts, tenue: S.tenue });
   }
   function depuisDisque(j) {
     const s = etatNeuf();
@@ -635,6 +715,7 @@ function cree(deps0) {
     s.pools = new Set(j.pools || []);
     s.deja = new Set(j.deja || []);
     s.vus = new Set(j.vus || []);
+    s.tenue = j.tenue && typeof j.tenue === 'object' ? j.tenue : {};
     return s;
   }
   function litEtat() {
@@ -854,7 +935,7 @@ function cree(deps0) {
 
   // ---------------------------------------------------------- les chiffres
   function chiffres() {
-    let n = 0, pools = 0n, frappe = 0n, brule = 0n, brut = 0, poussiere = 0;
+    let n = 0, pools = 0n, frappe = 0n, brule = 0n, brut = 0, poussiere = 0, pEth = 0n, pBet = 0n, pAutre = 0n, nEth = 0;
     for (const [a, b] of S.soldes) {
       if (a === ZERO) { frappe = -b; continue; }
       /* `brut` : toute adresse a solde > 0, piscines, brulage et contrats
@@ -864,13 +945,19 @@ function cree(deps0) {
          chiffres ecrits en dur deviendraient faux sans que rien ne le dise. */
       if (b > 0n) brut++;
       if (BRULES.has(a)) { brule += b; continue; }
-      if (S.pools.has(a)) pools += b;
-      else if (b >= SEUIL_DETENTEUR && personne(a)) n++;
+      if (S.pools.has(a)) {
+        pools += b;
+        const o = a === PM4 ? null : S.autres[a];
+        if (o === WETH) { pEth += b; if (b > 0n) nEth++; } else if (o === SWOGEBET) pBet += b; else pAutre += b;
+      } else if (b >= SEUIL_DETENTEUR && personne(a)) n++;
       else if (b > 0n && personne(a)) poussiere++;
     }
     const circulation = frappe - brule;
     const horsPools = circulation > 0n ? 100 * (1 - Number(pools * 1000000n / circulation) / 1e6) : null;
-    return { detenteurs: n, horsPools, circulation: jetons(circulation), brule: jetons(brule), pools: jetons(pools), brut, poussiere };
+    const part = (x) => (circulation > 0n ? Number(x * 1000000n / circulation) / 1e4 : null);
+    const partsPools = circulation > 0n ? { eth: part(pEth), swogebet: part(pBet), autre: part(pAutre) } : null;
+    return { detenteurs: n, horsPools, partsPools, resteEth: jetons(pEth), piscinesEth: nEth,
+             circulation: jetons(circulation), brule: jetons(brule), pools: jetons(pools), brut, poussiere };
   }
   function ecart24h(n, now) {
     let ref = null;
@@ -909,7 +996,8 @@ function cree(deps0) {
     const d = ecart24h(c.detenteurs, now);
     const nouveaux = distinctesPersonnes((S.jours[jourParis(now)] || {}).entrees);
     return `👥 ${c.detenteurs} holders${d === null ? '' : ` (${signe(d)} in 24h)`} · 🆕 ${nouveaux} new today` +
-           (c.horsPools === null ? '' : ` · 🌊 ${c.horsPools.toFixed(1)}% of supply outside pools`);
+           (c.horsPools === null ? '' : `\n🌊 ${c.horsPools.toFixed(1)}% held by wallets${detailPools(c.partsPools)}`) +
+           (c.resteEth >= 1 ? `\n🛒 ${fmtJetons(c.resteEth)} $SWOGE available to buy in the ETH pool${c.piscinesEth > 1 ? 's' : ''}` : '');
   }
 
   // ---------------------------------------------------------- une transaction
@@ -971,6 +1059,15 @@ function cree(deps0) {
         if (parMarche && !k.achat) j.sorties.push(a); else j.partis.push(a);
       }
       if (ap >= SEUIL_DETENTEUR) S.deja.add(a);
+    }
+  }
+  /** L heure d entree des detenteurs (voir TENUE), apres une transaction deja
+   *  appliquee : posee au passage du seuil vers le haut, effacee sous le seuil. */
+  function noteTenue(net, avant, t) {
+    for (const a of net.keys()) {
+      const av = avant.get(a), ap = solde(a);
+      if (ap < SEUIL_DETENTEUR) delete S.tenue[a];
+      else if (av < SEUIL_DETENTEUR && typeof t === 'number' && isFinite(t)) S.tenue[a] = Math.round(t);
     }
   }
   function regroupe(logs, apres) {
@@ -1217,8 +1314,10 @@ function cree(deps0) {
     const t0 = Date.now(), appels0 = S.appels;
     const tip = await pointe();
     const now = deps.horloge();
-    /* ancres : la pointe et un en-tete par jour sur 9 jours */
+    /* ancres : depuis la frappe une tous les ~10 jours (voir TENUE), puis un
+       en-tete par jour sur 9 jours, puis la pointe — dans l ordre des blocs */
     const blocs = [];
+    for (let b = BLOC_FRAPPE; b < tip.bloc - 9 * 864000 - ANCRE_PAS / 2; b += ANCRE_PAS) blocs.push(b);
     for (let k = 9; k >= 1; k--) if (tip.bloc - k * 864000 > 0) blocs.push(tip.bloc - k * 864000);
     const en = await lot(blocs.map((b) => ['eth_getBlockByNumber', [hex(b), false]]));
     S.ancres = [];
@@ -1278,7 +1377,7 @@ function cree(deps0) {
     const recus = await examine(txs.filter((tx) => tx.b >= debutFenetre));
     /* Passe B : le rejeu complet, codes et piscines connus. */
     S.soldes = new Map(); S.deja = new Set(); S.jours = {}; S.photos = {}; S.horaires = [];
-    S.couts = {}; S.liens = {}; S.vus = new Set(); S.coursW = []; S.evts = [];
+    S.couts = {}; S.liens = {}; S.vus = new Set(); S.coursW = []; S.evts = []; S.tenue = {};
     let iJ = 0, iH = 0;
     const photo = (jour, t) => { S.photos[jour] = photoDe(jour, t, { reconstruit: true }); };
     const bornes = (b, bH) => {
@@ -1299,6 +1398,7 @@ function cree(deps0) {
       } else {
         for (const a of net.keys()) if (solde(a) >= SEUIL_DETENTEUR) S.deja.add(a);
       }
+      noteTenue(net, avant, tempsDe(tx.b));
       /* le cout de TOUT l historique (voir COUT) : la jambe des Sync, la
          liquidite par le sens des reserves, ou par le recu dans la fenetre */
       suit(net, j ? { dW: j.dW, liq: j.liq || !!(r && r.liq) } : null, tx.logs);
@@ -1397,8 +1497,10 @@ function cree(deps0) {
       corps.push(lignePnl(ev));
     } else {
       tete = '🧻 <b>Paper hand</b>';
-      corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left${ev.apres >= 1 ? ` (kept ${fmtJetons(ev.apres)})` : ''}`);
+      const apresTenue = typeof ev.tenueMs === 'number' && isFinite(ev.tenueMs) ? ` after ${dureeTenue(ev.tenueMs)}` : '';
+      corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left${apresTenue}${ev.apres >= 1 ? ` (kept ${fmtJetons(ev.apres)})` : ''}`);
       corps.push(lignePnl(ev));
+      corps.push(`<i>${blaguePaper(ev)}</i>`);
     }
     return `${tete}\n${corps.join('\n')}\n${ev.ligne}\n${lienTx(ev.h)}`;
   }
@@ -1601,7 +1703,8 @@ function cree(deps0) {
     const corps = `📈 <b>$SWOGE community · daily report</b>\n` +
       `👥 <b>${c.detenteurs} holders</b>${d === null ? '' : ` (${signe(d)} in 24h)`}\n` +
       ligneCoursSimple +
-      `🌊 <b>${c.horsPools === null ? '?' : c.horsPools.toFixed(1)}%</b> of supply outside the pools\n\n` +
+      `🌊 <b>${c.horsPools === null ? '?' : c.horsPools.toFixed(1)}%</b> of supply held by wallets${detailPools(c.partsPools)}\n` +
+      (c.resteEth >= 1 ? `🛒 <b>${fmtJetons(c.resteEth)} $SWOGE</b> available to buy in the ETH pool${c.piscinesEth > 1 ? 's' : ''}\n` : '') + '\n' +
       `<b>Last 24h</b>\n🆕 ${pluriel(r.entrees.size, 'new holder')} · 💎 ${pluriel(r.believers.size, 'believer')} · 🧻 ${pluriel(r.paper.size, 'paper hand')}\n\n` +
       `<b>This week</b>\n👥 <b>${croissance === null ? '?' : signe(croissance)}</b> holders · 🆕 ${n7('entrees')} new · ` +
       `💎 ${manque.believers ? '– believers' : pluriel(sept.believers.size, 'believer')}\n` +
@@ -1741,7 +1844,10 @@ function cree(deps0) {
             compte('genre_' + k.genre);
             if (k.qui) noteJour(t, k);
           }
+          /* depuis quand il tenait (voir TENUE) : lu AVANT que la sortie l efface */
+          if (k && k.qui && k.genre === 'paper') k.tenueMs = typeof S.tenue[k.qui] === 'number' ? Math.max(0, t - S.tenue[k.qui]) : null;
           passages(net, avant, t, k);
+          noteTenue(net, avant, t);
           if (k && GENRES_ANNONCES.has(k.genre)) {
             n++;
             await trie(Object.assign({ h: tx.h, t, ligne: ligneCommunaute(now), usd: null }, k), now, aEnvoyer);
@@ -1886,6 +1992,7 @@ module.exports = {
   TOPIC_MODIFY_V4, WETH, USDG, VALEUR, LOT_RECUS,
   TOPIC_SYNC, TOPIC_SWAP_V3, PISCINE_ETH_USD, DECIMALES_USDG, FENETRE_ETH_USD, PART_CONNUE_MIN, EQUILIBRE_PCT,
   NONCE_NEUF_MAX, DEGRE_MAX, GROUPE_MAX, SEUIL_LIEN, FRAIS_VENTE_MAX, SCHEMA, PARTIELLE_PART_MIN,
+  ANCRE_PAS, BLAGUES_PAPER, dureeTenue, blaguePaper, SWOGEBET, PART_POOL_MIN, detailPools,
   SCENES, GENRES_IMAGE, VERSION_IMAGES, ESSAIS_IMAGE_MAX, COUT_IMAGE_USD, ESPACE_RPC_MS, LOT_CODES, ESPACE_LOTS_MS,
   minuitParis, jourParis, fmtJetons,
 };
