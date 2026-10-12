@@ -1538,8 +1538,8 @@ function cree(deps0) {
      chiffres partout : 1 029 ; pompe plausible (380 detenteurs, +85 en 24 h, 120
      new par jour, +312 %) : 1 013 ; production 998 (26 de marge). Au-dela de
      1 024, Telegram refuse la photo et le releve part en texte seul
-     (telegram.js). Donc : au-dela, la seconde phrase de la note (« Not
-     counted… ») tombe ; au-dela encore, la note entiere. Les chiffres restent. */
+     (telegram.js). Donc : au-dela, la note (« Holders = … », une phrase depuis
+     le releve simple du 12/10) tombe. Les chiffres restent. */
   const LEGENDE_MAX = 1024;
   const visible = (t) => t.replace(/<[^>]*>/g, '').replace(/&(lt|gt|amp|quot);/g, '_').length;
   /* Les 7 jours en PORTEFEUILLES distincts (relecture du 12/10 : « Last 24h: N
@@ -1556,19 +1556,15 @@ function cree(deps0) {
     const c = chiffres();
     const d = ecart24h(c.detenteurs, now);
     const auj = jourParis(now);
-    const lignes = [];
-    let partielles = 0, premier = null, dernierN = null;
+    let premier = null, dernierN = null;
     const sept = {}, manque = {};
     for (const f of CHAMPS_7J) sept[f] = new Set();
     for (let k = JOURS_RELEVE; k >= 1; k--) {
       const j = jourPlus(auj, -k), p = S.photos[j], pv = S.photos[jourPlus(j, -1)];
-      if (!p) { lignes.push(`${jourCourt(j)}  ${'–'.padStart(4)}`); continue; }
+      if (!p) continue;
       if (premier === null && pv) premier = pv.detenteurs;
       if (premier === null) premier = p.detenteurs;
       dernierN = p.detenteurs;
-      const delta = pv ? `(${signe(p.detenteurs - pv.detenteurs)})` : '';
-      lignes.push(`${jourCourt(j)}  ${(String(p.detenteurs).padStart(4) + ' ' + delta).padEnd(11)}${String(p.entrees).padStart(4)}${String(p.sorties).padStart(6)}  ${p.horsPools === null ? '–' : p.horsPools.toFixed(1) + '%'}`);
-      partielles += p.partielles || 0;
       const jj = S.jours[j];
       for (const f of CHAMPS_7J) {
         if (jj && Array.isArray(jj[f])) { for (const a of jj[f]) if (personne(a)) sept[f].add(a); }
@@ -1588,23 +1584,31 @@ function cree(deps0) {
        donne +20,88 % puis +19,8 % en $ (l ETH de J−7 avait bouge de 0,9 % entre
        les deux minutes de reference) ; le chiffre depend de l instant a ~1 point
        pres, une decimale au-dela de 10 % serait une precision fausse. */
-    const ligneCours = !cours ? '' : cours.usd !== null && cours.usd !== undefined
-      ? `📊 Chart: <b>${pct(cours.usd)}</b> in 7 days in $ (${pct(cours.eth)} in ETH)\n`
-      : `📊 Chart: <b>${pct(cours.eth)}</b> in 7 days (in ETH)\n`;
+    /* 12/10/2026, le proprietaire apres le premier releve : « parle pas des 570
+       wallets de l airdrop, juste des reels holders, faut que ca soit positif et
+       simple a comprendre ». Le releve garde ses chiffres (detenteurs, cours,
+       nouveaux, believers, paper hands), sans le tableau a colonnes, sans la
+       poussiere ni le compte brut des traqueurs, sans transferts ni ventes
+       partielles (dites dans leurs annonces). Une ligne suit les detenteurs jour
+       apres jour. Rien n est cache de ce qui compte : un cours en baisse s ecrit
+       en baisse, les paper hands restent comptes. */
+    const suite = [];
+    for (let k = JOURS_RELEVE; k >= 1; k--) { const p = S.photos[jourPlus(auj, -k)]; suite.push(p ? String(p.detenteurs) : '–'); }
+    suite.push(String(c.detenteurs));
+    const ligneCoursSimple = !cours ? '' : cours.usd !== null && cours.usd !== undefined
+      ? `📊 Chart: <b>${pct(cours.usd)}</b> this week\n`
+      : `📊 Chart: <b>${pct(cours.eth)}</b> this week (in ETH)\n`;
     const corps = `📈 <b>$SWOGE community · daily report</b>\n` +
-      `<b>${c.detenteurs}</b> holders now${d === null ? '' : ` (${signe(d)} in 24h)`} · <b>${c.horsPools === null ? '?' : c.horsPools.toFixed(1)}%</b> of supply outside pools\n` +
-      ligneCours +
-      `<pre>${'Day'.padEnd(8)}${'Holders'.padEnd(11)}${'New'.padStart(4)}${'Left'.padStart(6)}  Outside pools\n${lignes.join('\n')}</pre>\n` +
-      `Last 24h: ${r.entrees.size} new · ${pluriel(r.believers.size, 'believer')} · ${pluriel(r.paper.size, 'paper hand')} · ${pluriel(r.partielles, 'partial sell')}\n` +
-      `7 days: <b>${croissance === null ? '?' : signe(croissance)}</b> holders · ${n7('entrees')} new (${n7('premieres')} first-time) · ` +
-      `${manque.believers ? '– believers' : pluriel(sept.believers.size, 'believer')} · ${n7('sorties')} left · ${pluriel(partielles, 'partial sell')} · ` +
-      `${n7('recus')} in / ${n7('partis')} out by transfer`;
-    const note1 = `<i>Holder = 1,000+ $SWOGE. New = bought on the market to 1,000+; believer = holder who bought more; left = paper hand, sold below 1,000; transfers = airdrops, wallet moves, casino, $SWOGEBET swaps. Chart = now vs. 7×24h ago.`;
-    const note2 = ` Not counted: pools, burn, contracts, house wallets and ${c.poussiere.toLocaleString('en-US')} wallets under 1,000 (mostly airdrop dust) — trackers that count every balance show ${c.brut.toLocaleString('en-US')}.`;
-    const t1 = `${corps}\n${note1}${note2}</i>`, t2 = `${corps}\n${note1}</i>`;
+      `👥 <b>${c.detenteurs} holders</b>${d === null ? '' : ` (${signe(d)} in 24h)`}\n` +
+      ligneCoursSimple +
+      `🌊 <b>${c.horsPools === null ? '?' : c.horsPools.toFixed(1)}%</b> of supply outside the pools\n\n` +
+      `<b>Last 24h</b>\n🆕 ${pluriel(r.entrees.size, 'new holder')} · 💎 ${pluriel(r.believers.size, 'believer')} · 🧻 ${pluriel(r.paper.size, 'paper hand')}\n\n` +
+      `<b>This week</b>\n👥 <b>${croissance === null ? '?' : signe(croissance)}</b> holders · 🆕 ${n7('entrees')} new · ` +
+      `💎 ${manque.believers ? '– believers' : pluriel(sept.believers.size, 'believer')}\n` +
+      `📅 ${suite.join(' → ')}`;
+    const note = `<i>Holders = wallets with 1,000+ $SWOGE.</i>`;
+    const t1 = `${corps}\n\n${note}`;
     if (visible(t1) <= LEGENDE_MAX) return t1;
-    compte('releveNoteCourte');
-    if (visible(t2) <= LEGENDE_MAX) return t2;
     compte('releveSansNote');
     return corps;
   }

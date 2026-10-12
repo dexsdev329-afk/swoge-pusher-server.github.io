@@ -306,6 +306,30 @@ function lit(dossier) { try { return JSON.parse(fs.readFileSync(path.join(dossie
 const MIN = 60000, H = 3600000;
 const muet = async (f) => { const l = console.log, lignes = []; console.log = (...a) => lignes.push(a.join(' ')); try { return [await f(), lignes]; } finally { console.log = l; } };
 
+/* ------------------------------------------------------------ le releve, format du 12/10
+   Le proprietaire, 12/10, apres le premier releve : « parle pas des 570 wallets
+   de l airdrop, juste des reels holders, faut que ca soit positif et simple a
+   comprendre ». Ce que le releve montre encore est verifie dans le nouveau
+   texte avec les MEMES nombres qu avant ; ce qu il ne dit plus (tableau par
+   jour, poussiere, compte brut, premieres fois, sorties, ventes partielles,
+   transferts, ETH a cote du $, definition du cours) est verifie absent du
+   releve et, quand le module le calcule encore, la ou il vit : les photos et le
+   journal des jours (etat), le fil des 24 h (S.evts), chiffres(), la variante
+   ETH de la ligne du cours. */
+const NOTE_RELEVE = '<i>Holders = wallets with 1,000+ $SWOGE.</i>';
+/** Ce que le releve ne dit plus : l airdrop, la poussiere, les traqueurs, les portefeuilles sous 1 000, la colonne « Left ». */
+const RETIRES_RELEVE = /airdrop|dust|trackers|wallets under 1,000|\bLeft\b/i;
+/** Les entrees de la ligne 📅 : les 7 jours finis, puis maintenant ; null sans ligne. */
+const suiteReleve = (t) => { const m = String(t).match(/\n📅 ([^\n]*)/); return m ? m[1].split(' → ') : null; };
+/** Les 7 jours d un releve (J−7 … J−1, jours de Paris), comme les compte le module. */
+const joursReleve = (now) => { const auj = M.jourParis(now), l = []; for (let k = M.JOURS_RELEVE; k >= 1; k--) l.push(new Date(Date.parse(auj + 'T12:00:00Z') - k * 24 * H).toISOString().slice(0, 10)); return l; };
+/** Les adresses d un champ du journal des jours (S.jours) sur les 7 jours du releve. */
+const septJournal = (S, now, f) => new Set(joursReleve(now).flatMap((j) => (S.jours[j] && S.jours[j][f]) || []));
+/** Les ventes partielles des dernieres 24 h dans le fil (S.evts), la ou le releve les comptait. */
+const partielles24h = (S, now) => (S.evts || []).filter(([t, g]) => g === 'partielle' && t >= now - 24 * H && t <= now).length;
+/** Meme ensemble, sans ordre. */
+const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
+
 (async () => {
   // ================================================== 1. variable vide = rien
   {
@@ -615,17 +639,27 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
     const rel = R.envois.filter((m) => /daily report/.test(m.texte));
     egal(rel.length, 1, '13:00 a Paris : le releve part');
     const t = rel[0].texte;
-    ok(/📈 <b>\$SWOGE community · daily report<\/b>\n<b>5<\/b> holders now/.test(t), 'releve : detenteurs maintenant');
-    ok(/<b>[\d.]+%<\/b> of supply outside pools/.test(t), 'releve : part hors piscines');
-    for (const j of ['Oct 03', 'Oct 04', 'Oct 05', 'Oct 06', 'Oct 07', 'Oct 08', 'Oct 09']) ok(t.includes(j), 'releve : la ligne du ' + j);
-    ok(!t.includes('Oct 10') && !t.includes('Oct 02 '), 'releve : sept jours complets, ni aujourd hui ni le 02/10');
-    ok(/Oct 08 +\d+ \(-1\) +0 +1 /.test(t), 'releve : le 08/10, -1 detenteur, 0 entree, 1 sortie : ' + t);
-    /* le bilan des 7 jours, avec les believers depuis le 12/10 (portefeuilles distincts) */
-    ok(/7 days: <b>[+±\-\d]+<\/b> holders · \d+ new \(\d+ first-time\) · \d+ believers? · \d+ left · \d+ partial sells?/.test(t), 'releve : le bilan des 7 jours : ' + t);
+    ok(/📈 <b>\$SWOGE community · daily report<\/b>\n👥 <b>5 holders<\/b>/.test(t), 'releve : detenteurs maintenant (5, juste sous le titre) : ' + t.split('\n')[1]);
+    ok(/\n🌊 <b>[\d.]+%<\/b> of supply outside the pools\n/.test(t), 'releve : part hors piscines');
+    /* le tableau par jour est devenu la ligne 📅 : les detenteurs de fin de journee des 7 jours, puis maintenant */
+    const S7 = J.etat(), suite = suiteReleve(t) || [];
+    const jours7 = ['2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'];
+    jours7.forEach((j, i) => ok(S7.photos[j] && suite[i] === String(S7.photos[j].detenteurs),
+      `releve : le ${j.slice(8)}/10 dans la ligne 📅, a sa place (${i + 1}e), avec sa photo de fin de journee (${S7.photos[j] && S7.photos[j].detenteurs}) : ${suite.join(' → ')}`));
+    ok(suite.length === 8 && suite[7] === String(J.chiffres().detenteurs) && suite[7] === '5' && !(S7.photos['2026-10-10'] || {}).t &&
+       S7.photos['2026-10-02'] && suite[0] !== String(S7.photos['2026-10-02'].detenteurs),
+       'releve : sept jours complets (03/10 → 09/10), ni le 02/10 ni une photo d aujourd hui, puis maintenant (5) : ' + suite.join(' → '));
+    ok(Number(suite[5]) - Number(suite[4]) === -1 && S7.photos['2026-10-08'].entrees === 0 && S7.photos['2026-10-08'].sorties === 1,
+       'releve : le 08/10, -1 detenteur (ligne 📅) ; 0 entree, 1 sortie dans sa photo, la ou elles vivent : ' + suite.join(' → ') + ' ; ' + JSON.stringify(S7.photos['2026-10-08']));
+    /* le bilan des 7 jours, avec les believers depuis le 12/10 (portefeuilles distincts) ; la croissance : la fin du 09/10 contre la fin du 02/10 */
+    const croit = S7.photos['2026-10-09'].detenteurs - S7.photos['2026-10-02'].detenteurs;
+    ok(new RegExp(`\\n<b>This week</b>\\n👥 <b>${croit > 0 ? '\\+' + croit : croit === 0 ? '±0' : croit}</b> holders · 🆕 \\d+ new · 💎 \\d+ believers?\\n📅 `).test(t),
+       'releve : le bilan des 7 jours (' + croit + ' detenteurs) : ' + t);
+    ok(!/first-time|\bleft\b|partial sell|by transfer|<pre>/i.test(t) && jours7.every((j) => ['premieres', 'sorties', 'recus', 'partis', 'partielles'].every((f) => typeof S7.photos[j][f] === 'number')),
+       'releve : premieres fois, sorties, transferts et ventes partielles ne sont plus dans le releve ; chaque photo des 7 jours les garde');
     /* relecture du 12/10 : « ~540 » et « ~700 » etaient ecrits en dur (les chiffres du 11/10). Ils sont CALCULES :
-       le compte brut (tout solde > 0, comme GoPlus) et les personnes sous 1 000. */
+       le compte brut (tout solde > 0, comme GoPlus) et les personnes sous 1 000 — par chiffres(), plus par le releve. */
     {
-      const S7 = J.etat();
       let brut = 0, pouss = 0;
       for (const [a, b] of S7.soldes) {
         if (a === ZERO) continue;
@@ -633,8 +667,14 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
         if (b > 0n && b < M.SEUIL_DETENTEUR && S7.codes[a] === 'p') pouss++;
       }
       ok(pouss >= 10 && brut > pouss, `releve : il y a de la poussiere (${pouss}) et un compte brut (${brut}) dans le decor`);
-      ok(/1,000\+ \$SWOGE/.test(t) && t.includes(`and ${pouss} wallets under 1,000`) && t.includes(`trackers that count every balance show ${brut}.`) && !/~540|~700/.test(t),
-         'releve : la definition, et les chiffres publics CALCULES (poussiere, compte brut) : ' + t.split('\n').pop());
+      ok(t.endsWith('\n\n' + NOTE_RELEVE) && /1,000\+ \$SWOGE/.test(t), 'releve : la definition des detenteurs (1,000+ $SWOGE) termine le releve : ' + t.split('\n').pop());
+      const c7 = J.chiffres();
+      ok(c7.poussiere === pouss && c7.brut === brut, `releve : poussiere et compte brut restent CALCULES, la ou ils vivent (chiffres() : ${c7.poussiere} et ${c7.brut}, attendus ${pouss} et ${brut})`);
+      /* 12/10, le proprietaire : « parle pas des 570 wallets de l airdrop, juste des reels holders » — et la poussiere est la, dans le decor */
+      const nombreSeul = (n) => new RegExp('(^|[^\\d.,])' + n + '(?![\\d.,%])').test(t.replace(/<[^>]*>/g, ''));
+      ok(!nombreSeul(pouss) && !nombreSeul(brut), `releve : ni la poussiere (${pouss}) ni le compte brut (${brut}) n apparaissent, sous aucun mot (verification du 12/10 : « 🫧 N small balances » passait)`);
+      ok(!RETIRES_RELEVE.test(t) && !/~540|~700|Not counted|every balance/.test(t) && !t.includes(`${pouss} wallets`) && !t.includes(`show ${brut}`),
+         'releve : ni airdrop, ni dust, ni trackers, ni « wallets under 1,000 », ni colonne « Left », ni le compte brut : ' + (t.match(RETIRES_RELEVE) || [''])[0]);
     }
     ok(t.replace(/<[^>]*>/g, '').length < 1024, 'releve : sous la limite de legende de Telegram (1 024) : ' + t.replace(/<[^>]*>/g, '').length);
     R.C.now += 30 * MIN; await muet(() => J.tic());
@@ -949,8 +989,17 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       ok(jj.partis.includes(U2) && !jj.sorties.includes(U2), 'RL5 le depot : « moved out by transfer », jamais « left »');
       X.C.now = Date.parse('2026-10-11T11:00:30Z'); const d = X.envois.length; await muet(() => IX.tic());
       const rel = X.envois.slice(d).find((m) => /daily report/.test(m.texte));
-      ok(rel && /Oct 10 +\d+ \(-1\) +0 +0 /.test(rel.texte) && /· 2 left · \d+ partial sells · 1 in \/ 1 out by transfer/.test(rel.texte),
-         'RL5 le releve : -1 detenteur le 10/10 mais 0 « Left » ce jour-la ; sur 7 jours, 2 ventes (U5, U4), 1 envoi recu (LP), 1 depot au coffre : ' + (rel && rel.texte));
+      /* le releve du 11/10 : la ligne 📅 porte le -1 du 10/10 (04/10 → 10/10, puis maintenant) ; « Left » et les
+         transferts ne sont plus dans le releve : la photo du 10/10 et le journal des 7 jours les gardent */
+      const E5 = IX.etat(), suite = suiteReleve(rel && rel.texte) || [];
+      const p10 = E5.photos['2026-10-10'] || {};
+      ok(rel && suite.length === 8 && suite[6] === String(p10.detenteurs) && Number(suite[6]) - Number(suite[5]) === -1 && p10.entrees === 0 && p10.sorties === 0 && p10.partis === 1,
+         'RL5 le releve : -1 detenteur le 10/10 (ligne 📅) mais 0 « Left » ce jour-la (sa photo : 0 entree, 0 sortie, 1 parti) : ' + suite.join(' → ') + ' ; ' + JSON.stringify(p10));
+      const now5 = Date.parse('2026-10-11T11:00:30Z');
+      ok(memes(septJournal(E5, now5, 'sorties'), [U5, U4]) && memes(septJournal(E5, now5, 'partis'), [U2]) &&
+         memes(new Set([...septJournal(E5, now5, 'recus')].filter((a) => a !== MAISON)), [LP]),
+         'RL5 sur 7 jours (journal) : 2 ventes (U5, U4), 1 envoi recu (LP, la maison n est pas une personne), 1 depot au coffre (U2)');
+      ok(rel && !RETIRES_RELEVE.test(rel.texte) && !/by transfer|partial sell/.test(rel.texte), 'RL5 le releve ne parle ni de « Left » ni de transferts ni de ventes partielles');
       ok(rel && rel.texte.replace(/<[^>]*>/g, '').length < 1024, 'RL5 le releve reste sous 1 024 caracteres : ' + (rel && rel.texte.replace(/<[^>]*>/g, '').length));
     }
 
@@ -1284,39 +1333,48 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       const rel = X.envois.slice(d0).filter((m) => /daily report/.test(m.texte));
       egal(rel.length, 1, 'S5 13:00 : UNE publication (le resume tient dans le releve)');
       const t = (rel[0] || {}).texte || '';
-      ok(/\nLast 24h: 1 new · 1 believer · 1 paper hand · 1 partial sell\n/.test(t), 'S5 dernieres 24 h : portefeuilles distincts (U1 a achete deux fois) : ' + t);
-      const m = t.match(/📊 Chart: <b>([+-][\d.,]+)%<\/b> in 7 days in \$ \(([+-][\d.,]+)% in ETH\)/);
+      ok(/\n<b>Last 24h<\/b>\n🆕 1 new holder · 💎 1 believer · 🧻 1 paper hand\n/.test(t), 'S5 dernieres 24 h : portefeuilles distincts (U1 a achete deux fois) : ' + t);
+      /* la vente partielle n est plus dans le releve : elle est annoncee seule, et le fil des 24 h la garde */
+      ok(!/partial sell/i.test(t) && partielles24h(IX.etat(), X.C.now) === 1, 'S5 dernieres 24 h : 1 vente partielle (U3), dans le fil des 24 h, plus dans le releve');
+      /* le $ seul quand il se lit (12/10 : simple a comprendre) ; l ETH vit dans la variante ETH de la ligne (coursEth, sans cours passe) */
+      const m = t.match(/📊 Chart: <b>([+-][\d.,]+)%<\/b> this week\n/);
       const now = X.C.now, cur = IX.etat().curseur;
+      const me = IX.texteReleve(now).match(/📊 Chart: <b>([+-][\d.,]+)%<\/b> this week \(in ETH\)\n/);
       const p1 = X.C.prixAu(cur), p0 = X.C.prixAu(X.C.blocA(now - 7 * 24 * H));
       const eth = 100 * (p1 / p0 - 1), usd = 100 * (p1 * 2540 / (p0 * 2700) - 1);
-      ok(m && Math.abs(nombre(m[2]) - eth) < 0.6 && Math.abs(nombre(m[1]) - usd) < 0.6,
-         `S5 le cours : dernier Sync contre le dernier Sync d avant −168 h, en ETH (${eth.toFixed(2)}), × ETH/USD de la v3 (${usd.toFixed(2)} en $) : ` + (m ? m[0] : t));
+      ok(m && me && !/in ETH/.test(t) && Math.abs(nombre(me[1]) - eth) < 0.6 && Math.abs(nombre(m[1]) - usd) < 0.6,
+         `S5 le cours : dernier Sync contre le dernier Sync d avant −168 h, en ETH (${eth.toFixed(2)}), × ETH/USD de la v3 (${usd.toFixed(2)} en $) : ` + (m ? m[0] : t) + ' | ' + (me ? me[0] : ''));
       ok(t.replace(/<[^>]*>/g, '').length < 1024, 'S5 sous 1 024 signes : ' + t.replace(/<[^>]*>/g, '').length);
       ok(X.C.appels.filter((a) => a === 'eth_getLogs:autre:' + WU + ':' + SWAP3).length === 2, 'S5 deux lectures de l ETH/USD (maintenant, il y a 7 jours)');
       /* le lendemain : les 24 h sont vides, les 7 jours portent le 10/10 */
       X.C.now = Date.parse('2026-10-11T11:00:30Z');
       const d1 = X.envois.length; await muet(() => IX.tic());
       const t2 = (X.envois.slice(d1).find((x) => /daily report/.test(x.texte)) || {}).texte || '';
-      ok(/\nLast 24h: 0 new · 0 believers · 0 paper hands · 0 partial sells\n/.test(t2) && /· 1 believer · 3 left · 1 partial sell ·/.test(t2),
-         'S5 le lendemain : 24 h vides ; 7 jours : 1 believer (distinct), 3 left (U5, U4, U2), 1 partielle : ' + t2);
+      ok(/\n<b>Last 24h<\/b>\n🆕 0 new holders · 💎 0 believers · 🧻 0 paper hands\n/.test(t2) && partielles24h(IX.etat(), X.C.now) === 0 && / · 💎 1 believer\n📅 /.test(t2),
+         'S5 le lendemain : 24 h vides (0 partielle au fil) ; 7 jours : 1 believer (distinct) : ' + t2);
+      {
+        const S = IX.etat(), parts = joursReleve(X.C.now).reduce((n, j) => n + ((S.photos[j] || {}).partielles || 0), 0);
+        ok(memes(septJournal(S, X.C.now, 'sorties'), [U5, U4, U2]) && parts === 1 && !/\bleft\b|partial sell/i.test(t2),
+           'S5 le lendemain, sur 7 jours : 3 sorties (U5, U4, U2) au journal, 1 partielle aux photos, ni l une ni l autre dans le releve : ' + parts);
+      }
       /* sans ETH/USD lisible : le % en ETH seul, et c est compte */
       X.C.wuMuet = true;
       X.C.now = Date.parse('2026-10-12T11:00:30Z');
       const d2 = X.envois.length; await muet(() => IX.tic());
       const t3 = (X.envois.slice(d2).find((x) => /daily report/.test(x.texte)) || {}).texte || '';
-      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> in 7 days \(in ETH\)\n/.test(t3) && !/in 7 days in \$/.test(t3) && IX.etat().compteurs.ethUsdIllisible >= 1,
+      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> this week \(in ETH\)\n/.test(t3) && !/this week\n/.test(t3) && IX.etat().compteurs.ethUsdIllisible >= 1,
          'S5 v3 WETH/USDG muette : le cours en ETH seul, jamais un $ invente : ' + t3.split('\n')[2]);
       /* aucun Swap dans la fenetre (reponse vide, sans erreur), puis un cours absurde : jamais un « NaN % » ni un $ faux */
       X.C.wuMuet = false; X.C.wuVide = true;
       X.C.now = Date.parse('2026-10-13T11:00:30Z');
       const d3 = X.envois.length; await muet(() => IX.tic());
       const t4 = (X.envois.slice(d3).find((x) => /daily report/.test(x.texte)) || {}).texte || '';
-      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> in 7 days \(in ETH\)\n/.test(t4) && !/NaN|in 7 days in \$/.test(t4), 'S5 aucun Swap dans la fenetre : le cours en ETH seul : ' + t4.split('\n')[2]);
+      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> this week \(in ETH\)\n/.test(t4) && !/NaN|this week\n/.test(t4), 'S5 aucun Swap dans la fenetre : le cours en ETH seul : ' + t4.split('\n')[2]);
       X.C.wuVide = false; X.C.ethUsd = () => 3;      // 3 $ l ETH : hors de la garde de vraisemblance
       X.C.now = Date.parse('2026-10-14T11:00:30Z');
       const d4 = X.envois.length; await muet(() => IX.tic());
       const t5 = (X.envois.slice(d4).find((x) => /daily report/.test(x.texte)) || {}).texte || '';
-      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> in 7 days \(in ETH\)\n/.test(t5) && !/in 7 days in \$/.test(t5), 'S5 un ETH/USD absurde (3 $) n est pas lu : ETH seul : ' + t5.split('\n')[2]);
+      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> this week \(in ETH\)\n/.test(t5) && !/this week\n/.test(t5), 'S5 un ETH/USD absurde (3 $) n est pas lu : ETH seul : ' + t5.split('\n')[2]);
       /* sans Sync d avant −168 h : pas de ligne */
       IX.etat().coursW = [[now, 1e-8]];
       ok(!/📊 Chart/.test(IX.texteReleve(Date.parse('2026-10-12T11:00:30Z'))), 'S5 aucune reference a −168 h : aucune ligne de cours');
@@ -1341,11 +1399,18 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       const t = IX.texteReleve(now, { eth: -12.34, usd: 1234.5, p0: 1, p1: 1 });
       const n0 = t.replace(/<[^>]*>/g, '').length;
       ok(n0 < 1024, 'S6 au pire (999 detenteurs, 994 par case sur 7 jours, 9 999 sous 1 000, ~11 000 au compte brut, +1 234 % en $) : sous 1 024 signes : ' + n0);
-      ok(/📊 Chart: <b>\+1,235%<\/b> in 7 days in \$ \(-12% in ETH\)/.test(t) && /Last 24h: 994 new · 994 believers · 994 paper hands · 994 partial sells/.test(t) && /7 days: <b>±0<\/b> holders · 994 new \(994 first-time\) · 994 believers · 994 left · 994 partial sells · 994 in \/ 994 out by transfer/.test(t),
-         'S6 le texte au pire est complet : ' + t.split('\n').slice(2, 3).concat(t.split('\n').filter((l) => /Last 24h/.test(l))).join(' | '));
+      /* tout ce que le releve montre encore, avec les memes nombres ; l ETH (-12 %) dans la variante ETH de la ligne ;
+         premieres fois, sorties, partielles et transferts (994 chacun) ne sont plus dans le releve */
+      const tEth = IX.texteReleve(now, { eth: -12.34, usd: null, p0: 1, p1: 1 });
+      ok(/👥 <b>999 holders<\/b> \(\+99 in 24h\)\n📊 Chart: <b>\+1,235%<\/b> this week\n🌊 <b>[\d.]+%<\/b> of supply outside the pools\n/.test(t) &&
+         /📊 Chart: <b>-12%<\/b> this week \(in ETH\)\n/.test(tEth) &&
+         /\n<b>Last 24h<\/b>\n🆕 994 new holders · 💎 994 believers · 🧻 994 paper hands\n/.test(t) &&
+         /\n<b>This week<\/b>\n👥 <b>±0<\/b> holders · 🆕 994 new · 💎 994 believers\n📅 999 → 999 → 999 → 999 → 999 → 999 → 999 → 999\n/.test(t) &&
+         t.endsWith('\n\n' + NOTE_RELEVE) && !/first-time|\bleft\b|partial sell|by transfer/i.test(t),
+         'S6 le texte au pire est complet, note comprise : ' + t.split('\n').filter((l) => /Chart|🆕|📅/.test(l)).join(' | ') + ' | ' + tEth.split('\n')[2]);
       /* une photo d avant le 12/10 (sans believers) et sans journal : « – », jamais 0 */
       for (const j of Object.keys(S.photos)) delete S.photos[j].believers;
-      ok(/· – believers ·/.test(IX.texteReleve(now)), 'S6 photos sans believers (avant le 12/10) : « – believers », jamais 0');
+      ok(/ · 💎 – believers\n📅 /.test(IX.texteReleve(now)), 'S6 photos sans believers (avant le 12/10) : « – believers », jamais 0');
     }
     /* --- S7 reprise : couts, liens, vus, cours et fil des 24 h survivent au redemarrage --- */
     {
@@ -1570,10 +1635,12 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       let d = X.envois.length; await muet(() => IX.tic());
       const t = releveDe(X, d);
       const eth = 100 * (X.C.prixAu(IX.etat().curseur) / X.C.prixAu(X.C.blocA(X.C.now - 7 * 24 * H)) - 1);
-      const attendu = `📊 Chart: <b>${pctT(eth)}</b> in 7 days in $ (${pctT(eth)} in ETH)`;
-      ok(t.includes(attendu + '\n') && Math.abs((Math.abs(eth) % 1) - 0.5) > 0.02,
-         `T6 dernier Sync (regime compris) contre le dernier d avant −168 h, ETH/USD egal aux deux bouts : ${eth.toFixed(3)} → « ${attendu} » : ` + (t.split('\n')[2] || t));
-      ok(/Chart = now vs\. 7×24h ago\./.test(t) && /Not counted: /.test(t), 'T6 la definition du cours est dans la note, la note est entiere a la taille de production');
+      const attendu = `📊 Chart: <b>${pctT(eth)}</b> this week`, attenduEth = `📊 Chart: <b>${pctT(eth)}</b> this week (in ETH)`;
+      ok(t.includes('\n' + attendu + '\n') && IX.texteReleve(X.C.now).includes('\n' + attenduEth + '\n') && Math.abs((Math.abs(eth) % 1) - 0.5) > 0.02,
+         `T6 dernier Sync (regime compris) contre le dernier d avant −168 h, ETH/USD egal aux deux bouts : ${eth.toFixed(3)} → « ${attendu} » (et « ${attenduEth} ») : ` + (t.split('\n')[2] || t));
+      /* 12/10 : la definition du cours (« Chart = now vs. 7×24h ago ») et la phrase « Not counted… » ont quitte le releve ;
+         la note qui reste (la definition des detenteurs) est entiere a la taille de production */
+      ok(!/Chart = |7×24h|Not counted/.test(t) && t.endsWith('\n\n' + NOTE_RELEVE), 'T6 la definition du cours n est plus dans la note, la note est entiere a la taille de production : ' + t.split('\n').pop());
       X.C.ethUsd = (b) => (b <= X.C.blocA(Date.parse('2026-10-05T00:00:00Z')) ? 3 : 2540);   // ETH/USD illisible a J−7 seulement
       X.C.now = Date.parse('2026-10-11T09:40:00Z');
       await pas([[PAIRE, U1, 1e6]]);                                      // U1 believer le 10/11 aussi
@@ -1581,16 +1648,16 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       X.C.now = Date.parse('2026-10-11T11:00:30Z');
       d = X.envois.length; await muet(() => IX.tic());
       const t2 = releveDe(X, d);
-      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> in 7 days \(in ETH\)\n/.test(t2) && !/in 7 days in \$/.test(t2),
+      ok(/📊 Chart: <b>[+-][\d.,]+%<\/b> this week \(in ETH\)\n/.test(t2) && !/this week\n/.test(t2),
          'T6 ETH/USD de J−7 illisible : ETH seul, jamais le cours du jour a sa place ; la purge de 10:59 garde la reference : ' + (t2.split('\n')[2] || t2));
       X.C.ethUsd = () => 2500;
       X.C.wuDeux = (b) => (b <= X.C.blocA(Date.parse('2026-10-06T00:00:00Z')) ? 3000 : 2000);   // un Swap plus ancien dans la fenetre
       X.C.now = Date.parse('2026-10-12T11:00:30Z');
       d = X.envois.length; await muet(() => IX.tic());
       const t3 = releveDe(X, d);
-      const m3 = t3.match(/📊 Chart: <b>([+-][\d.,]+%)<\/b> in 7 days in \$ \(([+-][\d.,]+%) in ETH\)/);
-      ok(m3 && m3[1] === m3[2], 'T6 ETH/USD = le DERNIER Swap de la fenetre (2 500 aux deux bouts : $ = ETH) : ' + (m3 ? m3[0] : t3));
-      ok(/\n7 days: <b>[^<]*<\/b> holders · \d+ new \(\d+ first-time\) · 1 believer · /.test(t3), 'T6 U1 believer le 10/10 et le 10/11 : 1 believer sur 7 jours (portefeuilles) : ' + (t3.split('\n').find((l) => /^7 days/.test(l)) || t3));
+      const m3 = t3.match(/📊 Chart: <b>([+-][\d.,]+%)<\/b> this week\n/), e3 = IX.texteReleve(X.C.now).match(/📊 Chart: <b>([+-][\d.,]+%)<\/b> this week \(in ETH\)\n/);
+      ok(m3 && e3 && m3[1] === e3[1], 'T6 ETH/USD = le DERNIER Swap de la fenetre (2 500 aux deux bouts : $ = ETH) : ' + (m3 ? m3[0] : t3) + ' | ' + (e3 ? e3[0] : ''));
+      ok(/\n<b>This week<\/b>\n👥 <b>[^<]*<\/b> holders · 🆕 \d+ new · 💎 1 believer\n/.test(t3), 'T6 U1 believer le 10/10 et le 10/11 : 1 believer sur 7 jours (portefeuilles) : ' + (t3.split('\n').find((l) => /💎 \S+ believers?\n?$/.test(l) && /🆕 \d+ new ·/.test(l)) || t3));
     }
     /* --- T7 une semaine sans echange : la reference est le dernier Sync d avant 8 jours --- */
     {
@@ -1598,7 +1665,8 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       X.C.now = Date.parse('2026-10-20T11:00:30Z');
       const d = X.envois.length; await muet(() => IX.tic());
       const t = releveDe(X, d);
-      ok(/📊 Chart: <b>\+0\.0%<\/b> in 7 days in \$ \(\+0\.0% in ETH\)/.test(t), 'T7 aucun echange depuis 11 jours : +0.0 %, la ligne est la : ' + (t.split('\n')[2] || t));
+      ok(/\n📊 Chart: <b>\+0\.0%<\/b> this week\n/.test(t) && /\n📊 Chart: <b>\+0\.0%<\/b> this week \(in ETH\)\n/.test(IX.texteReleve(X.C.now)),
+         'T7 aucun echange depuis 11 jours : +0.0 % en $ (et en ETH), la ligne est la : ' + (t.split('\n')[2] || t));
     }
     /* --- T8 le resume en PORTEFEUILLES : sorti deux fois en 24 h = 1 ; entre deux jours de suite = 1 sur 7 jours --- */
     {
@@ -1610,7 +1678,8 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       X.C.now = Date.parse('2026-10-10T11:00:30Z');
       let d = X.envois.length; await muet(() => IX.tic());
       const t = releveDe(X, d);
-      ok(/\nLast 24h: 1 new · 0 believers · 1 paper hand · 0 partial sells\n/.test(t), 'T8 entre et sorti deux fois en 24 h : 1 new, 1 paper hand : ' + (t.split('\n').find((l) => /^Last 24h/.test(l)) || t));
+      ok(/\n<b>Last 24h<\/b>\n🆕 1 new holder · 💎 0 believers · 🧻 1 paper hand\n/.test(t) && partielles24h(IX.etat(), X.C.now) === 0,
+         'T8 entre et sorti deux fois en 24 h : 1 new, 1 paper hand (0 partielle au fil des 24 h) : ' + (t.split('\n').find((l) => /^🆕/.test(l)) || t));
       /* le lendemain il rentre et ressort ; au releve du 12/10, les 7 jours (05/10 → 11/10) : U3, U4, N133 entres ;
          U5, U4, N133 sortis — 3 et 3 portefeuilles, jamais 4 et 4 (la somme des jours) */
       X.C.now = Date.parse('2026-10-11T06:00:00Z');
@@ -1619,7 +1688,13 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       X.C.now = Date.parse('2026-10-12T11:00:30Z');
       d = X.envois.length; await muet(() => IX.tic());
       const t2 = releveDe(X, d);
-      ok(/\n7 days: <b>[^<]*<\/b> holders · 3 new \(3 first-time\) · 0 believers · 3 left · /.test(t2), 'T8 7 jours en portefeuilles distincts (N133 entre et sort le 10/10 et le 11/10) : ' + (t2.split('\n').find((l) => /^7 days/.test(l)) || t2));
+      ok(/\n<b>This week<\/b>\n👥 <b>[^<]*<\/b> holders · 🆕 3 new · 💎 0 believers\n/.test(t2), 'T8 7 jours en portefeuilles distincts (N133 entre et sort le 10/10 et le 11/10) : ' + (t2.split('\n').find((l) => /🆕 \d+ new ·/.test(l) && /believers?$/.test(l)) || t2));
+      /* « first-time » et « left » ont quitte le releve : le journal des 7 jours les garde, en portefeuilles distincts */
+      {
+        const S = IX.etat();
+        ok(memes(septJournal(S, X.C.now, 'premieres'), [U3, U4, N(133)]) && memes(septJournal(S, X.C.now, 'sorties'), [U5, U4, N(133)]) && !/first-time|\bleft\b/i.test(t2),
+           'T8 7 jours au journal : 3 premieres fois (U3, U4, N133), 3 sorties (U5, U4, N133), jamais 4 et 4 ; ni l un ni l autre dans le releve');
+      }
     }
     /* --- T9 migration : la reconstruction s arrete au curseur de l ancien etat ; l ecart est annonce une fois --- */
     {
@@ -1690,23 +1765,72 @@ const muet = async (f) => { const l = console.log, lignes = []; console.log = (.
       const auj = M.jourParis(now);
       for (let k = 1; k <= 8; k++) {
         const j = new Date(Date.parse(auj + 'T12:00:00Z') - k * 24 * H).toISOString().slice(0, 10);
-        /* un jour extreme (releve du 12/10 : +999 en 24 h, % a 4 chiffres, +800 en 7 jours = 1 027 avec la note entiere) */
+        /* un jour extreme (+999 en 24 h, % a 4 chiffres, +700 en 7 jours) : 1 027 signes avec la note entiere de l ancien
+           format ; 347 au format du 12/10, note comprise */
         S.photos[j] = { detenteurs: 999 - 100 * k, horsPools: 66.5, entrees: 999, premieres: 999, sorties: 999, recus: 999, partis: 999, believers: 999, partielles: 999, t: now };
         delete S.jours[j];
       }
       S.horaires = [{ t: now - 24 * H, n: 0 }];
       S.evts = [];
       for (let i = 0; i < 994; i++) for (const g of ['nouveau', 'believer', 'paper', 'partielle']) S.evts.push([now - H, g, adr('a', i)]);
-      const avant = S.compteurs.releveNoteCourte || 0;
+      const avant = S.compteurs.releveSansNote || 0;
       const t = IX.texteReleve(now, { eth: 1456.7, usd: 9999.9, p0: 1, p1: 1 });
-      ok(visibleT(t) <= 1024 && !/Not counted/.test(t) && /Chart = now vs\. 7×24h ago\.<\/i>$/.test(t) && S.compteurs.releveNoteCourte === avant + 1,
-         'T10 un jour extreme : la seconde phrase de la note tombe, la legende tient (' + visibleT(t) + ' signes) et c est compte');
-      ok(/📊 Chart: <b>\+10,000%<\/b> in 7 days in \$ \(\+1,457% in ETH\)/.test(t) && /Last 24h: 994 new/.test(t) && /\n7 days: <b>\+\d+<\/b> holders · /.test(t), 'T10 les chiffres restent tous : ' + t.split('\n')[2]);
-      /* hors de toute echelle (des colonnes de detenteurs a 21 chiffres, seulement pour exercer la derniere marche) :
-         la note entiere tombe, jamais un chiffre */
-      Object.keys(S.photos).sort().forEach((j, i) => { S.photos[j].detenteurs = i % 2 ? 1e20 : 1; });
-      const t2 = IX.texteReleve(now, { eth: 1456.7, usd: 9999.9, p0: 1, p1: 1 });
-      ok(visibleT(t2) <= 1024 && !/<i>/.test(t2) && /\n7 days: <b>[+-]\d+<\/b> holders · \d+ new \(/.test(t2) && /📊 Chart: <b>\+10,000%<\/b>/.test(t2) && S.compteurs.releveSansNote >= 1, 'T10 colonnes a 21 chiffres : la note tombe, la legende tient (' + visibleT(t2) + ' signes)');
+      ok(visibleT(t) <= 1024 && t.endsWith('\n\n' + NOTE_RELEVE) && (S.compteurs.releveSansNote || 0) === avant && !S.compteurs.releveNoteCourte,
+         'T10 un jour extreme : la note (une seule phrase depuis le 12/10) reste entiere, la legende tient (' + visibleT(t) + ' signes), rien ne tombe ni ne se compte');
+      const tEth = IX.texteReleve(now, { eth: 1456.7, usd: null, p0: 1, p1: 1 });
+      ok(/\n📊 Chart: <b>\+10,000%<\/b> this week\n/.test(t) && /\n📊 Chart: <b>\+1,457%<\/b> this week \(in ETH\)\n/.test(tEth) && /\n🆕 994 new holders · /.test(t) &&
+         /\n👥 <b>\+700<\/b> holders · /.test(t) && /\n📅 299 → 399 → 499 → 599 → 699 → 799 → 899 → 999\n/.test(t),
+         'T10 les chiffres restent tous : ' + t.split('\n').filter((l) => /Chart|🆕|👥|📅/.test(l)).join(' | ') + ' | ' + tEth.split('\n')[2]);
+      /* le plus long qu un NOMBRE puisse ecrire (mesure du 12/10) : des detenteurs a 21 chiffres (au-dela, String passe en
+         « 1e+21 »), +1,8e308 % en $, +1e21 en 24 h : 854 signes, la note tient encore. Au format du 12/10, aucun nombre
+         n atteint la derniere marche */
+      const photos0 = JSON.stringify(S.photos), horaires0 = S.horaires;
+      Object.keys(S.photos).sort().forEach((j, i) => { S.photos[j].detenteurs = i % 2 ? 999999999999999900000 : 1; });
+      S.horaires = [{ t: now - 24 * H, n: -999999999999999900000 }];
+      const tMax = IX.texteReleve(now, { eth: 1456.7, usd: Number.MAX_VALUE, p0: 1, p1: 1 });
+      ok(visibleT(tMax) <= 1024 && tMax.endsWith('\n\n' + NOTE_RELEVE) && /\n📅 999999999999999900000 → 1 → /.test(tMax) && (S.compteurs.releveSansNote || 0) === avant,
+         'T10 colonnes a 21 chiffres et +1,8e308 % : la note tient encore, la legende aussi (' + visibleT(tMax) + ' signes)');
+      S.photos = JSON.parse(photos0); S.horaires = horaires0;
+      /* hors de toute echelle, seulement pour exercer la derniere marche : des comptes ecrits sur L chiffres (des chaines),
+         L croissant. La note entiere tombe au premier L ou elle ne tient plus, jamais avant, c est compte une fois,
+         et aucun chiffre ne tombe */
+      let L = 3, t2 = '', tAvant = '';
+      for (; L <= 200; L++) {
+        for (const j of Object.keys(S.photos)) S.photos[j].detenteurs = '9'.repeat(L);
+        tAvant = t2; t2 = IX.texteReleve(now, { eth: 1456.7, usd: 9999.9, p0: 1, p1: 1 });
+        if (!t2.endsWith(NOTE_RELEVE)) break;
+      }
+      const neufs = '9'.repeat(L);
+      ok(L <= 200 && visibleT(t2) <= 1024 && !/<i>/.test(t2) && visibleT(t2 + '\n\n' + NOTE_RELEVE) > 1024 &&
+         tAvant.endsWith('\n\n' + NOTE_RELEVE) && visibleT(tAvant) <= 1024 && S.compteurs.releveSansNote === avant + 1 &&
+         /\n📊 Chart: <b>\+10,000%<\/b> this week\n/.test(t2) && /\n🆕 994 new holders · 💎 994 believers · 🧻 994 paper hands\n/.test(t2) &&
+         /\n<b>This week<\/b>\n👥 <b>±0<\/b> holders · 🆕 \d+ new · 💎 \d+ believers\n/.test(t2) &&
+         t2.endsWith('\n📅 ' + Array(7).fill(neufs).join(' → ') + ' → 999'),
+         'T10 comptes a ' + L + ' chiffres : la note tombe au premier pas ou elle ne tient plus, la legende tient (' + visibleT(t2) + ' signes, ' + visibleT(tAvant) + ' avec la note au pas d avant), tous les chiffres restent');
+    }
+    /* --- T11 la ligne 📅 (12/10) : les detenteurs de fin de journee des 7 jours finis, dans l ordre, puis MAINTENANT ;
+           « – » pour un jour sans photo (jamais 0, jamais le voisin) ; ni J−8 ni une photo d aujourd hui --- */
+    {
+      const { W: X, I: IX } = await scene();
+      const S = IX.etat(), now = X.C.now, auj = M.jourParis(now), jours = joursReleve(now);
+      const photo = (n) => ({ detenteurs: n, horsPools: 66.5, entrees: 1, premieres: 1, sorties: 0, recus: 0, partis: 0, believers: 0, partielles: 0, t: now });
+      const j8 = new Date(Date.parse(auj + 'T12:00:00Z') - 8 * 24 * H).toISOString().slice(0, 10);
+      S.photos[j8] = photo(801);                                         // J−8 : la reference de la croissance, pas une entree
+      jours.forEach((j, i) => { S.photos[j] = photo(811 + 10 * i); });   // J−7 … J−1 : 811, 821, … 871
+      S.photos[auj] = photo(999);                                        // une photo d aujourd hui ne doit jamais etre lue
+      const n = IX.chiffres().detenteurs;
+      ok(n !== 999 && n !== 871, 'T11 maintenant (' + n + ') differe de la photo d aujourd hui et de J−1 : l essai distingue les trois');
+      const ligne = (t) => (String(t).match(/\n📅 [^\n]*/) || [''])[0].slice(1);
+      let t = IX.texteReleve(now, null);
+      ok(ligne(t) === `📅 811 → 821 → 831 → 841 → 851 → 861 → 871 → ${n}` && /\n<b>This week<\/b>\n👥 [^\n]*\n📅 [^\n]*\n\n<i>/.test(t),
+         'T11 sept photos : J−7 → J−1 dans l ordre, puis maintenant ; sous « This week », avant la note : ' + ligne(t));
+      delete S.photos[jours[2]];                                         // J−5 sans photo
+      t = IX.texteReleve(now, null);
+      ok(ligne(t) === `📅 811 → 821 → – → 841 → 851 → 861 → 871 → ${n}`, 'T11 un jour sans photo au milieu : « – » a sa place, ni 0 ni un voisin : ' + ligne(t));
+      delete S.photos[jours[0]]; delete S.photos[jours[6]];              // les deux bouts manquent aussi
+      t = IX.texteReleve(now, null);
+      ok(ligne(t) === `📅 – → 821 → – → 841 → 851 → 861 → – → ${n}` && (suiteReleve(t) || []).length === 8,
+         'T11 J−7 et J−1 sans photo : « – » aux deux bouts, toujours 8 entrees, maintenant a la fin : ' + ligne(t));
     }
   }
 
