@@ -196,7 +196,25 @@ console.log('\n-- la couleur suit le contenu --');
   sacs.depose(l, 0, 0, B, { stat: 'att' }, id);
   eq(l[0].sac, monde.SAC_DE_RARETE.epique, 'une fiole (bleu) ne passe pas devant un epique');
   sacs.depose(l, 0, 0, B, { oeuf: 'feu' }, id);
-  eq(l[0].sac, monde.OEUF.sac, 'un oeuf passe devant tout, comme dans monde.SACS');
+  eq(l[0].sac, monde.OEUF.sac, 'un oeuf mythique passe devant un epique');
+  /* ---- L'OEUF SE RANGE A SA RARETE (decision du 13/10/2026) ----
+   * Une relique a cote d'un oeuf mythique se cachait sous « MYTHIC EGG ».
+   * Mythique : l'oeuf gagne l'egalite ; relique : la relique passe devant ;
+   * le prisme (relique) passe devant une relique. */
+  const lo = [];
+  sacs.depose(lo, 300, 300, A, piece(40, 'mythique'), id);
+  sacs.depose(lo, 300, 300, A, { oeuf: 'glace' }, id);
+  eq(lo[0].sac, monde.OEUF.sac, 'oeuf mythique et piece mythique : l oeuf gagne l egalite');
+  sacs.depose(lo, 300, 300, A, piece(41, 'relique'), id);
+  eq(lo[0].sac, monde.SAC_DE_RARETE.relique, 'une relique a cote d un oeuf mythique : le sac est celui de la relique, elle se voit de loin');
+  sacs.depose(lo, 300, 300, A, { oeuf: 'legendaire' }, id);
+  eq(lo[0].sac, monde.OEUF.sac, 'le prisme (relique) passe devant la relique : sac d oeuf');
+  eq(monde.rareteOeuf('legendaire'), 'relique', 'et le prisme est bien une relique');
+  ok(sacs.rangDe({ oeuf: 'legendaire' }) > sacs.rangDe({ item: 1, rarete: 'relique' })
+     && sacs.rangDe({ item: 1, rarete: 'relique' }) > sacs.rangDe({ oeuf: 'feu' })
+     && sacs.rangDe({ oeuf: 'feu' }) > sacs.rangDe({ item: 1, rarete: 'mythique' }),
+     'rangs : prisme > relique > oeuf mythique > piece mythique');
+  l.push(...lo);
 
   const l2 = [];
   sacs.depose(l2, 500, 500, A, { stat: 'def' }, id);
@@ -209,12 +227,15 @@ console.log('\n-- la couleur suit le contenu --');
    * voient le sac (rarete de chaque place, oeuf, fiole, potion). Si elle s'en
    * deduit, elle ne dit rien qu'un joueur ne recoive deja. */
   const deVue = (v) => {
-    let rang = -1;
+    /* le rang d une place se deduit de la vue : la couleur, et pour un oeuf
+       sa rarete (le mot `rn` du catalogue, deja envoye au sol) */
+    let rang = -1, k0 = null;
     for (const c of v.c) {
       const k = c.oe ? monde.OEUF.sac : c.st ? 'bleu' : c.po ? 'brun' : (monde.SAC_DE_RARETE[c.ra] || 'brun');
-      rang = Math.max(rang, monde.SACS.indexOf(k));
+      const r = c.oe ? 2 * monde.SACS.indexOf(c.rn === 'Relic' ? 'blanc' : 'rouge') + 1 : 2 * monde.SACS.indexOf(k);
+      if (r > rang) { rang = r; k0 = k; }
     }
-    return monde.SACS[rang];
+    return k0;
   };
   for (const sac of l.concat(l2)) {
     const v = sacs.vue(sac);

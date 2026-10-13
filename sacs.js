@@ -70,8 +70,8 @@ function sousLesPieds(sacs, x, y) {
  * tous ceux qui le voient. La couleur se lit de loin ; elle dit ce que le
  * premier pas dessus aurait dit.
  *
- * Le rang suit `monde.SACS`, du plus commun au plus rare, l'oeuf en dernier :
- * un sac melange prend la couleur de sa meilleure place. Le commun et le rare
+ * Le rang suit `monde.SACS`, du plus commun au plus rare, et l'oeuf se range
+ * a sa rarete (`rangDe`) : un sac melange prend la couleur de sa meilleure place. Le commun et le rare
  * restent bruns (SAC_DE_RARETE, choix ecrit dans monde.js).
  */
 function couleurDe(o) {
@@ -81,11 +81,30 @@ function couleurDe(o) {
   if (o.item !== undefined && o.item !== null) return monde.SAC_DE_RARETE[o.rarete] || 'brun';
   return 'brun';   // potion de soin ou de mana
 }
+/* ---- L'OEUF SE RANGE A SA RARETE, PAS AU-DESSUS DE TOUT ----
+ * Relecture du 12/10/2026, decision du proprietaire du 13/10 : l'oeuf passait
+ * devant tout (dernier de monde.SACS). Une RELIQUE posee a cote d'un oeuf
+ * mythique disparaissait donc sous le turquoise et sous « MYTHIC EGG » : la
+ * seule trouvaille plus rare que l'oeuf ne se voyait plus de loin. L'oeuf se
+ * range maintenant a la rarete que lui donne `monde.rareteOeuf` : un oeuf
+ * mythique passe devant une piece mythique (egalite : l'oeuf gagne, comme
+ * avant), derriere une relique ; le prisme, relique, passe devant une
+ * relique. Les autres couleurs gardent l'ordre de monde.SACS. Rang double
+ * pour loger l'oeuf juste au-dessus de la couleur de sa rarete. */
+function rangDe(o) {
+  const c = couleurDe(o);
+  if (c === monde.OEUF.sac) {
+    const sacRarete = monde.SAC_DE_RARETE[monde.rareteOeuf(o.oeuf)] || 'rouge';
+    return 2 * monde.SACS.indexOf(sacRarete) + 1;
+  }
+  const i = monde.SACS.indexOf(c);
+  return i < 0 ? -1 : 2 * i;
+}
 function recolore(s) {
   if (!s || !Array.isArray(s.contenu)) return s && s.sac;
-  let rang = -1;
-  for (const o of s.contenu) rang = Math.max(rang, monde.SACS.indexOf(couleurDe(o)));
-  if (rang >= 0) s.sac = monde.SACS[rang];
+  let rang = -1, meilleur = null;
+  for (const o of s.contenu) { const r = rangDe(o); if (r > rang) { rang = r; meilleur = o; } }
+  if (meilleur) s.sac = couleurDe(meilleur);
   return s.sac;
 }
 
@@ -285,4 +304,4 @@ function vue(s) {
   };
 }
 
-module.exports = { sousLesPieds, contenuDe, couleurDe, recolore, teinteDe, depose, prend, vieillit, oubliePoseurs, vue };
+module.exports = { sousLesPieds, contenuDe, couleurDe, rangDe, recolore, teinteDe, depose, prend, vieillit, oubliePoseurs, vue };
