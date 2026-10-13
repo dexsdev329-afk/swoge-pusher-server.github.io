@@ -206,6 +206,9 @@ lance imagine "$SRV" node studio_imagine.test.js   # bouton magique SwoleMind : 
 lance derniere "$SRV" node derniere_image.test.js   # la derniere image d une video (ffmpeg) pour enchainer les scenes : la bonne image, fournisseurs seulement, null sans ffmpeg
 lance essai   "$SRV" node essai_montage.test.js   # essai de montage xAI : longueur lue dans les boites MP4, clip efface apres fini/rate/delai, cout des ticks, plafond du jour
 lance essairte "$SRV" node essai_montage_route.test.js   # essai de montage sur le vrai serveur : proprietaire seul, 403 avant le corps, faux xAI, aucun debit, cle jamais montree
+lance planches "$SRV" node planches_chaine.test.js   # planches iso : faux clips H.264 du mannequin a travers TOUTE la chaine ; le vrai passe, chaque defaut fabrique (miroir decale, taille, jambes, sol, boucle, glisse) fait tomber SON controle (~1 min)
+lance plposes "$SRV" node planches_poses.test.js   # poses OpenAI : plafond 2,50 $ verifie AVANT l appel (reserves en vol comprises), envoye avant / cout apres, ARRET (usage absent, cout > reserve, calibrage), cle jamais ecrite
+lance plroute "$SRV" node planches_route.test.js   # /studio/planches sur le vrai serveur : 403 avant le corps, lot refuse au plafond SANS appel, image = last_frame, 720p 5:2 muet, journal envoi/sent/cout, fichiers au seul proprietaire, reprise et ARRET
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
 lance economie "$SRV" node economie.test.js   # la carte $SWOGE ECONOMY : offre, brule, coffre lus sur la chaine
 lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
@@ -332,6 +335,7 @@ lance mondepage "$SITE" env SWOGE_SERVEUR="$SRV" node monde_page.test.js   # le 
 lance paripage "$SITE" node paris_page.test.js   # la page des paris
 lance paridirect "$SITE" node paris_direct.test.js   # le score en direct, du tableau d ESPN jusqu a la ligne de la page ; aucun bouton sur un match commence
 lance pariaccueil "$SITE" node paris_accueil.test.js
+lance spritelab "$SITE" node sprite_lab.test.js   # sprite_lab.html : bouger le monstre (clavier et manette), marche dans la bonne direction iso, repos a l arret, attaque une fois, 320/390/1440 sans defilement
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $NB suites · $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"

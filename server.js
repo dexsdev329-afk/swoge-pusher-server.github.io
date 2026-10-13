@@ -3334,6 +3334,13 @@ const essaiMontage = essaiMontageMod.cree({
   urlPublique: (nom) => MOI_URL + essaiMontageMod.VIDEO_PREFIXE + nom,
   journal: require('path').join(cfg.DATA_DIR, 'essai_montage.jsonl'),
 });
+/* Les planches de sprites iso (planches.js) : clips xAI epingles sur NOS poses,
+   proprietaire seul, plafond dur PLANCHES_PLAFOND_USD verifie avant chaque appel,
+   cout reel journalise, finition dans un processus a part (outils/planches/). */
+const planches = require('./planches').cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'planches'), fournisseur: studioXai,
+  journal: require('path').join(cfg.DATA_DIR, 'planches_essais.jsonl'), site: SITE_URL,
+});
 const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
@@ -6611,6 +6618,44 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (the picture must stay under 10 MB)' }); }
     const r = await kling.lance({ prompt: q && q.prompt, image: q && q.image, modele: q && q.modele, duree: q && q.duree, resolution: q && q.resolution, audio: q && q.audio });
     if (r.ok) journalKling({ id: r.id, modele: r.modele, duree: r.duree, resolution: r.resolution, audio: r.audio, image: r.image, estimationUsd: r.estimationUsd });
+    return json(r.ok ? 200 : (r.code || 500), r);
+  }
+  /* ---- LES PLANCHES DE SPRITES ISO (planches.js) — proprietaire seulement ----
+   * AI_OWNER revérifié a CHAQUE requete, avant toute lecture du corps ; le lot
+   * part pour l'adresse de la session (jamais une adresse du corps) ; aucun
+   * debit de $SWOGE (c'est le compte xAI du proprietaire qui paie) ; les clips,
+   * planches et fiches ne sortent que pour le proprietaire qui a lance le lot. */
+  if (path === '/studio/planches' || path.startsWith('/studio/planches/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!proprietaireIA(addr)) {
+      if (path === '/studio/planches' && req.method === 'GET') return json(200, { ok: true, proprietaire: false });
+      return json(403, { ok: false, raison: 'owner only (AI_OWNER on the server)' });
+    }
+    if (path === '/studio/planches' && req.method === 'GET') {
+      return json(200, Object.assign({ ok: true, proprietaire: true, actif: studioXai.actif() }, await planches.vue(addr)));
+    }
+    const fm = /^\/studio\/planches\/fichier\/([0-9a-f]{24})\/((?:[a-z_0-9]{1,32}\/)?[a-z_0-9]{1,48}\.(?:webp|png|json|mp4))$/.exec(path);
+    if (fm && req.method === 'GET') {
+      const x = planches.fichier(fm[1], fm[2], addr);
+      if (!x) return json(404, { ok: false, raison: 'unknown file' });
+      res.writeHead(200, Object.assign({ 'content-type': x.type, 'content-length': x.octets.length, 'cache-control': 'no-store' }, cors));
+      return res.end(x.octets);
+    }
+    const lm = /^\/studio\/planches\/lot\/([0-9a-f]{24})$/.exec(path);
+    if (lm && req.method === 'GET') { const r = planches.etat(lm[1], addr); return json(r.ok ? 200 : r.code, r); }
+    if (path !== '/studio/planches' || req.method !== 'POST') return json(404, { ok: false, raison: 'unknown' });
+    let q;
+    try { q = JSON.parse((await corps(req, 4 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    let r;
+    try { r = await planches.lance({ addr, lot: q && q.lot }); }    /* addr = la SESSION, jamais une adresse lue dans le corps */
+    catch (e) { console.error('[planches] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
     return json(r.ok ? 200 : (r.code || 500), r);
   }
   if (path === '/studio/essai-montage' || path.startsWith('/studio/essai-montage/')) {
