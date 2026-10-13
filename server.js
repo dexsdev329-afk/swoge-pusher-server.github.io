@@ -276,6 +276,7 @@ let calendrierAuto = null;          // les minuteries de l alimentation
 let enJeu = null;                   // les minuteries du direct en jeu (lot 7, observation)
 let tennisArme = null;              // les minuteries du verrou du tennis (11/10/2026, eteint par defaut)
 let communaute = null;              // new holder / believer / paper hand + releve (11/10/2026, TG_COMMUNAUTE, eteint par defaut)
+let smartMoney = null;              // detecteur smart money Robinhood Chain, lecture seule (13/10/2026, SMART_MONEY, eteint par defaut)
 let xQuotidien = null;
 let tgCmd = null;
 let horlogeAgents = null;           // les agents par jeton (AGENT_HORLOGE)
@@ -3363,6 +3364,21 @@ function osintDebit(req) {
   if (osintsVus.size > 5000) for (const [k, v] of osintsVus) if (now - v.t > 60000) osintsVus.delete(k);
   return true;
 }
+/* Les routes du detecteur smart money (13/10/2026) : 30 lectures par minute et
+   par IP. Elles ne lisent que la base locale ; la borne evite qu'une page en
+   boucle fasse tourner sql.js pour rien. CHOISI (la page en fait 1 par minute). */
+const SMART_PAR_MIN = 30;
+const smartsVus = new Map();
+function smartDebit(req) {
+  const ip = qui(req);
+  const now = Date.now();
+  const e = smartsVus.get(ip);
+  if (!e || now - e.t > 60000) smartsVus.set(ip, { n: 1, t: now });
+  else if (e.n >= SMART_PAR_MIN) return false;
+  else e.n++;
+  if (smartsVus.size > 5000) for (const [k, v] of smartsVus) if (now - v.t > 60000) smartsVus.delete(k);
+  return true;
+}
 /* Les offres de lancement V4 (03/10) : gratuites a preparer, mais chacune lit la liste des actions
    tokenisees — 20 par minute et par adresse IP. */
 const offresVues = new Map();
@@ -5440,6 +5456,27 @@ const server = http.createServer(async (req, res) => {
     /* En pause (AI_COLONIE=0), la vue le DIT : la page sert le dernier etat
        connu, et sans ce drapeau il se lirait comme une colonie en panne. */
     return res.end(JSON.stringify(Object.assign({ pause: cfg.AI_COLONIE !== '1' }, aiColonie.vue())));
+  }
+  /* Le detecteur smart money (13/10/2026) : public et en LECTURE, comme la
+     colonie. Les routes ne lisent que la base locale, jamais le reseau ; une
+     adresse se valide avant tout (400 sinon) ; 30 lectures par minute et par
+     IP (comme osintDebit). Eteint : { actif: false }. */
+  if (path === '/ai/smart' || path.startsWith('/ai/smart/')) {
+    const entete = { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
+    if (!smartDebit(req)) { res.writeHead(429, entete); return res.end(JSON.stringify({ erreur: 'too many requests' })); }
+    const I = smartMoney && smartMoney.instance;
+    if (path === '/ai/smart') {
+      res.writeHead(200, entete);
+      return res.end(JSON.stringify(I ? I.vue() : { actif: false, pret: false, mode: 'off' }));
+    }
+    const genre = { '/ai/smart/jeton': 'jeton', '/ai/smart/wallet': 'wallet', '/ai/smart/createur': 'createur' }[path];
+    const a = String(new URLSearchParams(req.url.split('?')[1] || '').get('a') || '');
+    if (!genre) { res.writeHead(404, entete); return res.end(JSON.stringify({ erreur: 'not found' })); }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(a)) { res.writeHead(400, entete); return res.end(JSON.stringify({ erreur: 'invalid address' })); }
+    const r = I ? I[genre](a.toLowerCase()) : null;
+    if (!r) { res.writeHead(404, entete); return res.end(JSON.stringify({ erreur: I && I.vue().pret ? 'unknown address' : 'detector off or not ready', actif: !!(smartMoney && smartMoney.actif) })); }
+    res.writeHead(200, entete);
+    return res.end(JSON.stringify(r));
   }
   /* ======================= ARRIVER D'UNE AUTRE CHAINE =======================
    *
@@ -11346,6 +11383,12 @@ server.listen(cfg.PORT, () => {
     },
     imageCle: !!process.env.OPENAI_API_KEY,     // sa PRESENCE, jamais sa valeur
   });
+  /* Le detecteur smart money (13/10/2026) : LECTURE SEULE de la chaine et de
+     GeckoTerminal/DexScreener ; alertes et rapport au PROPRIETAIRE seul
+     (notifyPrive : TG_BACKUP_CHAT_ID, conversation privee verifiee), jamais
+     sur le canal public. SMART_MONEY vide = rien (ni minuterie, ni requete,
+     ni fichier). L'URL du noeud (SMART_RPC_URL) n'est jamais journalisee. */
+  smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER });
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */
@@ -11388,6 +11431,7 @@ function shutdown() {
   if (enJeu) enJeu.arrete();
   if (tennisArme) tennisArme.arrete();
   if (communaute) communaute.arrete();
+  if (smartMoney) smartMoney.arrete();      // sauvegarde de la base, synchrone
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();
