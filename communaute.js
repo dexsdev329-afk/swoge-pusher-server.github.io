@@ -351,8 +351,14 @@ const SEUIL_LIEN = 1000n * E18;                  // = SEUIL_DETENTEUR (plus bas)
    couts, liens, cours) est RECONSTRUIT une fois, en gardant ce qui a deja ete
    dit (annonces, recharges, releves) — jamais remis a neuf (VERSION_ETAT).
    3 (12/10/2026) : `tenue` (voir TENUE) — un etat au schema 2 n a pas l heure
-   d entree de ses detenteurs, il est reconstruit une fois. */
-const SCHEMA = 3;
+   d entree de ses detenteurs, il est reconstruit une fois.
+   4 (13/10/2026) : l entree devient { t, b, h, comment, de, origine } (voir
+   ENTREE) — un etat au schema 3 n a que l heure (un nombre), ni la tx ni le
+   chemin : il est reconstruit une fois depuis la frappe (~3 min sans annonce,
+   bornee au curseur de l ancien etat comme les migrations d avant). Tant que
+   la reconstruction n a pas abouti, un nombre se lit comme { t } : la duree
+   reste dite, la ligne d entree ne l est pas (rien d invente). */
+const SCHEMA = 4;
 
 /* ---- TENUE : DEPUIS QUAND IL TENAIT (12/10/2026) ----
  * Le proprietaire, sur une annonce « Paper hand » : « tu pourrais rajouter ca
@@ -370,6 +376,50 @@ const SCHEMA = 3;
  * lot. Deux segments voisins different d au plus 0,9 ms/bloc, soit ~2 h sur
  * 10 jours au pire : au-dela de 48 h la duree s ecrit en JOURS arrondis. */
 const ANCRE_PAS = 8640000;                        // ~10 jours a ~100 ms/bloc
+
+/* ---- ENTREE : QUAND ET COMMENT IL ETAIT ENTRE (13/10/2026) ----
+ * Le proprietaire, sur l annonce « 0x7a1d…165f sold 21.7M $SWOGE (~$745) and
+ * left after 9 days » : « donne le wallet ou ca a ete achete, la ca a ete
+ * transfere d un wallet vers un autre et ensuite il a seulement vendu ; dis a
+ * quelle heure, comme ca on retrouve la TX dans l explorateur ».
+ * Sonde du 13/10 (RPC officiel, 93 appels, 0 refus ; pointe 87 402 126 a 09:20
+ * UTC ; 8 394 Transfer, 5 746 Sync depuis la frappe) :
+ *  - le cas : l entree de 0x7a1d…165f (tx 0x1963a383…, 2026-10-03 22:03:01 UTC)
+ *    est un ACHAT a la paire v2 : paire → 0x09215a47… → 0xb92fe925… → 0x7a1d,
+ *    les deux intermediaires sont des contrats (44 782 et 9 442 octets de code,
+ *    net nul), la tx est signee par un relais. L explorateur montre le jeton
+ *    arriver « de 0xb92fe925… » : c est le dernier saut d un routeur, pas un
+ *    autre wallet ;
+ *  - 118 detenteurs (personnes >= 1 000) : 86 entres par un achat (72,9 %), 18
+ *    par envoi d une personne (15,3 %) dont 17 d un portefeuille entre lui-meme
+ *    par un achat (16 a un saut, 1 a deux), 14 autrement (11 portefeuilles de
+ *    frais passes a 1 000 dans l echange d un autre, une conversion $SWOGEBET,
+ *    un echange partage avec un contrat, un retrait du coffre du casino) ;
+ *  - 53 paper hands en 30 jours : entree par achat 48 (90,6 %), par envoi d un
+ *    portefeuille qui avait achete 3 (5,7 %), autre 2, inconnue 0 ; aucune
+ *    entree par achat dont le sac serait venu ensuite surtout par envoi (0/53) ;
+ *  - 144 entrees par envoi dans l histoire : 0 tx a plus d un envoyeur (net
+ *    negatif) — « celui qui a envoye le plus » est l envoyeur unique observe ;
+ *  - l heure gardee est INTERPOLEE entre les ancres (voir TENUE) : sur 140 blocs
+ *    d entree et d origine, minute juste pour 27 seulement, ecart median 1,7
+ *    min, maximum 54 min. « UTC a la minute » se LIT donc dans l en-tete du bloc,
+ *    au moment d annoncer : un lot de 1 ou 2 eth_getBlockByNumber par paper hand
+ *    qui part (~2,7 par jour), rien pour celles que les seuils taisent.
+ * L entree d un detenteur (S.tenue) : { t (ms, l heure gardee), b (bloc), h
+ * (tx), comment, de, origine }. `comment` : « achat » si la personne est le
+ * BENEFICIAIRE d un achat de marche dans cette tx (la regle de classe, la meme
+ * que les annonces) ; « envoi » si la tx ne touche aucune piscine et que
+ * l adresse au plus grand net negatif (le plus gros envoyeur) est une personne,
+ * `de` ; absent sinon (frais pris dans l echange d un autre, conversion,
+ * liquidite, contrat ou maison qui envoie) — l heure et la tx restent, le
+ * comment ne s invente pas. `origine` (envoi) : { h, b, t, qui } de l achat qui
+ * a fait entrer l envoyeur, lu AVANT que l envoi ne l efface ; s il etait entre
+ * lui-meme par envoi, son origine est reprise (deux sauts ou plus, `qui` dit
+ * l acheteur). Hors de la fenetre des recus (8 jours), la construction classe
+ * sans recu : piscines de marche par S.autres (WETH, USDG ; pas le v4), la
+ * liquidite de la paire par ses Sync — comme le prix d achat moyen (COUT).
+ * Le texte : une ligne 📥 sous « and left after », jamais d accusation : on
+ * decrit une tx et des wallets. Sans entree connue : aucune ligne. */
 
 /* ---- LES PISCINES, DETAILLEES (12/10/2026) ----
  * Le proprietaire, sur « 67.5% of supply outside pools » : « alors que je vois
@@ -596,6 +646,21 @@ function dureeTenue(ms) {
   if (min < 120) return pluriel(Math.max(1, min), 'minute');
   if (ms < 48 * 3600000) return pluriel(Math.round(ms / 3600000), 'hour');
   return pluriel(Math.round(ms / 86400000), 'day');
+}
+/** Une entree lue dans S.tenue (voir ENTREE) : un nombre (etat du schema 3) ne
+ *  porte que l heure, { t } ; un objet sans heure lisible ne vaut rien. */
+function entreeDe(x) {
+  if (typeof x === 'number') return isFinite(x) ? { t: x } : null;
+  if (!x || typeof x !== 'object' || typeof x.t !== 'number' || !isFinite(x.t)) return null;
+  return x;
+}
+/** « Oct 3, 22:03 UTC » : l heure d un bloc en UTC, a la minute (jamais l heure
+ *  locale du serveur) ; l annee seulement si elle differe de celle de `ref`. */
+function heureUtc(t, ref) {
+  const d = new Date(t);
+  const an = typeof ref === 'number' && new Date(ref).getUTCFullYear() !== d.getUTCFullYear() ? `, ${d.getUTCFullYear()}` : '';
+  const hh = String(d.getUTCHours()).padStart(2, '0'), mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${MOIS[d.getUTCMonth()]} ${d.getUTCDate()}${an}, ${hh}:${mm} UTC`;
 }
 /** Le detail des piscines (voir LES PISCINES, DETAILLEES) : « · pools: 20.6% ETH · 11.8% $SWOGEBET ». */
 function detailPools(parts) {
@@ -1061,13 +1126,36 @@ function cree(deps0) {
       if (ap >= SEUIL_DETENTEUR) S.deja.add(a);
     }
   }
-  /** L heure d entree des detenteurs (voir TENUE), apres une transaction deja
-   *  appliquee : posee au passage du seuil vers le haut, effacee sous le seuil. */
-  function noteTenue(net, avant, t) {
+  /** L entree des detenteurs (voir TENUE et ENTREE), apres une transaction deja
+   *  appliquee : posee au passage du seuil vers le haut, effacee sous le seuil.
+   *  `tx` : { h, b } ; `k` : son genre (classe), null si elle n en a pas.
+   *  L entree de l ENVOYEUR est lue avant tout effacement : il peut passer sous
+   *  le seuil dans la tx meme ou il envoie (un sac deplace en entier). */
+  function noteTenue(net, avant, t, tx, k) {
+    const neuves = new Map();
+    if (typeof t === 'number' && isFinite(t)) {
+      /* un envoi : aucune piscine dans la tx (comme LIENS), et le plus gros
+         envoyeur — le plus grand net negatif — est une personne */
+      const touche = [...net.keys()].some((a) => S.pools.has(a));
+      let env = null, q = 0n;
+      for (const [a, d] of net) if (d < 0n && -d > q) { env = a; q = -d; }
+      for (const a of net.keys()) {
+        if (!(avant.get(a) < SEUIL_DETENTEUR && solde(a) >= SEUIL_DETENTEUR)) continue;
+        const e = { t: Math.round(t) };
+        if (tx && tx.h) { e.h = tx.h; e.b = tx.b; }
+        if (k && k.qui === a && k.achat) e.comment = 'achat';
+        else if (!touche && env && env !== a && personne(env)) {
+          e.comment = 'envoi'; e.de = env;
+          const s = entreeDe(S.tenue[env]);
+          if (s && s.comment === 'achat' && s.h) e.origine = { h: s.h, b: s.b, t: s.t, qui: env };
+          else if (s && s.comment === 'envoi' && s.origine && s.origine.h) e.origine = Object.assign({}, s.origine);
+        }
+        neuves.set(a, e);
+      }
+    }
     for (const a of net.keys()) {
-      const av = avant.get(a), ap = solde(a);
-      if (ap < SEUIL_DETENTEUR) delete S.tenue[a];
-      else if (av < SEUIL_DETENTEUR && typeof t === 'number' && isFinite(t)) S.tenue[a] = Math.round(t);
+      if (solde(a) < SEUIL_DETENTEUR) delete S.tenue[a];
+      else if (neuves.has(a)) S.tenue[a] = neuves.get(a);
     }
   }
   function regroupe(logs, apres) {
@@ -1379,6 +1467,9 @@ function cree(deps0) {
     S.soldes = new Map(); S.deja = new Set(); S.jours = {}; S.photos = {}; S.horaires = [];
     S.couts = {}; S.liens = {}; S.vus = new Set(); S.coursW = []; S.evts = []; S.tenue = {};
     let iJ = 0, iH = 0;
+    /* hors de la fenetre des recus, le sens d une entree se lit sans recu (voir
+       ENTREE) : les piscines de marche par l autre jeton, le v4 jamais */
+    const marchesSansRecu = new Set([...S.pools].filter((p) => p !== PM4 && VALEUR.has(S.autres[p])));
     const photo = (jour, t) => { S.photos[jour] = photoDe(jour, t, { reconstruit: true }); };
     const bornes = (b, bH) => {
       while (iJ < finsJour.length && blocDe(finsJour[iJ].t) < b) { photo(finsJour[iJ].jour, finsJour[iJ].t); iJ++; }
@@ -1390,15 +1481,18 @@ function cree(deps0) {
       const j = jambes.get(tx.h);
       const dansFenetre = tx.b >= debutFenetre;
       const r = dansFenetre ? recus.get(tx.h) : null;
+      let k = null;
       if (dansFenetre) {
         const t = tempsDe(tx.b);
-        const k = genreDe(tx, net, avant, recus, false);
+        k = genreDe(tx, net, avant, recus, false);
         if (k && k.qui) noteJour(t, k);
         passages(net, avant, t, k);
       } else {
         for (const a of net.keys()) if (solde(a) >= SEUIL_DETENTEUR) S.deja.add(a);
+        /* le genre ne sert ici qu a l entree : une liquidite de la paire (Sync) n en a pas */
+        if (!(j && j.liq)) k = classe(net, avant, marchesSansRecu);
       }
-      noteTenue(net, avant, tempsDe(tx.b));
+      noteTenue(net, avant, tempsDe(tx.b), tx, k);
       /* le cout de TOUT l historique (voir COUT) : la jambe des Sync, la
          liquidite par le sens des reserves, ou par le recu dans la fenetre */
       suit(net, j ? { dW: j.dW, liq: j.liq || !!(r && r.liq) } : null, tx.logs);
@@ -1477,6 +1571,26 @@ function cree(deps0) {
     return `🔗 Linked by direct $SWOGE transfers: ${vus}${tri.length > 3 ? ` +${tri.length - 3} more` : ''} · ` +
            `<b>${fmtJetons(total)} $SWOGE</b> across ${g.length + 1} wallets (not proof of a single owner)`;
   }
+  /** La ligne d entree d une paper hand (voir ENTREE) : quand (UTC, en-tete du
+   *  bloc), comment (achat, ou envoi et par qui) et, pour un envoi, l achat
+   *  d origine ; null sans tx d entree connue — rien d invente. */
+  const HASH = /^0x[0-9a-fA-F]{64}$/, ADR = /^0x[0-9a-f]{40}$/;
+  function ligneEntree(ev) {
+    const e = ev.entree;
+    if (!e || !HASH.test(String(e.h))) return null;
+    const lien = (h, mot) => `<a href="${deps.explorer}/tx/${h}">${mot} ↗</a>`;
+    const quand = typeof e.tBloc === 'number' ? `In since ${heureUtc(e.tBloc, ev.t)}` : 'Entry';
+    if (e.comment === 'achat') return `📥 ${quand} · ${lien(e.h, 'bought')}`;
+    if (e.comment !== 'envoi' || !ADR.test(String(e.de))) return `📥 ${quand} · ${lien(e.h, 'tx')}`;
+    let l = `📥 ${quand} · ${lien(e.h, 'received')} from ${lienAdr(e.de)}`;
+    const o = e.origine;
+    if (!o || !HASH.test(String(o.h))) return l;
+    const achat = lien(o.h, 'bought' + (typeof o.tBloc === 'number' ? ` on ${heureUtc(o.tBloc, ev.t)}` : ''));
+    if (o.qui === e.de) l += `, who ${achat}`;
+    else if (o.qui === ev.qui) l += ` · first ${achat} by this wallet`;
+    else if (ADR.test(String(o.qui))) l += ` · first ${achat} by ${lienAdr(o.qui)}`;
+    return l;
+  }
   function texte(ev) {
     const usd = ev.usd === null ? '' : ` (~${fmtUsd(ev.usd)})`;
     let tete;
@@ -1499,6 +1613,13 @@ function cree(deps0) {
       tete = '🧻 <b>Paper hand</b>';
       const apresTenue = typeof ev.tenueMs === 'number' && isFinite(ev.tenueMs) ? ` after ${dureeTenue(ev.tenueMs)}` : '';
       corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left${apresTenue}${ev.apres >= 1 ? ` (kept ${fmtJetons(ev.apres)})` : ''}`);
+      /* sous « and left after », la ligne d entree (voir ENTREE). Longueur : la
+         ligne la plus longue (deux sauts) fait 112 signes visibles, 124 avec deux
+         annees ; l annonce entiere au pire de chaque champ en fait 654, sous les
+         1 024 de la legende (essai R10) ; les annonces reelles rejouees : 383 a
+         468. Une ligne de plus ne fait donc jamais tomber la photo. */
+      const le = ligneEntree(ev);
+      if (le) corps.push(le);
       corps.push(lignePnl(ev));
       corps.push(`<i>${blaguePaper(ev)}</i>`);
     }
@@ -1545,6 +1666,25 @@ function cree(deps0) {
       if (x && String(x.from || '').toLowerCase() === ev.qui && n >= 0 && n <= NONCE_NEUF_MAX) { ev.frais = n; compte('neufs'); }
     } catch (e) { compte('noncesIllisibles'); }
   }
+  /** L heure EXACTE de l entree d une paper hand et de son achat d origine (voir
+   *  ENTREE) : l en-tete de leurs blocs, un lot de 1 ou 2 appels, seulement pour
+   *  une annonce qui part. Illisible : la ligne garde ses liens, sans l heure. */
+  async function heuresEntree(ev) {
+    const e = ev.entree;
+    if (ev.genre !== 'paper' || !e || !e.h) return;
+    const qui = [e, e.origine].filter((x) => x && x.h && Number.isInteger(x.b) && x.b > 0);
+    if (!qui.length) return;
+    try {
+      const rep = await lot(qui.map((x) => ['eth_getBlockByNumber', [hex(x.b), false]]));
+      rep.forEach((r, i) => {
+        const x = r && r.result;
+        /* l en-tete du BON bloc, ou rien */
+        if (x && parseInt(x.number, 16) === qui[i].b && /^0x[0-9a-fA-F]+$/.test(String(x.timestamp))) qui[i].tBloc = parseInt(x.timestamp, 16) * 1000;
+        else compte('heuresEntreeIllisibles');
+      });
+      compte('heuresEntreeLues');
+    } catch (err) { compte('heuresEntreeIllisibles'); }
+  }
   /** Le tri d un evenement annoncable : retard, prix, montant, recharge, plafond. */
   async function trie(ev, now, aEnvoyer) {
     /* chaque raison est comptee PAR GENRE (ex. recharge_paper) : c est ce que
@@ -1567,6 +1707,7 @@ function cree(deps0) {
     S.heure.n++;
     ecarte('annonce');
     await nonceNeuf(ev);
+    await heuresEntree(ev);
     aEnvoyer.push({ image: imageDuGenre(ev.genre), legende: texte(ev), quoi: ev.genre });
   }
   /** L heure a tourne : le surplus de l heure finie part en UN message. */
@@ -1844,10 +1985,17 @@ function cree(deps0) {
             compte('genre_' + k.genre);
             if (k.qui) noteJour(t, k);
           }
-          /* depuis quand il tenait (voir TENUE) : lu AVANT que la sortie l efface */
-          if (k && k.qui && k.genre === 'paper') k.tenueMs = typeof S.tenue[k.qui] === 'number' ? Math.max(0, t - S.tenue[k.qui]) : null;
+          /* depuis quand il tenait, et par quelle tx il etait entre (voir TENUE,
+             ENTREE) : lus AVANT que la sortie les efface ; une copie, l annonce
+             y ajoute les heures des en-tetes */
+          if (k && k.qui && k.genre === 'paper') {
+            const e = entreeDe(S.tenue[k.qui]);
+            k.tenueMs = e ? Math.max(0, t - e.t) : null;
+            k.entree = e && e.h ? JSON.parse(JSON.stringify(e)) : null;
+            compte('entree_' + (!k.entree ? 'inconnue' : k.entree.comment || 'autre'));
+          }
           passages(net, avant, t, k);
-          noteTenue(net, avant, t);
+          noteTenue(net, avant, t, tx, k);
           if (k && GENRES_ANNONCES.has(k.genre)) {
             n++;
             await trie(Object.assign({ h: tx.h, t, ligne: ligneCommunaute(now), usd: null }, k), now, aEnvoyer);
@@ -1940,6 +2088,7 @@ function cree(deps0) {
       (C.heureBrute !== C.heure ? ` (TG_COMMUNAUTE_HEURE=${C.heureBrute} illisible)` : '') +
       `, detenteur >= 1 000 $SWOGE, seuils new ${MIN_USD.nouveau} $ / believer ${MIN_USD.believer} $ / paper ${MIN_USD.paper} $ / partielle ${MIN_USD.partielle} $ et ${PARTIELLE_PART_MIN * 100} % du sac, 1 annonce par adresse et par famille en 24 h, ${PLAFOND_HEURE}/h, rien au-dela de 30 min de retard` +
       `, gain/perte en ETH contre le prix d achat moyen, portefeuilles relies par envoi direct >= 1 000 $SWOGE (degre <= ${DEGRE_MAX}), cours 7 jours sur la chaine` +
+      `, entree des paper hands (tx, achat ou envoyeur, achat d origine, heure UTC lue dans l en-tete)` +
       (C.exclus.length ? `, ${C.exclus.length} adresse(s) exclue(s) en plus` : '');
     if (C.mode === 'observe') return `[communaute] OBSERVATION (TG_COMMUNAUTE=observe) : ${base} — n annonce rien, aucune image`;
     return `[communaute] ANNONCES ARMEES (TG_COMMUNAUTE=1) sur le canal public : ${base} ; images ${deps.imageCle ? 'generees une fois (OPENAI_API_KEY posee)' : 'absentes : OPENAI_API_KEY non posee, texte seul'}`;
@@ -1992,7 +2141,7 @@ module.exports = {
   TOPIC_MODIFY_V4, WETH, USDG, VALEUR, LOT_RECUS,
   TOPIC_SYNC, TOPIC_SWAP_V3, PISCINE_ETH_USD, DECIMALES_USDG, FENETRE_ETH_USD, PART_CONNUE_MIN, EQUILIBRE_PCT,
   NONCE_NEUF_MAX, DEGRE_MAX, GROUPE_MAX, SEUIL_LIEN, FRAIS_VENTE_MAX, SCHEMA, PARTIELLE_PART_MIN,
-  ANCRE_PAS, BLAGUES_PAPER, dureeTenue, blaguePaper, SWOGEBET, PART_POOL_MIN, detailPools,
+  ANCRE_PAS, BLAGUES_PAPER, dureeTenue, blaguePaper, SWOGEBET, PART_POOL_MIN, detailPools, entreeDe, heureUtc,
   SCENES, GENRES_IMAGE, VERSION_IMAGES, ESSAIS_IMAGE_MAX, COUT_IMAGE_USD, ESPACE_RPC_MS, LOT_CODES, ESPACE_LOTS_MS,
   minuitParis, jourParis, fmtJetons,
 };
