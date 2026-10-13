@@ -57,12 +57,24 @@ async function images({ api, prompt, n, format, image }) {
   return { urls, usage: j.usage || null };
 }
 
-/** Lance une vidéo (asynchrone) : rend l'identifiant à interroger. */
-async function lanceVideo({ api, prompt, duree, resolution, format, image, references, voix }) {
+/** Lance une vidéo (asynchrone) : rend l'identifiant à interroger.
+ *  Planches de sprites (planches.js) : `lastFrame` épingle la dernière image et
+ *  `keyframes` [{image, t}] des images au milieu du clip — « grok-imagine-video-1.5 »
+ *  seulement ; « To loop a clip, pass the same image as image and last_frame ».
+ *  `audio: false` demande une vidéo muette (`generate_audio: false`). Lu le
+ *  12 octobre 2026 dans docs.x.ai (video/reference-to-video, video/generation) :
+ *  last_frame {url}, keyframes [{image: {url}, timestamp_s}] au plus 4, sur une
+ *  grille de 1/3 s, strictement dans le clip. La référence REST du même jour ne
+ *  liste ni last_frame en premier niveau ni generate_audio : le premier appel
+ *  (la sonde) dira s'ils sont acceptés. Les appelants existants ne changent pas. */
+async function lanceVideo({ api, prompt, duree, resolution, format, image, references, voix, lastFrame, keyframes, audio }) {
   const corps = { model: api, duration: duree, resolution };
   if (prompt) corps.prompt = prompt;
   if (format && format !== 'auto') corps.aspect_ratio = format;
   if (image) corps.image = { url: image };
+  if (lastFrame) corps.last_frame = { url: lastFrame };
+  if (keyframes && keyframes.length) corps.keyframes = keyframes.map((k) => ({ image: { url: k.image }, timestamp_s: k.t }));
+  if (audio === false) corps.generate_audio = false;
   /* Les memes personnages et les memes voix d'une scene a l'autre (series, pubs). */
   if (references && references.length) corps.reference_images = references.map((u) => ({ url: u }));
   if (voix && voix.length) corps.reference_audios = voix.map((v) => ({ voice_id: v }));
