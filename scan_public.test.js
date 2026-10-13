@@ -220,9 +220,18 @@ require.cache[tg] = { id: tg, filename: tg, loaded: true, exports: {
     /* L intention n a jamais ete « trois », c est « aucune ne s ajoute sans
        qu on le decide ». La liste est donc NOMMEE : le SDK Anthropic (SWOGE AI
        Chat, 24 septembre 2026) y est entre en connaissance de cause — du JS
-       pur, sans script d installation ni fichier `.node`. */
-    const CONNUES = ['@anthropic-ai/sdk', 'cannon-es', 'ethers', 'ws'];
+       pur, sans script d installation ni fichier `.node`.
+       @simplewebauthn/server (verrou Face ID du portefeuille, commit e634f03 du
+       06/10) etait entre sans etre ajoute ici : cet essai etait rouge depuis
+       (1/62, _logs/scanpub.log du 12/10). sql.js 1.14.2 et viem 2.56.9 (detecteur
+       smart money, 13/10) : versions EXACTES, lues sur le registre ; le verrou
+       gagne 14 entrees, aucune n a de script d installation (hasInstallScript),
+       `npm audit --omit=dev` reste a 15 alertes avant comme apres (aucune ajoutee). */
+    const CONNUES = ['@anthropic-ai/sdk', '@simplewebauthn/server', 'cannon-es', 'ethers', 'sql.js', 'viem', 'ws'];
     eq(deps.slice().sort().join(', '), CONNUES.join(', '), 'le depot n a que ses dependances connues');
+    const verrou = JSON.parse(fs.readFileSync(path.join(__dirname, 'package-lock.json'), 'utf8'));
+    const scripts = Object.entries(verrou.packages || {}).filter(([, v]) => v && v.hasInstallScript).map(([k]) => k);
+    eq(scripts.join(', '), '', 'aucune dependance n execute de script a l installation (verrou)');
     ok(!deps.some((d) => /sharp|canvas|resvg|jimp|puppeteer/.test(d)),
        'aucune n est un moteur de rendu : ils embarquent des binaires natifs qui cassent un deploiement');
     const src = fs.readFileSync(path.join(__dirname, 'carte_png.js'), 'utf8');
