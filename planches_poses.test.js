@@ -12,7 +12,11 @@
  *   3. usage absent, ou cout au-dela de la reserve, ou plus de 12 000 jetons
  *      par image d'entree au premier appel : ARRET, et plus rien ne part ;
  *   4. un journal perdu alors que des poses existent : refus ;
- *   5. la cle n'apparait ni dans le journal, ni dans une reponse, ni dans une erreur.
+ *   5. la cle n'apparait ni dans le journal, ni dans une reponse, ni dans une erreur ;
+ *   6. la connexion coupee APRES qu'OpenAI a recu l'appel (ou un 5xx) : la reserve
+ *      reste comptee (cout inconnu = cout plein) et ARRET — seul un 4xx vaut 0 $ ;
+ *   7. la ligne de commande garde UN journal, quel que soit --dossier : un dossier
+ *      neuf ne remet pas la depense a zero ; un plafond passe ne peut que baisser.
  * ==========================================================================*/
 const http = require('http');
 const fs = require('fs');
@@ -110,8 +114,37 @@ const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001000000010806000
   const l8 = fs.readFileSync(path.join(d5, 'journal_openai.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
   ok(l8.statut === 'erreur' && l8.coutUsd === 0, 'un refus HTTP sans image est journalise a 0 $');
 
+  console.log('\n-- 6. coupure apres reception, et 5xx --');
+  let recusCoupe = 0;
+  const coupe = http.createServer((q2) => { q2.on('data', () => {}); q2.on('end', () => { recusCoupe++; q2.socket.destroy(); }); });
+  await new Promise((res) => coupe.listen(0, '127.0.0.1', res));
+  const d6 = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-poses-'));
+  const E6 = P.cree({ dossier: d6, base: 'http://127.0.0.1:' + coupe.address().port });
+  const r9 = await E6.appelle({ nom: 'pirate', n: 2, toile: PNG, ancienne: PNG });
+  const l9 = fs.readFileSync(E6.JOURNAL, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
+  ok(recusCoupe === 1 && !r9.ok && l9.statut === 'inconnu' && l9.coutUsd === P.reserveDepart(2) && E6.etat().depense === P.reserveDepart(2),
+     'OpenAI a recu l appel puis la connexion tombe : statut inconnu, la reserve (' + l9.coutUsd + ' $) reste comptee [' + l9.statut + ' ' + l9.coutUsd + ']');
+  ok(fs.existsSync(E6.ARRET) && !E6.peut(1).ok, 'et ARRET : plus aucun appel tant qu un humain n a pas relu la facturation');
+  const d7 = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-poses-'));
+  const E7 = P.cree({ dossier: d7, base });
+  reponse = () => ({ statut: 502, corps: { error: { message: 'bad gateway' } } });
+  const r10 = await E7.appelle({ nom: 'pirate', n: 1, toile: PNG, ancienne: PNG });
+  ok(!r10.ok && E7.etat().depense === P.reserveDepart(1) && fs.existsSync(E7.ARRET), 'un 502 : la reserve reste comptee, ARRET');
+  coupe.close();
+
+  console.log('\n-- 7. un seul journal pour la ligne de commande --');
+  const maison = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-maison-'));
+  const homeAvant = process.env.HOME; process.env.HOME = maison;
+  const A = P.creeCommande({ dossier: path.join(maison, 'A'), base }), B = P.creeCommande({ dossier: path.join(maison, 'B'), base });
+  fs.mkdirSync(path.dirname(A.JOURNAL), { recursive: true });
+  fs.appendFileSync(A.JOURNAL, JSON.stringify({ id: 'x', statut: 'fini', n: 2, coutUsd: 2.45 }) + '\n');
+  const pb = B.peut(1);
+  ok(A.JOURNAL === B.JOURNAL && A.JOURNAL.startsWith(maison) && !pb.ok && /cap/.test(pb.raison), 'deux --dossier differents : le meme journal, 2,45 $ deja depenses vus des deux cotes, appel refuse');
+  process.env.HOME = homeAvant;
+  ok(P.cree({ dossier: d7, base, plafond: 1000 }).PLAFOND === 2.5, 'un plafond passe a 1 000 $ reste a 2,50 $ (il ne peut que baisser)');
+
   faux.close();
-  for (const d of [dossier, d2, d3, d4, d5]) fs.rmSync(d, { recursive: true, force: true });
+  for (const d of [dossier, d2, d3, d4, d5, d6, d7, maison]) fs.rmSync(d, { recursive: true, force: true });
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });
