@@ -339,6 +339,7 @@ lance paripage "$SITE" node paris_page.test.js   # la page des paris
 lance paridirect "$SITE" node paris_direct.test.js   # le score en direct, du tableau d ESPN jusqu a la ligne de la page ; aucun bouton sur un match commence
 lance pariaccueil "$SITE" node paris_accueil.test.js
 lance spritelab "$SITE" node sprite_lab.test.js   # sprite_lab.html : bouger le monstre (clavier et VRAI toucher), la ligne DESSINEE suit la direction, il avance le long de son axe iso, repos a l arret, attaque une fois, HD, WASD apres un reglage, manette visible sans defiler, ?server= ne recoit jamais le jeton, 320/390/1440 sans defilement
+lance plpage "$SITE" node planches_essai_page.test.js   # planches_essai.html : les lots de demandes.json, pire cas et reste du serveur, Run grise sans session, hors proprietaire, au-dessus du reste, entree invalide, ARRET ou lot en cours ; POST {lot} seul avec le jeton, suivi jusqu a la fin, fichiers lus avec le jeton (blob), refus echappe, ?server= ne recoit jamais le jeton, 320 px
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $NB suites · $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"
