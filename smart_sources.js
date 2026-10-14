@@ -42,6 +42,16 @@ const DS_ESPACE_MS = 1000;
 const DS_RECUL_MS = 60000;            // CHOISI : 0 refus DexScreener sur 27 appels (13/10), rien a mesurer
 const GT_BUDGET_PASSE = 16;           // ~16 appels par passe de 30 min (chiffrage des sources du 13/10)
 const DS_BUDGET_PASSE = 60;
+/* La decouverte historique (lot du 14/10) a SON budget, a cote de celui de la
+   passe, mais le MEME espacement et le meme abandon (meme IP, meme quota).
+   Mesure du 14/10 (fenetre de 2^22 blocs autour d'astro) : 22 453 jetons nes
+   contre l'ETH, 96 % inconnus de DexScreener (11 503 sur 12 000 juges) ;
+   DexScreener permet 300 appels/min sur tokens/v1 (doc), on en fait 1/s : 100
+   appels = 3 000 jetons juges en ~100 s par passe. GeckoTerminal : 8 OHLCV de
+   plus par passe (1/min), soit au plus ~0,8 appel/min avec la passe (la doc
+   dit ~10/min, partages avec la colonie ~1,2/min). CHOISIS. */
+const DS_BUDGET_HISTO = 100;
+const GT_BUDGET_HISTO = 8;
 const PURGE_MS = 7 * 24 * 3600e3;
 /* Le filtre « jeton serieux » (releve des sources du 13/10, 395 jetons, 52 pages) :
    >= 50 acheteurs ou vendeurs sur 24 h ; le compte de jetons >= 1 M$ tient
@@ -113,7 +123,7 @@ function pairesDs(l) {
       base: { adresse: adr(p.baseToken && p.baseToken.address), symbole: net(p.baseToken && p.baseToken.symbol, 24) },
       quote: { adresse: adr(p.quoteToken && p.quoteToken.address), symbole: net(p.quoteToken && p.quoteToken.symbol, 24) },
       prixUsd: nombre(p.priceUsd), prixNatif: nombre(p.priceNative), fdv: nombre(p.fdv), mcap: nombre(p.marketCap),
-      liquiditeQuote: nombre(p.liquidity && p.liquidity.quote), creee: nombre(p.pairCreatedAt), txns24: (Number(tx.buys) || 0) + (Number(tx.sells) || 0),
+      liquiditeQuote: nombre(p.liquidity && p.liquidity.quote), liquiditeUsd: nombre(p.liquidity && p.liquidity.usd), creee: nombre(p.pairCreatedAt), txns24: (Number(tx.buys) || 0) + (Number(tx.sells) || 0),
     });
   }
   return out;
@@ -184,7 +194,7 @@ function cree(deps0) {
   const deps = Object.assign({
     prendre: (...a) => fetch(...a), horloge: () => Date.now(), dors: (ms) => new Promise((r) => setTimeout(r, ms)),
     dossier: null, gtEspaceMs: GT_ESPACE_MS, gtReculMs: GT_RECUL_MS, dsEspaceMs: DS_ESPACE_MS, dsReculMs: DS_RECUL_MS,
-    gtBudget: GT_BUDGET_PASSE, dsBudget: DS_BUDGET_PASSE, journal: null,
+    gtBudget: GT_BUDGET_PASSE, dsBudget: DS_BUDGET_PASSE, gtBudgetHisto: GT_BUDGET_HISTO, dsBudgetHisto: DS_BUDGET_HISTO, journal: null,
   }, deps0 || {});
   const etat = {
     gt: { appels: 0, refus: 0, passe: 0, refusPasse: 0, prochain: 0, abandon: false },
@@ -208,16 +218,17 @@ function cree(deps0) {
   }
 
   /** Un GET poli. Rend le JSON, ou null (refus, budget, abandon). */
-  async function lit(qui, url, nom, entetes) {
+  async function lit(qui, url, nom, entetes, histo) {
     const E = etat[qui];
     const espace = qui === 'gt' ? deps.gtEspaceMs : deps.dsEspaceMs;
     const recul = qui === 'gt' ? deps.gtReculMs : deps.dsReculMs;
-    const budget = qui === 'gt' ? deps.gtBudget : deps.dsBudget;
+    const budget = histo ? (qui === 'gt' ? deps.gtBudgetHisto : deps.dsBudgetHisto) : (qui === 'gt' ? deps.gtBudget : deps.dsBudget);
+    const compte = histo ? 'passeHisto' : 'passe';
     for (let essai = 0; essai < 2; essai++) {
-      if (E.abandon || E.passe >= budget) return null;
+      if (E.abandon || (E[compte] || 0) >= budget) return null;
       const attente = E.prochain - deps.horloge();
       if (attente > 0) await deps.dors(attente);
-      E.appels++; E.passe++;
+      E.appels++; E[compte] = (E[compte] || 0) + 1;
       let r = null, texte = '', statut = 0;
       try {
         r = await deps.prendre(url, { headers: Object.assign({ 'user-agent': 'swoge-smart-money/1.0 (read-only)' }, entetes || {}), signal: AbortSignal.timeout(20000) });
@@ -235,12 +246,17 @@ function cree(deps0) {
     }
     return null;
   }
-  const gt = (chemin, nom) => lit('gt', GT + chemin, nom, { accept: ACCEPT_GT });
-  const ds = (chemin, nom) => lit('ds', DS + chemin, nom, { accept: 'application/json' });
+  const gt = (chemin, nom, histo) => lit('gt', GT + chemin, nom, { accept: ACCEPT_GT }, histo);
+  const ds = (chemin, nom, histo) => lit('ds', DS + chemin, nom, { accept: 'application/json' }, histo);
 
   return {
     etat, purge,
-    nouvellePasse() { for (const k of ['gt', 'ds']) { etat[k].passe = 0; etat[k].refusPasse = 0; etat[k].abandon = false; } },
+    nouvellePasse() { for (const k of ['gt', 'ds']) { etat[k].passe = 0; etat[k].passeHisto = 0; etat[k].refusPasse = 0; etat[k].abandon = false; } },
+    /** le pic pour la decouverte historique : son propre budget (GT_BUDGET_HISTO) */
+    async picHisto(pool, jeton) {
+      const j = await gt(`/networks/robinhood/pools/${pool}/ohlcv/day?limit=1000&currency=usd&token=${jeton}`, `ohlcv_h_${String(jeton).slice(2, 10)}`, true);
+      return j ? picJour(j, jeton) : null;
+    },
     async piscines(tri, page) {
       const j = await gt(`/networks/robinhood/pools?sort=${tri === 'tx' ? 'h24_tx_count_desc' : 'h24_volume_usd_desc'}&include=base_token,quote_token,dex&page=${page}`, `pools_${tri}_p${page}`);
       return j ? piscinesGt(j) : null;
@@ -261,6 +277,14 @@ function cree(deps0) {
       }
       return out;
     },
+    /** UN lot tokens/v1 (30 adresses au plus) : null si la source a refuse ou
+     *  si le budget est epuise (les jetons du lot restent a juger), [] si elle
+     *  ne connait aucun d'eux. */
+    async jetonsDsLot(adresses) {
+      if (!adresses.length || adresses.length > 30) return [];
+      const j = await ds(`/tokens/v1/robinhood/${adresses.join(',')}`, `tokens_lot_${String(adresses[0]).slice(2, 10)}`, true);
+      return j ? pairesDs(j) : null;
+    },
     async pairesDs(jeton) { const j = await ds(`/token-pairs/v1/robinhood/${jeton}`, `pairs_${String(jeton).slice(2, 10)}`); return j ? pairesDs(j) : null; },
     async profilDs(jeton) { const j = await ds(`/orders/v1/robinhood/${jeton}`, `orders_${String(jeton).slice(2, 10)}`); return j ? { t: profilPaye(j) } : null; },
   };
@@ -268,6 +292,6 @@ function cree(deps0) {
 
 module.exports = {
   cree, piscinesGt, picJour, pairesDs, profilPaye, exclu, cotationSure, copies, jugeActuel, normSym,
-  GT, DS, ACCEPT_GT, GT_ESPACE_MS, GT_RECUL_MS, DS_ESPACE_MS, GT_BUDGET_PASSE, DS_BUDGET_PASSE, ACTIFS_MIN, VOLUME_PAR_ACTIF_MAX,
+  GT, DS, ACCEPT_GT, GT_ESPACE_MS, GT_RECUL_MS, DS_ESPACE_MS, GT_BUDGET_PASSE, DS_BUDGET_PASSE, GT_BUDGET_HISTO, DS_BUDGET_HISTO, ACTIFS_MIN, VOLUME_PAR_ACTIF_MAX,
   EXTERNE_RAPPORT, PIC_CANDIDAT_USD, PURGE_MS,
 };

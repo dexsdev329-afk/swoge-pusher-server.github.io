@@ -376,6 +376,53 @@ console.log('-- 6 bis. astro relu depuis son vrai lancement (bloc 57 852 996) : 
   ok([...G.values()].some((p) => p.bloc === 57852996 && p.acheteursBloc > K.BLOC_CHARGE), 'un bloc de lancement charge : la page dit « same-block pattern »');
 }
 
+// ================================================== 6 quater. piscines HORS ETH (lot du 14/10)
+console.log('-- 6 quater. piscines hors ETH : CPU contre INTC (Initialize reel), conversion par une piscine de reference --');
+{
+  const RL = JSON.parse(fs.readFileSync(path.join(ESS, 'rampe_lancements_reels.json'), 'utf8')).recus;
+  const CPU = '0x8eaa17be69ae9616cede4671e6d837bb89491e18', INTC = '0xc72b96e0e48ecd4dc75e1e45396e26300bc39681';
+  const ini = RL.CPU.logs.map(K.decode).find((e) => e && e.genre === 'init');
+  egal(K.piscineEth(ini, CPU), null, 'piscineEth : la piscine de lancement de CPU (contre INTC) n\'est PAS une piscine ETH — c\'est pourquoi CPU etait lu sur une petite piscine du 30/09');
+  const p = K.piscineDe(ini, CPU);
+  ok(p && p.pool === '0xaf8aa959b7e460fbbc61d25b9896a6e3f92cbf3a2bde01fa2b5ac811f2d6a986' && p.bloc === 59789737, 'piscineDe : la VRAIE piscine de lancement de CPU, bloc 59 789 737 (10/09)');
+  egal(p.cote + ':' + p.ethEst0, INTC + ':false', 'la cote est INTC, en currency1');
+  for (const n of ['FROGE', 'SI']) {
+    const i2 = RL[n].logs.map(K.decode).find((e) => e && e.genre === 'init');
+    ok(i2 && K.piscineDe(i2, RL[n].logs[0].address) && !K.piscineEth(i2, RL[n].logs[0].address), `${n} : sa piscine de lancement se lit (cote ${i2 && i2.c1.slice(0, 10)}…), plus « no ETH pool found »`);
+  }
+  /* la conversion : INTC -> USDG -> ETH. sqrtPriceX96 de la reference donne le
+     prix de l'autre cote en unites du token0 ; ici des prix ronds pour verifier
+     a la main : 1 INTC brut = 100 USDG bruts ; 1 USDG brut = 2e8 wei */
+  const cIU = K.convDepuisReserves(100n, 1n), cUE = K.convDepuisReserves(2n * 10n ** 8n, 1n);
+  const c = K.composeConv(cIU, cUE);
+  egal(K.versWei(5n, c), 5n * 100n * 2n * 10n ** 8n, 'composee : 5 INTC bruts = 5 x 100 x 2e8 wei');
+  egal(K.versWei(7n, null), 7n, 'sans conversion (cote ETH) : identite');
+  /* la conversion depuis un sqrtPriceX96 : token0 = USDG, token1 = X, 4 X par USDG -> 1 X = 0,25 USDG */
+  const sq = 2n * (1n << 96n);
+  egal(K.versWei(400n, K.convDepuisSqrt(sq, true)), 100n, 'sqrtP : 4 X par USDG (token0 = USDG) -> 400 X = 100 USDG');
+  egal(K.versWei(100n, K.convDepuisSqrt(sq, false)), 400n, 'sqrtP, sens inverse : 100 USDG = 400 X');
+  /* un achat et une vente de CPU dans la piscine INTC : les montants en INTC
+     deviennent des wei au cours de la reference */
+  const piscine = Object.assign({}, p, { conv: c });
+  const h1 = '0x' + '1'.repeat(64), h2 = '0x' + '2'.repeat(64), W = '0x' + '5'.repeat(40);
+  const sw = (h, u0, u1, i) => ({ genre: 'swap', version: 4, pool: p.pool, bloc: 59789800, tx: h, i, u0, u1, sqrtP: 1n << 96n });
+  const tr = (h, de, vers, v, i) => ({ genre: 'transfer', jeton: CPU, de, vers, valeur: v, bloc: 59789800, tx: h, i });
+  /* v4 : u0 = CPU (currency0), u1 = INTC ; achat : l'utilisateur paye 3 INTC, recoit 1 000 CPU */
+  const evts = [sw(h1, 1000n, -3n, 0), tr(h1, K.ADR.POOL_MANAGER_V4, W, 1000n, 1),
+    sw(h2, -1000n, 5n, 2), tr(h2, W, K.ADR.POOL_MANAGER_V4, 1000n, 3),
+    { genre: 'frais_crochet', crochet: p.hook, pool: p.pool, devise: INTC, montant: 1n, bloc: 59789800, tx: h2, i: 4 }];
+  const t = K.echanges({ jeton: CPU, piscines: [piscine], evts });
+  egal(t.length + ':' + t[0].sens + ':' + t[1].sens, '2:achat:vente', 'un achat puis une vente dans la piscine INTC');
+  egal(t[0].eth, 3n * 100n * 2n * 10n ** 8n, 'achat : 3 INTC payes, convertis en wei');
+  egal(t[1].eth, (5n - 1n) * 100n * 2n * 10n ** 8n, 'vente : 5 INTC du Swap moins 1 INTC retenu par le crochet (devise = la cote), en wei');
+  const pos = K.position(W, t, []);
+  const g = K.gain({ entre: pos.entre, sorti: pos.sorti, solde: 0n, prix: null });
+  ok(g > 0n && K.issue(pos, g) === 'gagnant', 'gagnant en INTC (paye 3, recu 4) : gagnant en wei, la conversion garde le signe');
+  const px = K.prixEnWei(K.prixDepuisSqrt(1n << 96n, false), c);
+  egal(K.valeur(10n, px), 10n * 100n * 2n * 10n ** 8n, 'prix du jeton en wei : prix dans la cote x conversion de la cote');
+  egal(K.prixEnWei(K.prixDepuisSqrt(1n << 96n, false), null).num, (1n << 96n) * (1n << 96n), 'prix sans conversion : inchange');
+}
+
 // ================================================== 6 ter. co-entree, valeurs reelles (revue INI-01)
 console.log('-- 6 ter. co-entree : les 300 premiers des 7 jetons du controle --');
 {

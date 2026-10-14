@@ -36,6 +36,11 @@ const egal = (a, b, m) => ok(a === b || String(a) === String(b), `${m} (lu ${a},
   const a = B.un('SELECT * FROM acheteurs WHERE wallet = ?', ['0xbb']);
   egal(BigInt(a.gain), perte, 'gain negatif au wei pres');
   egal(a.cout_connu, 0, 'booleen -> 0/1');
+  /* lot du 14/10 : la decouverte historique a sa table (v3), un jeton juge une fois */
+  B.pose('historique', { adresse: '0xcc', bloc: 57852996, pool: '0xdd', version: 2, statut: 'candidat', fdv: 21800, liq: 12944 });
+  const hh = B.un('SELECT * FROM historique WHERE adresse = ?', ['0xcc']);
+  egal(hh && hh.statut + ':' + hh.bloc + ':' + hh.liq, 'candidat:57852996:12944', 'table historique (migration v3) : statut, bloc de naissance, liquidite');
+  egal(SB.MIGRATIONS.length, 3, 'trois versions de schema (v3 : historique)');
   B.meta('rotation', 3);
   egal(B.meta('rotation'), 3, 'meta : aller-retour');
   egal(B.meta('absent'), null, 'meta absente : null');

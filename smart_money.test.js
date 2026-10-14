@@ -450,6 +450,153 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     egal(vv.veille_ok && vv.veille_ok.id, okAvant && okAvant.id, 'et la derniere veille REUSSIE a part (la page juge le perime dessus)');
     fs.rmSync(d9, { recursive: true, force: true });
   }
+  // ================================================== 7 ter. lot du 14/10 : piscines hors ETH
+  console.log('-- 7 ter. lot du 14/10 : piscines hors ETH (CPU, SI, FROGE), conversion lue sur la chaine --');
+  {
+    const d11 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-cote-'));
+    const b11 = banc();
+    const I11 = instance(b11, d11);
+    await muet(() => I11.passe());
+    const B11 = I11.base();
+    const w = b11.w, E = MONDE.E;
+    const { journal, pad } = require('./essais/smart_money/faux_noeud');
+    let ix = 950000;
+    /* Q : une action tokenisee (cote de la piscine de lancement, comme INTC pour
+       CPU) ; JX < Q (currency0 = JX) ; PQU : sa piscine de reference Q/USDG (v4) ;
+       REF : la piscine v3 WETH/USDG de reference. Cours ronds : 1 Q brut = 100
+       USDG bruts ; 1 USDG brut = 2^28 wei. */
+    const Q = '0x3b' + '3b'.repeat(19), JX = '0x3a' + '3a'.repeat(19), JF = '0x39' + '39'.repeat(19), JZ = '0x38' + '38'.repeat(19), QZ = '0x3c' + '3c'.repeat(19);
+    const PX = '0x' + '3d'.repeat(32), PE = '0x' + '3e'.repeat(32), PF = '0x' + '3f'.repeat(32), PQU = '0x' + '4d'.repeat(32), PZ = '0x' + '4e'.repeat(32);
+    const REF = '0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca', C7 = '0x' + 'c8'.repeat(20);
+    const CONV = 100n * (1n << 28n);
+    const SQ_X = (1n << 96n) / 1000n;                       // ~1e6 JX par Q (prix 1e-6 Q par JX)
+    const initX = (h, bloc, pool, c0, c1) => w.ajoute(h, journal(MONDE.PM, [K.TOPIC.INIT_V4, pool, pad(c0), pad(c1)], [10000n, 200n, 0n, 1n << 96n, 0n], bloc, h, ix++));
+    const swapX = (h, bloc, pool, u0, u1, sq) => w.ajoute(h, journal(MONDE.PM, [K.TOPIC.SWAP_V4, pool, pad(A.ROUTEUR)], [u0, u1, sq, 10n ** 20n, 0n, 10000n], bloc, h, ix++));
+    /* JX : lance contre Q au bloc 10 200 000 ; une petite piscine ETH nait plus tard (11 500 000), comme celle de CPU le 30/09 */
+    const hx = w.nouvelleTx(10200000, C7, A.FAB);
+    w.transfer(hx, 10200000, JX, K.ADR.ETH_NATIF, MONDE.PM, 10n ** 27n);
+    initX(hx, 10200000, PX, JX, Q);
+    const achatX = (qui, bloc, q) => { const h = w.nouvelleTx(bloc, qui, A.ROUTEUR); swapX(h, bloc, PX, q * 10n ** 6n, -q, SQ_X); w.transfer(h, bloc, JX, MONDE.PM, qui, q * 10n ** 6n); return h; };
+    const venteX = (qui, bloc, jet, q) => { const h = w.nouvelleTx(bloc, qui, A.ROUTEUR); swapX(h, bloc, PX, -jet, q, SQ_X); w.transfer(h, bloc, JX, qui, MONDE.PM, jet); return h; };
+    achatX(A.S1, 10200100, 10n ** 6n); achatX(A.L1, 10200200, 2n * 10n ** 6n); achatX(A.L2, 10200300, 10n ** 6n);
+    venteX(A.S1, 10260000, 10n ** 12n, 3n * 10n ** 6n);
+    const he = w.nouvelleTx(11500000, C7, MONDE.PM); initX(he, 11500000, PE, K.ADR.ETH_NATIF, JX);
+    const hp = w.nouvelleTx(11500100, A.L4, A.ROUTEUR); swapX(hp, 11500100, PE, -(E / 50n), 10n ** 6n, 1n << 96n); w.transfer(hp, 11500100, JX, MONDE.PM, A.L4, 10n ** 6n);
+    /* les references, lues sur la chaine : Q/USDG (v4, Q < USDG : currency0 = Q) et WETH/USDG (v3, token0 = WETH) */
+    const hr = w.nouvelleTx(11900000, A.L3, A.ROUTEUR); swapX(hr, 11900000, PQU, 5n, -500n, 10n * (1n << 96n));
+    const hr3 = w.nouvelleTx(11900500, A.L3, A.ROUTEUR); w.ajoute(hr3, journal(REF, [K.TOPIC.SWAP_V3, pad(A.ROUTEUR), pad(A.L3)], [-(E / 100n), 10n ** 16n / (1n << 28n), 1n << 82n, 10n ** 20n, 0n], 11900500, hr3, ix++));
+    b11.etat.contrats[REF + ':token0'] = K.ADR.WETH; b11.etat.contrats[REF + ':token1'] = K.ADR.USDG;
+    /* FROGE : AUCUNE paire sur DexScreener ; la piscine nait dans la tx de creation du jeton (rampe) */
+    const hf = w.nouvelleTx(10300000, C7, A.FAB);
+    w.transfer(hf, 10300000, JF, K.ADR.ETH_NATIF, MONDE.PM, 10n ** 27n);
+    initX(hf, 10300000, PF, JF, Q);
+    const hfa = w.nouvelleTx(10300050, A.S2, A.ROUTEUR); swapX(hfa, 10300050, PF, 10n ** 9n, -(10n ** 6n), SQ_X); w.transfer(hfa, 10300050, JF, MONDE.PM, A.S2, 10n ** 9n);
+    /* JZ : sa seule piscine est cotee dans un jeton QZ sans piscine de reference */
+    const hz = w.nouvelleTx(10400000, C7, A.FAB); w.transfer(hz, 10400000, JZ, K.ADR.ETH_NATIF, MONDE.PM, 10n ** 27n); initX(hz, 10400000, PZ, JZ, QZ);
+    const paireDs = (base, quote, pool, version, liq, bloc, symB, symQ) => ({ chainId: 'robinhood', dexId: 'uniswap', pairAddress: pool, labels: ['v' + version], baseToken: { address: base, symbol: symB }, quoteToken: { address: quote, symbol: symQ },
+      priceUsd: '0.004', fdv: 4e6, liquidity: { usd: liq, quote: 1 }, pairCreatedAt: MONDE.horodatage(bloc) * 1000 });
+    const ds0 = b11.S.reponses.ds;
+    const vusDs = [];
+    b11.S.reponses.ds = (u) => {
+      const m = /token-pairs\/v1\/robinhood\/(0x[0-9a-f]+)/.exec(u);
+      if (m) vusDs.push(m[1]);
+      if (m && m[1] === JX) return [paireDs(JX, Q, PX, 4, 114900, 10200000, 'CPU', 'INTC'), paireDs(JX, K.ADR.ETH_NATIF, PE, 4, 68, 11500000, 'CPU', 'ETH')];
+      if (m && m[1] === Q) return [paireDs(Q, K.ADR.USDG, PQU, 4, 139000, 9000000, 'INTC', 'USDG'), paireDs(Q, A.J1, '0x' + '4f'.repeat(32), 4, 900, 9000000, 'INTC', 'ONE')];
+      if (m && (m[1] === JF || m[1] === QZ)) return [];
+      if (m && m[1] === JZ) return [paireDs(JZ, QZ, PZ, 4, 5000, 10400000, 'ZED', 'QZ')];
+      return ds0(u);
+    };
+    for (const [j, s] of [[JX, 'CPU'], [JF, 'FROGE'], [JZ, 'ZED']]) B11.pose('jetons', { adresse: j, symbole: s, statut: 'a_lire', pic_usd: 3.88e6, vu_t: 1 });
+    const [bx] = await muet(() => I11.passe());
+    ok(bx.statut === 'ok', 'la passe finit : ' + (bx.erreur || ''));
+    const jx = B11.un('SELECT * FROM jetons WHERE adresse = ?', [JX]);
+    egal(jx.statut + ':' + jx.lancement_bloc + ':' + jx.piscine, 'lu:10200000:' + PX, 'CPU : lu sur sa VRAIE piscine de lancement (contre l\'action, bloc 10 200 000), pas sur la petite piscine ETH nee plus tard');
+    egal(B11.un('SELECT wallet FROM acheteurs WHERE jeton = ? AND rang = 1', [JX]).wallet, A.S1, 'ses premiers acheteurs sont ceux du vrai lancement (avant : 0 premier acheteur)');
+    const ax = B11.un('SELECT * FROM acheteurs WHERE jeton = ? AND wallet = ?', [JX, A.S1]);
+    egal(BigInt(ax.entre), 10n ** 6n * CONV, 'ETH entre = la cote payee x la conversion lue (Q -> USDG -> ETH)');
+    egal(BigInt(ax.sorti), 3n * 10n ** 6n * CONV, 'ETH sorti, meme conversion');
+    egal(ax.issue, 'gagnant', 'paye 1, recu 3 (en Q) : gagnant');
+    const dx = JSON.parse(jx.details);
+    ok(dx.prix && dx.prix.verifie === true && dx.prix.cote === Q, 'la source du prix est dite : lue sur la chaine (Verified), cote Q');
+    egal(dx.prix.chemin.map((e) => e.pool).join(','), PQU + ',' + REF, 'chemin de conversion : Q/USDG puis USDG/WETH, deux piscines lues sur la chaine');
+    ok(dx.prix.chemin.every((e) => e.bloc > 0 && /^0x[0-9a-f]{64}$/.test(e.tx)), 'chaque etape a son bloc et sa tx (Verified)');
+    ok(/DexScreener/.test(dx.prix.choix || ''), 'le CHOIX de la reference (liquidite DexScreener) est dit Not verified');
+    const vx = jx.prix_num != null ? K.valeur(10n ** 6n, { num: BigInt(jx.prix_num), den: BigInt(jx.prix_den) }) : null;
+    ok(vx != null && vx <= CONV && vx * 1000n >= CONV * 999n, `prix du jeton en wei : 1e6 JX ~ 1 Q ~ 1 Q x conversion (lu ${vx}, attendu ~${CONV})`);
+    const jf = B11.un('SELECT * FROM jetons WHERE adresse = ?', [JF]);
+    egal(jf.statut + ':' + jf.lancement_bloc + ':' + jf.piscine, 'lu:10300000:' + PF, 'FROGE : aucune paire DexScreener, la piscine nee dans la tx de creation du jeton est lue');
+    const jz = B11.un('SELECT * FROM jetons WHERE adresse = ?', [JZ]);
+    ok(jz.statut === 'erreur' && /no on-chain reference price/.test(jz.erreur) && jz.erreur.includes(QZ), 'une cote sans piscine de reference : illisible, et la raison nomme la cote : ' + jz.erreur);
+    ok(b11.F.etat.requetes.every((q) => R.METHODES.has(q.method)), 'LECTURE SEULE');
+    egal(vusDs.filter((x) => x === Q).length, 1, 'la reference de Q est cherchee UNE fois par passe (memoire)');
+    fs.rmSync(d11, { recursive: true, force: true });
+  }
+  // ================================================== 7 quater. lot du 14/10 : decouverte historique
+  console.log('-- 7 quater. lot du 14/10 : decouverte historique bornee (astro), fdv actuelle comptee (NOVAAI) --');
+  {
+    const d12 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-histo-'));
+    const b12 = banc();
+    const w = b12.w;
+    const { journal, pad } = require('./essais/smart_money/faux_noeud');
+    let ix = 970000;
+    /* trois jetons nes il y a longtemps, absents des pages GeckoTerminal (24 h) :
+       AST (comme astro : 21,8 k$ aujourd'hui, 12,9 k$ de liquidite, pic au-dessus
+       de 1 M$), NOV (comme NOVAAI : 434 M$ aujourd'hui), POU (poussiere : 40 $) */
+    const AST = '0x0a' + '0a'.repeat(19), NOV = '0x0b' + '0b'.repeat(19), POU = '0x0c' + '0c'.repeat(19);
+    const PAST = '0x' + '5a'.repeat(20), PNOV = '0x' + '5b'.repeat(20), PPOU = '0x' + '5d'.repeat(32);
+    const nait2 = (bloc, jeton, paire) => { const h = w.nouvelleTx(bloc, A.C3, M.FABRIQUES_V2[0]); w.ajoute(h, journal(M.FABRIQUES_V2[0], [K.TOPIC.PAIR_V2, pad(jeton < K.ADR.WETH ? jeton : K.ADR.WETH), pad(jeton < K.ADR.WETH ? K.ADR.WETH : jeton)], [BigInt(paire), 1n], bloc, h, ix++)); };
+    nait2(9000000, AST, PAST); nait2(8000000, NOV, PNOV);
+    const h4 = w.nouvelleTx(9500000, A.C3, MONDE.PM); w.ajoute(h4, journal(MONDE.PM, [K.TOPIC.INIT_V4, PPOU, pad(K.ADR.ETH_NATIF), pad(POU)], [10000n, 200n, 0n, 1n << 96n, 0n], 9500000, h4, ix++));
+    const pDs = (j, pool, fdv, liq, prix) => ({ chainId: 'robinhood', dexId: 'uniswap', pairAddress: pool, labels: ['v2'], baseToken: { address: j, symbol: 'X' }, quoteToken: { address: K.ADR.WETH, symbol: 'WETH' },
+      priceUsd: String(prix), fdv, marketCap: fdv, liquidity: { usd: liq, quote: 1 }, pairCreatedAt: 1 });
+    const lots = [];
+    const ds0 = b12.S.reponses.ds, gt0 = b12.S.reponses.gt;
+    b12.S.reponses.ds = (u) => {
+      const m = /tokens\/v1\/robinhood\/([0-9a-fx,]+)/.exec(u);
+      if (m) { const l = m[1].split(','); lots.push(l.length); return [l.includes(AST) && pDs(AST, PAST, 21800, 12944, 0.0000218), l.includes(NOV) && pDs(NOV, PNOV, 434e6, 2e6, 0.434), l.includes(POU) && pDs(POU, PPOU, 900, 40, 0.0000009)].filter(Boolean); }
+      return ds0(u);
+    };
+    const ohlcv = [];
+    b12.S.reponses.gt = (u) => {
+      const m = /pools\/(0x[0-9a-f]+)\/ohlcv\/day\?.*token=(0x[0-9a-f]+)/.exec(u);
+      if (m && m[2] === AST) { ohlcv.push(m[2]); return { data: { attributes: { ohlcv_list: [[MONDE.T0, 1, 2e-2, 1, 1.36e-2, 1], [MONDE.T0 - 86400, 1, 1e-3, 1, 1e-3, 1]] } }, meta: { base: { address: AST } } }; }
+      if (m) ohlcv.push(m[2]);
+      return gt0(u);
+    };
+    const I12 = instance(b12, d12);
+    /* bornee : UNE fenetre de HISTO_FENETRE blocs par passe, vers le bloc 0 ; les
+       naissances (8 000 000 a 9 500 000) sont atteintes en quelques passes */
+    const bas = [];
+    let bh = null, passes = 0;
+    const gtParPasse = [];
+    for (; passes < 8; passes++) {
+      const g0 = b12.http.gt;
+      [bh] = await muet(() => I12.passe());
+      gtParPasse.push(b12.http.gt - g0);
+      ok(bh.statut === 'ok', 'la passe finit : ' + (bh.erreur || ''));
+      bas.push(I12.base().meta('histo_bas'));
+      if (bas[bas.length - 1] <= 8000000) break;
+    }
+    const B12 = I12.base();
+    ok(bas.length >= 2 && bas.every((x, i) => (i ? bas[i - 1] : MONDE.POINTE - 1000 + 1) - x <= M.HISTO_FENETRE && (i === 0 || x < bas[i - 1])), `chaque passe descend d'au plus une fenetre (${bas.join(' -> ')})`);
+    const ja = B12.un('SELECT * FROM jetons WHERE adresse = ?', [AST]);
+    ok(ja && ja.pic_usd >= 1e6, 'AST (21,8 k$ aujourd\'hui, absent des pages de 24 h) est RETROUVE par la decouverte historique, pic ' + (ja && ja.pic_usd));
+    ok(ja && Math.abs(ja.cap_usd - 21800) < 1, 'et sa fdv actuelle est gardee a cote (Not verified)');
+    const jn = B12.un('SELECT * FROM jetons WHERE adresse = ?', [NOV]);
+    ok(jn && jn.cap_usd >= 4e8 && /dexscreener/i.test(jn.cap_source || ''), 'NOV (434 M$ aujourd\'hui) : retenu par sa fdv actuelle, sans attendre un pic');
+    ok(!B12.un('SELECT * FROM jetons WHERE adresse = ?', [POU]), 'POU (40 $ de liquidite, fdv 900 $) : ecarte');
+    ok(!ohlcv.includes(POU) && !ohlcv.includes(NOV), 'aucun appel OHLCV pour la poussiere ni pour un jeton deja au-dessus de 1 M$');
+    ok(lots.length >= 1 && lots.every((n) => n <= 30), 'DexScreener tokens/v1 par lots de 30 au plus');
+    const hs = B12.tous('SELECT * FROM historique');
+    ok(hs.some((h) => h.adresse === POU && h.statut === 'ecarte' && /liquidity/.test(h.raison || '')), 'la poussiere est ecartee, avec sa raison');
+    ok(Math.max(...gtParPasse) <= SRC.GT_BUDGET_PASSE + SRC.GT_BUDGET_HISTO, `GeckoTerminal : au plus ${Math.max(...gtParPasse)} appels par passe <= ${SRC.GT_BUDGET_PASSE} (passe) + ${SRC.GT_BUDGET_HISTO} (historique) : son propre budget, le meme espacement`);
+    const v = I12.vue();
+    ok(v.historique && v.historique.bas != null && v.historique.vus >= 3, 'la vue dit ou en est la decouverte historique (bloc atteint, jetons vus)');
+    /* la decouverte des 24 h : un jeton retenu au pic garde aussi sa fdv actuelle */
+    const j3 = B12.un('SELECT * FROM jetons WHERE adresse = ?', [A.J3]);
+    ok(j3.cap_usd != null && j3.pic_usd != null, 'J3 (retenu au pic) garde aussi sa fdv actuelle (avant : cap_usd vide)');
+    fs.rmSync(d12, { recursive: true, force: true });
+  }
   {
     /* N5 : un SMART_RPC_URL a cle, un noeud muet : la vue publique ne contient jamais l'URL */
     const d10 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-secret-'));

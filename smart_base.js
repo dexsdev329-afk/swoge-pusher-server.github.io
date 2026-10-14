@@ -69,6 +69,13 @@ const MIGRATIONS = [
    ALTER TABLE wallets ADD COLUMN jugeables INTEGER;
    ALTER TABLE createurs ADD COLUMN reussites_connues INTEGER;
    ALTER TABLE createurs ADD COLUMN drapeaux_liste TEXT;`,
+  /* v3 — 14/10/2026, lot du proprietaire : la DECOUVERTE HISTORIQUE (les jetons
+     nes avant les 24 h que lisent les pages GeckoTerminal, jugees une fois :
+     a_voir -> absent | exclu | deja | ecarte | candidat -> retenu | ecarte) */
+  `CREATE TABLE IF NOT EXISTS historique (
+     adresse TEXT PRIMARY KEY, symbole TEXT, bloc INTEGER, pool TEXT, version INTEGER, statut TEXT NOT NULL DEFAULT 'a_voir',
+     vu_t INTEGER, juge_t INTEGER, fdv REAL, liq REAL, prix REAL, pool_ds TEXT, pic REAL, raison TEXT);
+   CREATE INDEX IF NOT EXISTS historique_statut ON historique (statut, bloc);`,
 ];
 
 /** Une valeur JS -> une valeur SQLite : BigInt en TEXT, objets en JSON. */

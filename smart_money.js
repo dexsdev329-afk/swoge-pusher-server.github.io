@@ -75,6 +75,55 @@ const FABRIQUES_V3 = ['0x1f7d7550b1b028f7571e69a784071f0205fd2efa', '0xe7fef2bc8
 const FABRIQUES_V2 = ['0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f', '0x0d1ebb179cdbca88d74c923c4255cb2b17474afd'];
 const TOPIC_MODIFY_V4 = '0xf208f4912782fd25c7f114ca3723a2d5dd6f3bcc3ac8db5af63baa85f711d5ec';   // vu dans la tx de lancement de NILF (13/10)
 const SOCLE = new Set([K.ADR.WETH, K.ADR.USDG, K.ADR.ETH_NATIF, K.ADR.ETH_GT]);
+/* ---- LOT DU 14/10 : LES PISCINES HORS ETH ----
+ * Un jeton se lit sur ses piscines QUELLE QUE SOIT LA COTE (ETH, USDG, une
+ * action tokenisee...) : les PISCINES_MAX plus profondes (liquidite DexScreener,
+ * Not verified : elle ne sert qu'a CHOISIR), plus celles nees dans la tx de
+ * creation du jeton quand le lancement n'est pas prouve autrement. Le lancement
+ * = la plus ancienne piscine lue ; le prix = la plus profonde. Une cote hors
+ * ETH est ramenee en wei par une piscine de REFERENCE lue sur la chaine
+ * (Verified : dernier Swap, bloc et tx), au plus deux sauts : cote -> USDG ->
+ * ETH, la derniere etape par la v3 WETH/USDG 0x52e65b17 (communaute.js : 20,3 M$
+ * de liquidite, 28 Swap en 3 000 blocs, sonde du 11/10). Mesure qui l'a decide
+ * (passe reelle du 13/10) : 10 des 37 jetons retenus ont leur piscine la plus
+ * profonde hors ETH ; SI, FROGE illisibles, CPU lu sur une piscine ETH du 30/09
+ * (bloc 76 162 106, 68 $ de liquidite) au lieu de sa piscine INTC du 10/09
+ * (bloc 59 789 737, 114 900 $). Les cotes de SI, FROGE, CPU (NVDAx3L,
+ * OPENAIx1L, INTC) ont toutes une piscine USDG de 63 k$ a 157 k$ (DexScreener,
+ * 14/10). La veille (nouveaux jetons) reste en ETH : ce n'est pas ce lot. */
+const REF_USDG_ETH = '0x52e65b17fb6e5ba00ed806f37afcd2daa50271ca';
+const PISCINES_MAX = 4;              // CHOISI : les 4 plus profondes (CPU : INTC 114,9 k$, USDG 6,5 k$, USDG v3 1,8 k$, MASKS 71 $)
+const REF_FENETRES = [2 ** 12, 2 ** 16, 2 ** 20, 2 ** 23];   // dernier Swap de la reference : 4 096 blocs d'abord (28 Swap en 3 000 sur WETH/USDG)
+/* ---- LOT DU 14/10 : LA DECOUVERTE HISTORIQUE ----
+ * Les pages GeckoTerminal ne voient que l'activite des 24 h, et le pic n'etait
+ * cherche que pour une fdv actuelle >= 100 k$ : astro (21,8 k$ le 13/10, pic au
+ * dessus de 1 M$) n'etait jamais retenu ; aucun des 12 jetons du rapport
+ * n'etait dans les 640 piscines lues. D'ou une marche ARRIERE dans les
+ * naissances de piscines ETH (PairCreated v2 et PoolCreated v3 contre WETH,
+ * Initialize v4 contre l'ETH natif), UNE fenetre de HISTO_FENETRE blocs par
+ * passe, cellules fermees en cache ; chaque jeton vu est juge UNE fois :
+ * DexScreener tokens/v1 (30 par appel) dit sa fdv et sa liquidite actuelles ;
+ * fdv >= 1 M$ avec une liquidite reelle -> retenu (la fdv actuelle compte :
+ * NOVAAI, 434 M$, comptait 0/1) ; liquidite >= HISTO_LIQ_MIN_USD ou fdv >=
+ * 100 k$ -> candidat, et SEUL un candidat coute un OHLCV GeckoTerminal (1 par
+ * minute) ; sinon ecarte, avec sa raison. Les seuils et la mesure : voir
+ * EXPLOITATION.md, « decouverte historique ». */
+/* Mesure du 14/10 (lot4/mesure_histo.js, fenetre de 2^22 blocs autour d'astro,
+   54 525 952 - 58 720 255) : 22 453 jetons nes contre l'ETH, dont 38 980
+   Initialize v4 (12 getLogs, 37,1 Mo) et 3 375 paires v2/v3 (8 getLogs, 4,4 Mo) :
+   41,5 Mo pour UNE fenetre de 2^22, les deux tiers du budget d'octets d'une passe
+   (60 Mo). D'ou 2^20 (~1,2 jour, ~10 Mo) par passe. */
+const HISTO_FENETRE = 2 ** 20;
+const HISTO_DS_LOTS = 100;           // = smart_sources.DS_BUDGET_HISTO : 3 000 jetons juges par passe au plus
+const HISTO_GT = 8;                  // = smart_sources.GT_BUDGET_HISTO
+const HISTO_FILE_MAX = 3000;         // la marche s'arrete tant que 3 000 jetons attendent d'etre juges
+/* Mesure du 14/10 (fenetre d'astro, 12 000 jetons juges par DexScreener : 11 503
+   inconnus, 452 restants hors actions) : candidats a OHLCV 395 / 348 / 226 / 136
+   pour 1 / 5 / 10 / 20 k$ de liquidite ; astro avait 11 209 $ (12 944 $ le 13/10)
+   pour 14 414 $ de fdv : 10 k$ le garde, 20 k$ le perdait. Echantillon de 9
+   candidats « effondres » : 3 au-dessus de 1 M$ au pic (astro 7,88 M$, AGI 4,06 M$,
+   Magatard 1,96 M$), 6 en dessous. CHOISI : 10 k$. */
+const HISTO_LIQ_MIN_USD = 10000;
 
 // ------------------------------------------------------------ reglages
 
@@ -209,18 +258,107 @@ function cree(deps0) {
             B.meta('pic:' + jeton, { t: deps.horloge(), ok: !!r.pic });
             pics++;
             const offre = best.fdv / best.prixUsd;           // offre implicite de la source (Not verified)
-            if (r.pic && r.pic.prix * offre >= K.SEUIL_CAP_USD) garde = { pic: r.pic.prix * offre, picJour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), source: 'geckoterminal daily close × implied supply', pool: best.pool };
+            /* la fdv actuelle est gardee a cote du pic (lot du 14/10 : un jeton retenu au pic n'avait pas de cap_usd) */
+            if (r.pic && r.pic.prix * offre >= K.SEUIL_CAP_USD) garde = { pic: r.pic.prix * offre, picJour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), source: 'geckoterminal daily close × implied supply', pool: best.pool,
+              cap: best.fdv, capSource: 'geckoterminal fdv (' + best.dex + ')' };
           }
         }
       }
+      /* vu mais pas retenu ici : la decouverte historique le jugera (liquidite, pic) */
+      if (!garde && !deja && !B.un('SELECT 1 FROM historique WHERE adresse = ?', [jeton])) B.pose('historique', { adresse: jeton, symbole: l[0].base.symbole, bloc: null, pool: l[0].pool, statut: 'a_voir', vu_t: Math.floor(deps.horloge() / 1000) });
       if (!garde || deja) continue;
       nouveaux++;
-      B.pose('jetons', { adresse: jeton, symbole: l[0].base.symbole, statut: 'a_lire', cap_usd: garde.cap || null, cap_source: garde.cap ? garde.source : null,
+      B.pose('jetons', { adresse: jeton, symbole: l[0].base.symbole, statut: 'a_lire', cap_usd: garde.cap || null, cap_source: garde.cap ? (garde.capSource || garde.source) : null,
         pic_usd: garde.pic || null, pic_jour: garde.picJour || null, pic_source: garde.pic ? garde.source : null, vu_t: Math.floor(deps.horloge() / 1000), source: garde.pool });
     }
     B.meta('externes', [...externes]);
     bilan.retenus = nouveaux; bilan.pics = pics;
     return nouveaux;
+  }
+
+  /** LA DECOUVERTE HISTORIQUE (lot du 14/10), bornee a chaque passe : une
+   *  fenetre de naissances (noeud), HISTO_DS_LOTS lots DexScreener, HISTO_GT
+   *  OHLCV. Rend le nombre de jetons retenus. */
+  async function historique(bilan, P) {
+    const h = { naissances: 0, juges: 0, candidats: 0, retenus: 0 };
+    bilan.historique = h;
+    const t = Math.floor(deps.horloge() / 1000);
+    let actions = new Map();
+    try { actions = await actionsOfficielles(); } catch (e) { return 0; }   // sans registre, rien n'est retenu (comme la decouverte)
+    const x = { socle: SOCLE, actions, externes: new Set(B.meta('externes') || []) };
+    const retenir = (j, g) => {
+      B.pose('jetons', { adresse: j, symbole: g.symbole || null, statut: 'a_lire', cap_usd: g.cap == null ? null : g.cap, cap_source: g.cap == null ? null : g.capSource,
+        pic_usd: g.pic || null, pic_jour: g.picJour || null, pic_source: g.pic ? g.picSource : null, vu_t: t, source: g.pool || null });
+      h.retenus++;
+    };
+    /* 1. les naissances, une fenetre par passe, vers le bloc 0 */
+    const file = (B.un("SELECT count(*) n FROM historique WHERE statut = 'a_voir'") || {}).n || 0;
+    let bas = B.meta('histo_bas');
+    if (bas == null) bas = P.sure + 1;
+    if (bas > 0 && file < HISTO_FILE_MAX) {
+      const de = Math.max(0, bas - HISTO_FENETRE), a = bas - 1;
+      const filtres = [];
+      for (const f of FABRIQUES_V2) filtres.push({ address: f, topics: [K.TOPIC.PAIR_V2, K.pad32(K.ADR.WETH)] }, { address: f, topics: [K.TOPIC.PAIR_V2, null, K.pad32(K.ADR.WETH)] });
+      for (const f of FABRIQUES_V3) filtres.push({ address: f, topics: [K.TOPIC.POOL_V3, K.pad32(K.ADR.WETH)] }, { address: f, topics: [K.TOPIC.POOL_V3, null, K.pad32(K.ADR.WETH)] });
+      filtres.push({ address: K.ADR.POOL_MANAGER_V4, topics: [K.TOPIC.INIT_V4, null, K.pad32(K.ADR.ETH_NATIF)] });
+      const vus = new Map();
+      for (const f of filtres) for (const l of (await R.lisLogs(f, de, a, P)).logs) {
+        const e = K.decode(l);
+        if (!e || e.genre !== 'init') continue;
+        const j = K.estCoteEth(e.c0) ? e.c1 : K.estCoteEth(e.c1) ? e.c0 : null;
+        if (!j || SOCLE.has(j)) continue;
+        if (!vus.has(j) || e.bloc < vus.get(j).bloc) vus.set(j, e);
+      }
+      B.transaction(() => {
+        for (const [j, e] of vus) if (!B.un('SELECT 1 FROM historique WHERE adresse = ?', [j])) B.pose('historique', { adresse: j, bloc: e.bloc, pool: e.pool, version: e.version, statut: 'a_voir', vu_t: t });
+        B.meta('histo_bas', de);
+      });
+      h.naissances = vus.size; h.fenetre = [de, a];
+    }
+    /* 2. le jugement DexScreener : 30 jetons par appel, les plus recents d'abord */
+    const marque = (j, statut, o) => B.ecris('UPDATE historique SET statut = ?, juge_t = ?, fdv = ?, liq = ?, prix = ?, pool_ds = ?, symbole = COALESCE(?, symbole), raison = ?, pic = COALESCE(?, pic) WHERE adresse = ?',
+      [statut, t, o.fdv == null ? null : o.fdv, o.liq == null ? null : o.liq, o.prix == null ? null : o.prix, o.pool || null, o.symbole || null, o.raison || null, o.pic == null ? null : o.pic, j]);
+    for (let k = 0; k < HISTO_DS_LOTS; k++) {
+      const lot = B.tous("SELECT adresse FROM historique WHERE statut = 'a_voir' ORDER BY bloc IS NULL DESC, bloc DESC LIMIT 30").map((r) => r.adresse);
+      if (!lot.length) break;
+      const rep = await S.jetonsDsLot(lot);
+      if (rep == null) break;                     // refus ou budget : le lot reste a juger
+      B.transaction(() => {
+        for (const j of lot) {
+          h.juges++;
+          const ex = SRC.exclu(j, x);
+          if (ex) { marque(j, 'exclu', { raison: ex }); continue; }
+          if (B.un('SELECT 1 FROM jetons WHERE adresse = ?', [j])) { marque(j, 'deja', {}); continue; }
+          const ps = rep.filter((p) => p.base.adresse === j);
+          if (!ps.length) { marque(j, 'absent', { raison: 'not on DexScreener' }); continue; }
+          const best = ps.slice().sort((a2, b2) => (b2.liquiditeUsd || 0) - (a2.liquiditeUsd || 0))[0];
+          const fdv = Math.max(...ps.map((p) => p.fdv || 0)), liq = best.liquiditeUsd || 0;
+          const o = { fdv, liq, prix: best.prixUsd, pool: best.pool, symbole: best.base.symbole };
+          if (ps.some((p) => p.mcap != null && p.fdv && p.mcap > SRC.EXTERNE_RAPPORT * p.fdv)) { marque(j, 'exclu', Object.assign(o, { raison: 'outside asset (market cap > 10× fdv)' })); continue; }
+          /* la fdv actuelle compte, si une liquidite reelle la porte */
+          if (fdv >= K.SEUIL_CAP_USD && liq >= HISTO_LIQ_MIN_USD) { retenir(j, { symbole: best.base.symbole, cap: fdv, capSource: 'dexscreener fdv (historical discovery)', pool: best.pool }); marque(j, 'retenu', o); continue; }
+          if (liq >= HISTO_LIQ_MIN_USD || fdv >= SRC.PIC_CANDIDAT_USD) { marque(j, 'candidat', o); h.candidats++; continue; }
+          marque(j, 'ecarte', Object.assign(o, { raison: `liquidity $${Math.round(liq)}, fdv $${Math.round(fdv)}` }));
+        }
+      });
+    }
+    /* 3. le pic des candidats (1 OHLCV chacun), les plus liquides d'abord */
+    for (const c of B.tous("SELECT * FROM historique WHERE statut = 'candidat' ORDER BY liq DESC LIMIT " + HISTO_GT)) {
+      const r = c.pool_ds ? await (S.picHisto || S.pic)(c.pool_ds, c.adresse) : null;
+      if (!r) {
+        if (S.etat.gt.abandon || (S.etat.gt.passeHisto || 0) >= HISTO_GT) break;   // refus ou budget : il reste candidat
+        marque(c.adresse, 'ecarte', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, raison: 'no GeckoTerminal daily series' }); continue;
+      }
+      const offre = c.prix > 0 ? c.fdv / c.prix : null;      // offre implicite de la source (Not verified)
+      const pic = r.pic && offre ? r.pic.prix * offre : null;
+      if (B.un('SELECT 1 FROM jetons WHERE adresse = ?', [c.adresse])) { marque(c.adresse, 'deja', { pic }); continue; }
+      if (pic != null && Math.max(pic, c.fdv || 0) >= K.SEUIL_CAP_USD) {
+        retenir(c.adresse, { symbole: c.symbole, pic, picJour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), picSource: 'geckoterminal daily close × implied supply (historical discovery)', cap: c.fdv, capSource: 'dexscreener fdv', pool: c.pool_ds });
+        marque(c.adresse, 'retenu', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, pic });
+      } else marque(c.adresse, 'ecarte', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, pic, raison: pic == null ? 'no daily close' : `peak $${Math.round(pic)}` });
+    }
+    bilan.retenus = (bilan.retenus || 0) + h.retenus;
+    return h.retenus;
   }
 
   // ---------------------------------------------------------- 2. lecture d'un jeton
@@ -245,7 +383,7 @@ function cree(deps0) {
       let l = fen ? (await R.lisLogs(f, fen[0], fen[1], P)).logs : [];
       if (!l.length) l = (await R.lisLogs(f, 0, P.pointe, Object.assign({}, P, { premier: true }))).logs;
       const init = l.map(K.decode).find((e) => e && e.genre === 'init');
-      return init ? K.piscineEth(init, jeton) : null;
+      return init ? K.piscineDe(init, jeton) : null;
     }
     if (!K.estAdresse(paire.pool)) return null;
     /* v2/v3 : le 1er journal de la piscine, depuis le bloc 0 (jamais dans une
@@ -257,7 +395,82 @@ function cree(deps0) {
     const [t0, t1] = await R.multicall([{ to: paire.pool, fn: 'token0' }, { to: paire.pool, fn: 'token1' }]);
     if (!t0 || !t1) return null;
     const init = { genre: 'init', version: paire.version || 3, pool: paire.pool, c0: String(t0).toLowerCase(), c1: String(t1).toLowerCase(), hook: null, bloc: parseInt(premier.blockNumber, 16), tx: String(premier.transactionHash).toLowerCase() };
-    return K.piscineEth(init, jeton);
+    return K.piscineDe(init, jeton);
+  }
+
+  /** Les piscines nees dans la tx de CREATION du jeton (1er journal du jeton) :
+   *  une rampe (0x1eef) frappe le jeton et initialise sa piscine dans la meme
+   *  tx — FROGE n'a aucune paire sur DexScreener (13/10), sa piscine contre
+   *  OPENAIx1L nait la (tx 0xb7c37a02…, bloc 60 643 673). */
+  async function piscinesDeCreation(jeton, P) {
+    const { logs } = await R.lisLogs({ address: jeton }, 0, P.pointe, Object.assign({}, P, { premier: true }));
+    if (!logs.length) return [];
+    const h = String(logs[0].transactionHash).toLowerCase();
+    const rc = (await R.recus([h], P.sure)).get(h);
+    return ((rc && rc.logs) || []).map(K.decode).filter((e) => e && e.genre === 'init').map((e) => K.piscineDe(e, jeton)).filter(Boolean);
+  }
+  /** La tx `h` est-elle la naissance du jeton (contrat cree, ou frappe depuis 0x0) ? */
+  async function estNaissance(jeton, h, P) {
+    const rc = (await R.recus([h], P.sure)).get(h);
+    return !!(rc && (String(rc.contractAddress || '').toLowerCase() === jeton || (rc.logs || []).some((l) => String(l.address).toLowerCase() === jeton && String(l.topics[0]).toLowerCase() === K.TOPIC.TRANSFER && K.adrDe(l.topics[1]) === K.ADR.ETH_NATIF)));
+  }
+
+  // ---------------------------------------------------------- les cotes hors ETH
+  let convMemo = new Map();
+  /** Le prix de `x` en unites de `unite`, lu sur la piscine `ref` (Verified) :
+   *  sqrtPriceX96 du dernier Swap (v3/v4 ; fenetres REF_FENETRES depuis la
+   *  pointe) ou reserves (v2). token0 = la plus petite adresse (regle des
+   *  fabriques Uniswap v2/v3 et du PoolManager v4 ; l'ETH natif 0x0 est toujours
+   *  currency0). Rend { conv, etape } ou null. */
+  async function prixLu(ref, x, unite, P) {
+    const v = ref.version || (K.estPool4(ref.pool) ? 4 : K.estAdresse(ref.pool) ? 3 : null);
+    if (!v || (v === 4 ? !K.estPool4(ref.pool) : !K.estAdresse(ref.pool))) return null;
+    const uniteEst0 = unite < x;
+    if (v === 2) {
+      const [ru, rx] = await R.multicall([{ to: unite, fn: 'balanceOf', args: [ref.pool] }, { to: x, fn: 'balanceOf', args: [ref.pool] }]);
+      const conv = ru != null && rx != null ? K.convDepuisReserves(BigInt(ru), BigInt(rx)) : null;
+      return conv ? { conv, etape: { pool: ref.pool, version: 2, de: x, vers: unite, source: 'reserves', bloc: P.pointe, tx: null } } : null;
+    }
+    const f = v === 4 ? { address: K.ADR.POOL_MANAGER_V4, topics: [K.TOPIC.SWAP_V4, ref.pool] } : { address: ref.pool, topics: [K.TOPIC.SWAP_V3] };
+    for (const w of REF_FENETRES) {
+      const l = (await R.lisLogs(f, Math.max(0, P.pointe - w), P.pointe, P)).logs.map(K.decode).filter((e) => e && e.genre === 'swap' && e.sqrtP);
+      if (l.length) {
+        const s0 = l[l.length - 1];
+        const conv = K.convDepuisSqrt(s0.sqrtP, uniteEst0);
+        return conv ? { conv, etape: { pool: ref.pool, version: v, de: x, vers: unite, source: 'last Swap', bloc: s0.bloc, tx: s0.tx } } : null;
+      }
+      if (P.pointe - w <= 0) break;
+    }
+    return null;
+  }
+  /** La conversion d'une cote en wei : { conv, chemin, choix } ; null si aucune
+   *  piscine de reference ne se lit. Une fois par cote et par passe. */
+  async function convCote(cote0, P) {
+    const cote = String(cote0).toLowerCase();
+    if (K.estCoteEth(cote)) return { conv: null, chemin: [], choix: null };
+    if (convMemo.has(cote)) return convMemo.get(cote);
+    convMemo.set(cote, null);                       // garde contre un cycle
+    let r = null;
+    if (cote === K.ADR.USDG) {
+      const e = await prixLu({ pool: REF_USDG_ETH, version: 3 }, K.ADR.USDG, K.ADR.WETH, P);
+      if (e) r = { conv: e.conv, chemin: [e.etape], choix: 'fixed reference WETH/USDG v3 pool' };
+    } else {
+      const l = (await S.pairesDs(cote)) || [];
+      const refs = l.map((p) => ({ p, autre: p.base.adresse === cote ? p.quote.adresse : p.quote.adresse === cote ? p.base.adresse : null }))
+        .filter((y) => y.autre && y.autre !== K.ADR.ETH_GT && (K.estCoteEth(y.autre) || y.autre === K.ADR.USDG))
+        .sort((a, b) => (b.p.liquiditeUsd || 0) - (a.p.liquiditeUsd || 0));
+      for (const { p, autre } of refs.slice(0, 2)) {
+        const e = await prixLu({ pool: p.pool, version: p.version }, cote, autre, P);
+        if (!e) continue;
+        const suite = K.estCoteEth(autre) ? { conv: null, chemin: [] } : await convCote(autre, P);
+        if (!suite) continue;
+        r = { conv: K.composeConv(e.conv, suite.conv), chemin: [e.etape, ...suite.chemin],
+              choix: `deepest pool by DexScreener liquidity ($${Math.round(p.liquiditeUsd || 0)}, Not verified)` };
+        break;
+      }
+    }
+    convMemo.set(cote, r);
+    return r;
   }
 
   /** Le 1er journal d'un jeton -> sa tx de creation ; attribution du createur. */
@@ -300,22 +513,44 @@ function cree(deps0) {
     const jeton = row.adresse;
     const infos = await R.infosJeton(jeton);
     if (infos.offre == null || infos.decimales == null) { B.ecris("UPDATE jetons SET statut = 'erreur', erreur = ? WHERE adresse = ?", ['totalSupply or decimals unreadable', jeton]); return; }
-    /* les piscines ETH du jeton (DexScreener token-pairs : toutes les paires) */
+    /* les piscines du jeton, QUELLE QUE SOIT LA COTE (lot du 14/10), les plus
+       profondes d'abord (DexScreener token-pairs : toutes les paires) */
     const paires = (await S.pairesDs(jeton)) || [];
-    const ethP = paires.filter((p) => p.base.adresse === jeton && SOCLE.has(p.quote.adresse) && p.quote.adresse !== K.ADR.USDG || p.quote.adresse === jeton && SOCLE.has(p.base.adresse) && p.base.adresse !== K.ADR.USDG);
+    const cand = [];
+    for (const p of paires) {
+      const cote = p.base.adresse === jeton ? p.quote.adresse : p.quote.adresse === jeton ? p.base.adresse : null;
+      if (cote && cote !== K.ADR.ETH_GT && !cand.some((c) => c.pool === p.pool)) cand.push({ pool: p.pool, version: p.version, creee: p.creee, liq: p.liquiditeUsd, cote });
+    }
+    cand.sort((a, b) => (b.liq || 0) - (a.liq || 0));
     /* DexScreener ne rend plus la paire (HM le 14/10 : « [] » alors que la piscine
        v4 0xa8119e5e… vit) : la piscine deja lue, puis celle de la decouverte */
-    if (!ethP.length && row.piscine && (K.estPool4(row.piscine) || K.estAdresse(row.piscine))) ethP.push({ pool: row.piscine, version: row.version || (K.estPool4(row.piscine) ? 4 : null) });
-    if (!ethP.length && row.source && K.estPool4(row.source)) ethP.push({ pool: row.source, version: 4 });
-    const piscines = [];
-    for (const p of ethP.slice(0, 4)) {
+    if (!cand.length && row.piscine && (K.estPool4(row.piscine) || K.estAdresse(row.piscine))) cand.push({ pool: row.piscine, version: row.version || (K.estPool4(row.piscine) ? 4 : null) });
+    if (!cand.length && row.source && (K.estPool4(row.source) || K.estAdresse(row.source))) cand.push({ pool: row.source, version: K.estPool4(row.source) ? 4 : null });
+    const piscines = [], sansRef = [];
+    const ajoute = async (ps, liq) => {
+      if (!ps || piscines.some((x) => x.pool === ps.pool)) return;
+      const cv = await convCote(ps.cote, P);
+      if (!cv) { if (!sansRef.includes(ps.cote)) sansRef.push(ps.cote); return; }
+      piscines.push(Object.assign(ps, { conv: cv.conv, ref: cv.chemin.length ? { chemin: cv.chemin, choix: cv.choix } : null, liq: liq == null ? null : liq }));
+    };
+    for (const p of cand.slice(0, PISCINES_MAX)) {
+      /* une cote sans reference n'use pas le noeud pour sa naissance */
+      if (p.cote && !(await convCote(p.cote, P))) { if (!sansRef.includes(p.cote)) sansRef.push(p.cote); continue; }
       const est = p.creee ? P.pointe - Math.round((deps.horloge() - p.creee) / 103.4) : null;   // 0,1034 s/bloc sur la derniere heure (sonde)
-      const ps = await naissance(p, jeton, P, est);
-      if (ps) piscines.push(ps);
+      await ajoute(await naissance(p, jeton, P, est), p.liq);
     }
-    if (!piscines.length) { B.ecris("UPDATE jetons SET statut = 'erreur', erreur = ? WHERE adresse = ?", ['no ETH pool found on chain', jeton]); return; }
+    /* le lancement n'est pas prouve (aucune piscine, ou la plus ancienne n'est
+       pas nee avec le jeton) : les piscines de la tx de creation du jeton */
+    piscines.sort((a, b) => a.bloc - b.bloc);
+    if (!piscines.length || !(await estNaissance(jeton, piscines[0].tx, P))) for (const ps of await piscinesDeCreation(jeton, P)) await ajoute(ps, null);
+    if (!piscines.length) {
+      const raison = sansRef.length ? 'no on-chain reference price for quote ' + sansRef.slice(0, 3).join(', ') : 'no readable pool found on chain';
+      B.ecris("UPDATE jetons SET statut = 'erreur', erreur = ? WHERE adresse = ?", [raison, jeton]); return;
+    }
     piscines.sort((a, b) => a.bloc - b.bloc);
     const lance = piscines[0];
+    /* le prix : la plus profonde (liquidite DexScreener) ; a defaut, le lancement */
+    const principale = piscines.filter((x) => x.liq != null).sort((a, b) => b.liq - a.liq)[0] || lance;
     const [t0] = [(await R.horodatages([lance.bloc], P.sure)).get(lance.bloc)];
     const cr = await createurDe(jeton, lance.bloc, P, M, lance);
     const mig = M.get(jeton);
@@ -391,30 +626,38 @@ function cree(deps0) {
       txLues = new Set([...rcs.keys()].map((h) => String(h).toLowerCase()));
     }
     const trades = K.echanges({ jeton, piscines, evts, infra, txLues });
-    /* le prix : le dernier Swap lu de la piscine principale */
+    /* le prix : le dernier Swap lu de la piscine principale (la plus profonde) */
     let dernierSwap = null;
     if (mode === 'tout') {
-      for (const e of evts) if (e.genre === 'swap' && e.pool === lance.pool && (!dernierSwap || e.bloc > dernierSwap.bloc || (e.bloc === dernierSwap.bloc && e.i > dernierSwap.i))) dernierSwap = e;
+      for (const e of evts) if (e.genre === 'swap' && e.pool === principale.pool && (!dernierSwap || e.bloc > dernierSwap.bloc || (e.bloc === dernierSwap.bloc && e.i > dernierSwap.i))) dernierSwap = e;
     } else {
       /* par acheteur, les recus des 50 ne disent PAS le dernier prix (essai du
          13/10 : un vieux prix de leurs ventes, -0,01 ETH au lieu de -0,99) :
          on lit les Swap de la piscine depuis la pointe, fenetre elargie tant
          qu'elle est vide (2^20, 2^23 blocs, puis toute la vie) */
-      const f = filtresSwap[piscines.indexOf(lance)];
+      const f = filtresSwap[piscines.indexOf(principale)];
       for (const largeur of [2 ** 20, 2 ** 23, Infinity]) {
-        const de = largeur === Infinity ? lance.bloc : Math.max(lance.bloc, P.pointe - largeur);
+        const de = largeur === Infinity ? principale.bloc : Math.max(principale.bloc, P.pointe - largeur);
         const l = (await R.lisLogs(f, de, P.pointe, P)).logs.map(K.decode).filter(Boolean);
         if (l.length) { dernierSwap = l[l.length - 1]; break; }
-        if (de === lance.bloc) break;
+        if (de === principale.bloc) break;
       }
     }
-    let prix = null;
-    if (dernierSwap && dernierSwap.sqrtP != null) prix = K.prixDepuisSqrt(dernierSwap.sqrtP, lance.ethEst0);
-    else if (lance.version === 2) {
+    /* prix dans la cote, puis en wei par la conversion de la cote (lot du 14/10) */
+    let prix = null, prixSource = null;
+    if (dernierSwap && dernierSwap.sqrtP != null) { prix = K.prixEnWei(K.prixDepuisSqrt(dernierSwap.sqrtP, principale.ethEst0), principale.conv); prixSource = 'last Swap'; }
+    else if (principale.version === 2) {
       /* v2 : le Swap ne porte pas de prix ; les soldes de la paire (= reserves apres Sync) */
-      const [rEth, rJ] = await R.multicall([{ to: K.ADR.WETH, fn: 'balanceOf', args: [lance.pool] }, { to: jeton, fn: 'balanceOf', args: [lance.pool] }]);
-      if (rEth != null && rJ != null) prix = K.prixDepuisReserves(rEth, rJ);
+      const coteJ = K.estCoteEth(principale.cote) ? K.ADR.WETH : principale.cote;
+      const [rC, rJ] = await R.multicall([{ to: coteJ, fn: 'balanceOf', args: [principale.pool] }, { to: jeton, fn: 'balanceOf', args: [principale.pool] }]);
+      if (rC != null && rJ != null) { prix = K.prixEnWei(K.prixDepuisReserves(rC, rJ), principale.conv); prixSource = 'reserves'; }
     }
+    /* la source de CHAQUE prix (lot du 14/10) : lue sur la chaine = Verified ;
+       le choix des piscines par la liquidite DexScreener = Not verified */
+    const prixLuSur = prix ? { verifie: true, piscine: principale.pool, version: principale.version, cote: principale.cote, source: prixSource,
+      /* les reserves v2 sont lues a la pointe : pas de tx (avant, la tx du dernier Swap v2 etait montree a tort) */
+      bloc: prixSource === 'last Swap' ? dernierSwap.bloc : P.pointe, tx: prixSource === 'last Swap' ? dernierSwap.tx : null, conversion: principale.conv ? 'today' : 'none',
+      chemin: principale.ref ? principale.ref.chemin : [], choix: principale.ref ? principale.ref.choix : null } : null;
     const soldes = await R.soldes(jeton, premiers.map((p) => p.qui));
 
     /* les financements lus (WETH du createur — et, pour une migration, du
@@ -487,7 +730,7 @@ function cree(deps0) {
     /* le pic : cloture journaliere x totalSupply LU (Not verified : prix exterieur) */
     let pic = row.pic_usd != null ? { usd: row.pic_usd, jour: row.pic_jour, source: row.pic_source } : null;
     const offreUnites = K.unites(infos.offre, infos.decimales);
-    const r = await S.pic(lance.pool, jeton);
+    const r = await S.pic(principale.pool, jeton);
     if (r && r.pic) pic = { usd: r.pic.prix * offreUnites, jour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), source: 'geckoterminal daily close × totalSupply read on chain', meche: r.meche ? r.meche.prix * offreUnites : null };
 
     const base = K.tauxBase(lignes.map((l) => ({ tot: l.tot, issue: l.issue, marques: l.marques })));
@@ -506,7 +749,8 @@ function cree(deps0) {
         recette, drapeaux, liquidite, profil_t: prof && prof.t ? Math.round(prof.t / 1000) : null,
         lu_t: Math.floor(deps.horloge() / 1000),
         details: { ancien, picMeche: pic && pic.meche, premiersBloc: premiers.length ? premiers[premiers.length - 1].bloc : null, nPremiers: premiers.length, prixTx: dernierSwap ? dernierSwap.tx : null,
-          finHeure, robotsBloc: finMinute },
+          finHeure, robotsBloc: finMinute, prix: prixLuSur,
+          piscines: piscines.map((x) => ({ pool: x.pool, version: x.version, cote: x.cote, bloc: x.bloc, tx: x.tx, liq: x.liq })), principale: principale.pool },
       }));
     });
   }
@@ -651,6 +895,7 @@ function cree(deps0) {
     enCours = (async () => {
       await allume();
       R.nouvellePasse(); S.nouvellePasse(); S.purge();
+      convMemo = new Map();
       if (R.purgeVeille) R.purgeVeille(PURGE_VEILLE_MS);
       const debut = Math.floor(deps.horloge() / 1000);
       const bilan = { retenus: 0, pics: 0, lus: 0, statut: 'ok' };
@@ -658,6 +903,7 @@ function cree(deps0) {
       try {
         await decouverte(bilan);
         P = await R.pointe();
+        await historique(bilan, P);
         const M = await migrations(P);
         for (const row of B.tous("SELECT * FROM jetons WHERE statut = 'a_lire' ORDER BY COALESCE(pic_usd, cap_usd, 0) DESC")) {
           await litJeton(row, P, M);
@@ -906,12 +1152,15 @@ function cree(deps0) {
       regles: { acheteurs: K.N_ACHETEURS, mise_min_eth: Number(K.MISE_MIN_WEI) / 1e18, tot_min: K.TOT_S / 60, smart_jetons: K.SMART_JETONS, projets_assez: K.PROJETS_ASSEZ,
         z_verdict: K.Z_VERDICT, groupe_min: K.GROUPE_MIN, groupe_ecart_pct: K.GROUPE_ECART * 100, bloc_charge: K.BLOC_CHARGE, relais_pct: K.RELAIS_PART * 100, relais_blocs: K.RELAIS_BLOCS, seuil_usd: K.SEUIL_CAP_USD,
         base_assez: K.BASE_ASSEZ, robots_min: K.ROBOTS_MIN, lanceur_auto: K.LANCEUR_AUTO, actifs_min: SRC.ACTIFS_MIN, pic_candidat_usd: SRC.PIC_CANDIDAT_USD,
-        passe_min: PASSE_MS / 60e3, veille_min: VEILLE_MS / 60e3 },
+        passe_min: PASSE_MS / 60e3, veille_min: VEILLE_MS / 60e3, histo_liq_min_usd: HISTO_LIQ_MIN_USD, histo_fenetre: HISTO_FENETRE },
       passe, veille, passe_ok: dern('passe', true), veille_ok: dern('veille', true),
       cache: { plein: !!(R && R.etat.cachePlein) },
       compteurs: { retenus: n('SELECT count(*) n FROM jetons'), lus: n("SELECT count(*) n FROM jetons WHERE statut = 'lu'"), wallets: n('SELECT count(*) n FROM wallets'),
         smart: n('SELECT count(*) n FROM wallets WHERE smart = 1'), inities: n('SELECT count(*) n FROM wallets WHERE initie = 1'), creations24h: nouveaux.length, lanceurs_auto: auto.size },
       wallets, createurs, jetons, nouveaux, groupes: groupesVus().slice(0, 20), liens,
+      /* ou en est la decouverte historique (lot du 14/10) */
+      historique: (() => { const c = {}; for (const r of B.tous('SELECT statut, count(*) n FROM historique GROUP BY statut')) c[r.statut] = r.n; const bas = B.meta('histo_bas');
+        return { bas, fini: bas === 0, vus: Object.values(c).reduce((a2, b2) => a2 + b2, 0), parStatut: c }; })(),
       alertes: B.tous('SELECT id, t, genre, jeton, envoye FROM alertes ORDER BY id DESC LIMIT 10'),
       journal: journal.slice(-20),
     };
@@ -993,4 +1242,5 @@ function planifie(deps) {
   };
 }
 
-module.exports = { config, cree, planifie, PASSE_MS, VEILLE_MS, RAMPES, FABRIQUES_V2, FABRIQUES_V3, NOUVEAU_S, RETRAIT_RUG, LIGNES_TOUT_MAX, HEURE_BLOCS };
+module.exports = { config, cree, planifie, PASSE_MS, VEILLE_MS, RAMPES, FABRIQUES_V2, FABRIQUES_V3, NOUVEAU_S, RETRAIT_RUG, LIGNES_TOUT_MAX, HEURE_BLOCS,
+  REF_USDG_ETH, PISCINES_MAX, HISTO_FENETRE, HISTO_DS_LOTS, HISTO_GT, HISTO_FILE_MAX, HISTO_LIQ_MIN_USD };

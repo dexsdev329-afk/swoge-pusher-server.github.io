@@ -276,6 +276,54 @@ function piscineEth(init, jeton) {
   return null;
 }
 
+/** La piscine d'un jeton contre N'IMPORTE QUELLE cote (lot du 14/10) : ETH,
+ *  USDG, une action tokenisee, un autre jeton. `ethEst0` garde son nom (colonne
+ *  eth_est0 de la base) mais veut dire « la COTE est token0 » ; `cote` = son
+ *  adresse. Mesure qui l'a decide (passe reelle du 13/10) : 10 des 37 jetons
+ *  retenus ont leur piscine la plus profonde contre autre chose que l'ETH
+ *  (USDG, NVDA, HIMS, amc, PONS) ; SI et FROGE (rampe 0x1eef) n'ont AUCUNE
+ *  piscine ETH a leur naissance (lancees contre NVDAx3L et OPENAIx1L) et CPU
+ *  etait lu sur une piscine ETH secondaire nee le 30/09 (bloc 76 162 106 :
+ *  pic 1,09 M$ au lieu de 3,88 M$, 0 premier acheteur) au lieu de sa piscine
+ *  INTC du 10/09 (bloc 59 789 737). Les montants de la cote deviennent des wei
+ *  par `conv` (voir versWei), lue sur une piscine de reference. */
+function piscineDe(init, jeton) {
+  if (!init || init.genre !== 'init') return null;
+  const j = String(jeton).toLowerCase();
+  if (init.c0 === j && init.c1 && init.c1 !== j) return { pool: init.pool, version: init.version, ethEst0: false, cote: init.c1, hook: init.hook || null, bloc: init.bloc, tx: init.tx };
+  if (init.c1 === j && init.c0 && init.c0 !== j) return { pool: init.pool, version: init.version, ethEst0: true, cote: init.c0, hook: init.hook || null, bloc: init.bloc, tx: init.tx };
+  return null;
+}
+const estCoteEth = (a) => COTES_ETH.has(String(a || '').toLowerCase());
+
+/* ---- LA CONVERSION D'UNE COTE EN WEI (lot du 14/10) ----
+ * conv = { num, den } : wei d'ETH par unite BRUTE de la cote ; null = la cote
+ * est deja de l'ETH. Lue sur la chaine (Verified) : le dernier Swap d'une
+ * piscine de reference (sqrtPriceX96) ou ses reserves (v2), au plus deux sauts
+ * (cote -> USDG -> ETH). UN SEUL COURS par passe, celui du jour : les entrees et
+ * sorties d'un wallet sont converties au meme cours, donc le SIGNE du gain (ce
+ * qui fait « gagnant » ou « perdant ») est celui du gain dans la cote ; seul le
+ * montant en ETH depend du cours du jour (dit sur la page). */
+const BITS_MAX = 320;
+function reduitConv(c) {
+  if (!c) return c;
+  let { num, den } = c;
+  const bits = (x) => x.toString(2).length;
+  const d = Math.max(bits(num), bits(den)) - BITS_MAX;
+  if (d > 0) { num >>= BigInt(d); den >>= BigInt(d); if (den === 0n) den = 1n; }
+  return { num, den };
+}
+/** Le prix de l'AUTRE cote d'une piscine de reference en unites de `refEst0`
+ *  (true : l'unite est token0), depuis sqrtPriceX96 (= prixDepuisSqrt). */
+const convDepuisSqrt = (sqrtP, uniteEst0) => reduitConv(prixDepuisSqrt(sqrtP, uniteEst0));
+/** v2 : `reserveUnite` de l'unite pour `reserveX` de la cote convertie. */
+const convDepuisReserves = (reserveUnite, reserveX) => (reserveX > 0n && reserveUnite >= 0n ? { num: reserveUnite, den: reserveX } : null);
+/** X -> Y puis Y -> ETH. */
+const composeConv = (a, b) => (!a ? b : !b ? a : reduitConv({ num: a.num * b.num, den: a.den * b.den }));
+const versWei = (montant, conv) => (conv ? (montant * conv.num) / conv.den : montant);
+/** Le prix du jeton dans la cote, ramene en wei par unite brute du jeton. */
+const prixEnWei = (prix, conv) => (!prix || !conv ? prix : { num: prix.num * conv.num, den: prix.den * conv.den });
+
 /** La jambe d'un Swap pour une piscine ETH : { sens, eth, jetons } (positifs),
  *  vue de l'utilisateur ; null si les deux montants ont le meme signe. */
 function jambe(swap, piscine) {
@@ -305,7 +353,8 @@ const valeur = (jetons, prix) => (prix && prix.den > 0n ? (jetons * prix.num) / 
 /**
  * Les echanges d'un jeton, un par transaction, chacun avec son BENEFICIAIRE.
  *   jeton      adresse
- *   piscines   [{ pool, version, ethEst0, hook }] (piscines ETH du jeton)
+ *   piscines   [{ pool, version, ethEst0, hook, cote?, conv? }] (piscines du
+ *              jeton, ETH ou non : `conv` ramene la cote en wei, voir versWei)
  *   evts       evenements decodes (Transfer du jeton + Swap des piscines),
  *              TOUS ceux des transactions concernees (recus complets ou
  *              lecture de la vie entiere)
@@ -332,6 +381,9 @@ function echanges({ jeton, piscines, evts, infra, txLues }) {
   const j = String(jeton).toLowerCase();
   const P = new Map(piscines.map((p) => [String(p.pool).toLowerCase(), p]));
   const exclus = new Set([ADR.POOL_MANAGER_V4, ...BRULES, ...[...P.keys()].filter(estAdresse), ...piscines.map((p) => p.hook).filter(Boolean), ...(infra || [])].map((a) => String(a).toLowerCase()));
+  /* la devise des frais d'une piscine : l'ETH natif pour une piscine ETH (natif
+     ou WETH : seuls les frais en ETH natif ont ete vus, revue C1), sinon la cote */
+  const devise = (p) => (!p.cote || estCoteEth(p.cote) ? ADR.ETH_NATIF : p.cote);
   const parTx = new Map();
   for (const e of evts) {
     if (!e) continue;
@@ -340,9 +392,9 @@ function echanges({ jeton, piscines, evts, infra, txLues }) {
     if (e.genre === 'frais_crochet' && !(P.has(e.pool) && P.get(e.pool).hook === e.crochet)) continue;
     if (e.genre !== 'transfer' && e.genre !== 'swap' && e.genre !== 'frais_crochet' && e.genre !== 'frais_routeur') continue;
     let g = parTx.get(e.tx);
-    if (!g) { g = { tx: e.tx, bloc: e.bloc, i: e.i, swaps: [], transferts: [], crochet: 0n, routeur: 0n }; parTx.set(e.tx, g); }
-    if (e.genre === 'frais_crochet') { if (e.devise === ADR.ETH_NATIF) g.crochet += e.montant; continue; }
-    if (e.genre === 'frais_routeur') { if (e.devise === ADR.ETH_NATIF) g.routeur += e.montant; continue; }
+    if (!g) { g = { tx: e.tx, bloc: e.bloc, i: e.i, swaps: [], transferts: [], crochet: 0n, routeur: new Map() }; parTx.set(e.tx, g); }
+    if (e.genre === 'frais_crochet') { const p = P.get(e.pool); if (e.devise === devise(p)) g.crochet += versWei(e.montant, p.conv); continue; }
+    if (e.genre === 'frais_routeur') { g.routeur.set(e.devise, (g.routeur.get(e.devise) || 0n) + e.montant); continue; }
     if (e.i < g.i) g.i = e.i;
     (e.genre === 'swap' ? g.swaps : g.transferts).push(e);
   }
@@ -350,11 +402,17 @@ function echanges({ jeton, piscines, evts, infra, txLues }) {
   for (const g of parTx.values()) {
     if (!g.swaps.length) continue;
     let eth = 0n, jet = 0n;
+    const devises = new Map();
     for (const s of g.swaps) {
       const p = P.get(s.pool);
       const e = p.ethEst0 ? s.u0 : s.u1, t = p.ethEst0 ? s.u1 : s.u0;
-      eth += e; jet += t;
+      eth += versWei(e, p.conv); jet += t;
+      devises.set(devise(p), p.conv);
     }
+    /* frais du routeur dans la devise de la (des) piscine(s) de la tx, en wei */
+    let routeur = 0n;
+    for (const [d, cv] of devises) routeur += versWei(g.routeur.get(d) || 0n, cv);
+    g.routeur = routeur;
     let sens = null;
     if (eth < 0n && jet > 0n) sens = 'achat';
     else if (eth > 0n && jet < 0n) sens = 'vente';
@@ -916,7 +974,8 @@ module.exports = {
   N_ACHETEURS, MISE_MIN_WEI, TOT_S, ROBOTS_S, PROFIL_PAYE_S, SMART_JETONS, PROJETS_ASSEZ, Z_VERDICT,
   GROUPE_MIN, GROUPE_ECART, BLOC_CHARGE, COENTREE_MIN, COENTREE_JETONS, PAIRE_BLOCS, RELAIS_PART, RELAIS_BLOCS, COUT_CONNU_PART, ROBOTS_MIN, ALERTE_SMART_MIN, ALERTE_FENETRE_S,
   SEUIL_CAP_USD, PREMIERS_COMMUNS_MIN, BASE_ASSEZ, LANCEUR_AUTO, LIENS_TYPES, ROUTEURS_FRAIS,
-  adrDe, pad32, estAdresse, estPool4, decode, piscineEth, jambe, prixDepuisSqrt, prixDepuisReserves, valeur,
+  adrDe, pad32, estAdresse, estPool4, decode, piscineEth, piscineDe, estCoteEth, jambe, prixDepuisSqrt, prixDepuisReserves, valeur,
+  convDepuisSqrt, convDepuisReserves, composeConv, versWei, prixEnWei, reduitConv,
   echanges, premiersAcheteurs, minutesApres, position, gain, issue,
   marqueGroupes, marquePaires, marqueCoentree, marqueRelais, marqueRenvoi, marqueFinance, marques,
   tauxBase, compteDansLaBase, score, recette, liens, attribueCreateur, alertesSmart, alerteCreateur, estLanceurAuto,
