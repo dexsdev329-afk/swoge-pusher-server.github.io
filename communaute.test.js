@@ -46,7 +46,13 @@
  *    lien du PASSAGE de 1 000, rien d invente (entree inconnue, ancien format,
  *    frais pris dans l echange d un autre, envoi d un contrat, conversion hors
  *    fenetre, en-tete illisible), schema 3 reconstruit, longueur au pire. Le
- *    faux noeud sait rendre les en-tetes illisibles (C.entetesCasses).
+ *    faux noeud sait rendre les en-tetes illisibles (C.entetesCasses) ou faux
+ *    (C.entetesFaux). Relecture du 13/10 (R4 reecrit, R12 a R18) : un envoi n a
+ *    qu un envoyeur (deux nets negatifs : personne n est nomme), l origine dit
+ *    quelle part de l envoi l achat lie couvre (« and N more times », « part of
+ *    it »), deux sauts seulement pour un sac entier, maison et exclus reverifies
+ *    a l annonce, en-tete invraisemblable refuse, lecture courte des en-tetes,
+ *    frais dans la vente d un autre, aucun en-tete lu pour une annonce tue.
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -179,6 +185,8 @@ function chaine(cadence) {
     const tip = blocA(C.now);
     /* C.entetesCasses : les en-tetes des blocs passes sont illisibles (la pointe reste lue) */
     if (m === 'eth_getBlockByNumber' && C.entetesCasses && p[0] !== 'latest') return { __err: 'header not found' };
+    /* C.entetesFaux(bloc) : l en-tete que rendrait un noeud fautif (la pointe reste juste) */
+    if (m === 'eth_getBlockByNumber' && C.entetesFaux && p[0] !== 'latest') return C.entetesFaux(parseInt(p[0], 16));
     if (m === 'eth_getBlockByNumber') { const b = p[0] === 'latest' ? tip : parseInt(p[0], 16); return { number: hex(b), timestamp: hex(Math.floor(tDe(b) / 1000)) }; }
     if (m === 'eth_getLogs') {
       const f = p[0], de = parseInt(f.fromBlock, 16), a = parseInt(f.toBlock, 16);
@@ -2039,19 +2047,24 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
       ok(!/sold|dump|scam/i.test(ligneE(papier(r3).texte) || 'x'), 'R3 la ligne decrit des tx, n accuse personne');
     }
 
-    /* --- R4 deux envoyeurs dans la meme tx : le PLUS GROS, dans les deux ordres --- */
-    for (const ordre of ['petit d abord', 'gros d abord']) {
+    /* --- R4 deux envoyeurs dans la meme tx. Intention : la ligne ne nomme JAMAIS un wallet qui n a pas envoye
+       a l entrant. Relecture du 13/10 (A1, E5) : « le plus gros net negatif » nommait P1 quand P1 envoyait a X
+       et P2 a Q (« received from P1, who bought … »). Un envoi n a desormais qu UNE adresse a net negatif (0 tx
+       sans piscine a plusieurs dans l histoire) : a deux envoyeurs, personne n est nomme — que P1 envoie a Q,
+       a une autre personne ou a un contrat, dans les deux ordres --- */
+    for (const vers of ['Q', 'une personne', 'un contrat']) for (const ordre of ['P1 d abord', 'P2 d abord']) {
       const { W: X, I: IX, pas } = await scene();
-      const P1 = N(310), P2 = N(311), Q = N(312);
-      await pas([[PAIRE, P1, 5000]]);
-      const r2 = await pas([[PAIRE, P2, 3e6]]);
-      const envois = [[P1, Q, 1500], [P2, Q, 3e6]];
-      const r3 = await pas(ordre === 'gros d abord' ? envois.reverse() : envois);
+      const P1 = N(310), P2 = N(311), Q = N(312), Xp = N(313);
+      await pas([[PAIRE, P1, 5e6]]);
+      await pas([[PAIRE, P2, 3e6]]);
+      const q1 = vers === 'Q' ? 1500 : 5e6;
+      const envois = [[P1, vers === 'Q' ? Q : vers === 'une personne' ? Xp : MUET, q1], [P2, Q, 3e6]];
+      const r3 = await pas(ordre === 'P2 d abord' ? envois.reverse() : envois);
       const e = IX.etat().tenue[Q] || {};
-      ok(e.comment === 'envoi' && e.de === P2 && e.h === r3.h && e.origine && e.origine.h === r2.h,
-         `R4 (${ordre}) l envoyeur dit est celui qui a envoye le plus (P2, 3M contre 1 500), et son origine : ` + JSON.stringify(e));
-      const l = ligneE(papier(await pas([[Q, PAIRE, 3e6 + 1500]])).texte) || '';
-      ok(l.includes(lienA(P2)) && !l.includes(P1), `R4 (${ordre}) la ligne nomme P2, jamais P1 : ` + l);
+      ok(e.h === r3.h && !('comment' in e) && !('de' in e) && !('origine' in e),
+         `R4 (P1 vers ${vers}, ${ordre}) deux envoyeurs : l entree de Q garde sa tx, sans envoyeur ni origine : ` + JSON.stringify(e));
+      const l = ligneE(papier(await pas([[Q, PAIRE, 3e6 + (vers === 'Q' ? q1 : 0)]])).texte) || '';
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r3.h))} · ${lienT(r3.h, 'tx')}`, `R4 (P1 vers ${vers}, ${ordre}) la ligne : l heure et la tx, ni P1 ni P2`);
     }
 
     /* --- R5 deux sauts (A achete, envoie a B, B envoie a C), et l aller-retour --- */
@@ -2064,15 +2077,15 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
       const e = IX.etat().tenue[C_] || {};
       ok(e.de === B && e.origine && e.origine.h === r1.h && e.origine.qui === A_, 'R5 C : recu de B, origine = l achat de A, deux sauts plus haut : ' + JSON.stringify(e));
       egal(ligneE(papier(await pas([[C_, PAIRE, 4e6]])).texte),
-           `📥 In since ${heureBloc(X.C, blocTx(X.C, r3.h))} · ${lienT(r3.h, 'received')} from ${lienA(B)} · first ${lienT(r1.h, 'bought on ' + heureBloc(X.C, blocTx(X.C, r1.h)))} by ${lienA(A_)}`,
-           'R5 la ligne : de B, « first bought … by » A — jamais « B who bought »');
+           `📥 In since ${heureBloc(X.C, blocTx(X.C, r3.h))} · ${lienT(r3.h, 'received')} from ${lienA(B)} · ${lienT(r1.h, 'bought on ' + heureBloc(X.C, blocTx(X.C, r1.h)))} by ${lienA(A_)}`,
+           'R5 la ligne : de B, « bought … by » A — jamais « B who bought », jamais « first » (relecture du 13/10, E1 : le lien n est pas toujours le premier achat)');
       const D = N(323), E_ = N(324);
       const s1 = await pas([[PAIRE, D, 2e6]]);
       await pas([[D, E_, 2e6]]);
       const s3 = await pas([[E_, D, 2e6]]);
       egal(ligneE(papier(await pas([[D, PAIRE, 2e6]])).texte),
-           `📥 In since ${heureBloc(X.C, blocTx(X.C, s3.h))} · ${lienT(s3.h, 'received')} from ${lienA(E_)} · first ${lienT(s1.h, 'bought on ' + heureBloc(X.C, blocTx(X.C, s1.h)))} by this wallet`,
-           'R5 l aller-retour (D achete, envoie a E, E renvoie) : « first bought … by this wallet »');
+           `📥 In since ${heureBloc(X.C, blocTx(X.C, s3.h))} · ${lienT(s3.h, 'received')} from ${lienA(E_)} · ${lienT(s1.h, 'bought on ' + heureBloc(X.C, blocTx(X.C, s1.h)))} by this wallet`,
+           'R5 l aller-retour (D achete, envoie a E, E renvoie) : « bought … by this wallet »');
     }
 
     /* --- R6 la minute est celle de l EN-TETE, sur un noeud a 90 ms par bloc (le module en suppose 103,54) --- */
@@ -2133,6 +2146,10 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
            'R8 la ligne : l heure et la tx, sans dire comment');
       /* Q4 recoit d un CONTRAT (MUET) : pas « received from » un wallet */
       const r4 = await pas([[MUET, Q4, 1e6]]);
+      /* l entree elle-meme ne dit pas « envoi » : le compte entree_envoi (mode observe) ne la range pas
+         parmi les envois, meme si la ligne reverifie personne() a l annonce (relecture du 13/10, A2) */
+      const e4 = IX.etat().tenue[Q4] || { comment: 1 };
+      ok(e4.h === r4.h && !('comment' in e4) && !('de' in e4), 'R8 envoi d un contrat : l entree garde sa tx, sans « envoi » ni envoyeur : ' + JSON.stringify(e4));
       egal(ligneE(papier(await pas([[Q4, PAIRE, 1e6]])).texte), `📥 In since ${heureBloc(X.C, blocTx(X.C, r4.h))} · ${lienT(r4.h, 'tx')}`,
            'R8 envoi d un contrat : l heure et la tx, jamais « received from » un contrat');
       /* en-tete illisible : l annonce part, la ligne garde son lien, sans heure */
@@ -2185,25 +2202,200 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
            'R11 la ligne : l heure et la tx, jamais « bought » pour une conversion');
     }
 
-    /* --- R10 la longueur au pire : la ligne la plus longue (deux sauts, un autre wallet a l origine), la
-       vente melee (la ligne de gain/perte la plus longue), un reste, puis chaque champ chiffre a sa largeur
-       maximale : sous les 1 024 signes de la legende --- */
-    {
+    /* --- R10 la longueur au pire : les deux lignes les plus longues (deux sauts, un autre wallet a l origine ;
+       un saut, l envoyeur ayant achete plusieurs fois — « and N more times »), la vente melee (la ligne de
+       gain/perte la plus longue), un reste, puis chaque champ chiffre a sa largeur maximale : sous les 1 024
+       signes de la legende --- */
+    for (const forme of ['deux sauts', 'un saut, plusieurs achats']) {
       const { W: X, pas } = await scene();
       const A_ = N(370), B = N(371), Q = N(372), Z = N(373);
-      await pas([[PAIRE, A_, 3000999]]);
-      await pas([[A_, B, 3000999]]);
+      if (forme === 'deux sauts') {
+        await pas([[PAIRE, A_, 3000999]]);
+        await pas([[A_, B, 3000999]]);
+      } else {
+        await pas([[PAIRE, B, 1000999]]);
+        await pas([[PAIRE, B, 1e6]]);
+        await pas([[PAIRE, B, 1e6]]);
+      }
       await pas([[B, Q, 3000999]]);
       const m = papier(await pas([[Q, PAIRE, 2e6], [Q, Z, 1e6]]));
       const l = ligneE(m.texte) || '';
-      ok(/ · first .* by /.test(l) && /tokens also sent elsewhere/.test(m.texte) && /\(kept 999\)/.test(m.texte), 'R10 le decor : deux sauts, vente melee, un reste : ' + m.texte.split('\n').slice(1, 4).join(' | '));
+      const decor = forme === 'deux sauts' ? /<\/a> · <a [^>]*>bought on [^<]*<\/a> by <a /.test(l) : /, who <a [^>]*>bought on [^<]*<\/a> and 2 more times$/.test(l);
+      ok(decor && /tokens also sent elsewhere/.test(m.texte) && /\(kept 999\)/.test(m.texte), `R10 le decor (${forme}), vente melee, un reste : ` + m.texte.split('\n').slice(1, 4).join(' | '));
       const lignes = m.texte.split('\n');
       const comm = lignes.filter((x) => /^(👥|🌊|🛒)/.test(x)).join('\n');
       const commMax = '👥 99999 holders (+99999 in 24h) · 🆕 9999 new today\n🌊 100.0% held by wallets · pools: 99.9% ETH · 99.9% $SWOGEBET · 99.9% other\n🛒 999M $SWOGE available to buy in the ETH pools';
       /* au pire : la ligne de communaute la plus large, deux annees ecrites (« , 2026 » × 2), un montant et un
-         $ plus larges (« 999M », « ~$999,999 ») et la plus longue des phrases (80 signes au plus, P1) */
-      const pire = visibleT(m.texte) - visibleT(comm) + visibleT(commMax) + 2 * ', 2026'.length + 12 + 80;
-      ok(pire <= 1024, `R10 le message entier au pire : ${pire} signes visibles (mesure ${visibleT(m.texte)}, ligne 📥 ${visibleT(l)}) <= 1 024`);
+         $ plus larges (« 999M », « ~$999,999 »), la plus longue des phrases (80 signes au plus, P1) et, pour
+         un saut, un compte d achats a 6 chiffres (« 999999 » contre « 2 ») */
+      const pire = visibleT(m.texte) - visibleT(comm) + visibleT(commMax) + 2 * ', 2026'.length + 12 + 80 + (forme === 'deux sauts' ? 0 : 5);
+      ok(pire <= 1024, `R10 (${forme}) le message entier au pire : ${pire} signes visibles (mesure ${visibleT(m.texte)}, ligne 📥 ${visibleT(l)}) <= 1 024`);
+      console.log(`  R10 (${forme}) : au pire ${pire}, mesure ${visibleT(m.texte)}, ligne 📥 ${visibleT(l)}`);
+    }
+
+    /* --- R12 (relecture du 13/10, E1) deux sauts : l origine n est reprise que pour un sac ENTIER recu et
+       renvoye. Le cas reel du 07/08 : 0x176a… entre par 35 097 jetons de 0x1d1c…, achete lui-meme 757 728,
+       envoie le tout a 0x838a… qui vend ; l annonce nommait 0x2197… (l acheteur d origine de 0x1d1c…) pour un
+       sac achete a 95,6 % par 0x176a…. La ligne de C s arrete a « received from B » : ni A, ni « bought » --- */
+    {
+      const { W: X, I: IX, pas } = await scene();
+      const A_ = N(390), B = N(391), C_ = N(392);
+      await pas([[PAIRE, A_, 3e6]]);
+      await pas([[A_, B, 35097.57]]);
+      await pas([[PAIRE, B, 757728]]);
+      const eB = IX.etat().tenue[B] || {};
+      ok(eB.comment === 'envoi' && eB.de === A_ && eB.origine && eB.origine.part === 'entiere' && eB.n === 1 && eB.q === '35097570000000000000000',
+         'R12 B : recu de A (35 097,57, sac de A couvert), puis UN achat compte : ' + JSON.stringify(eB));
+      const r4 = await pas([[B, C_, 792825.57]]);
+      const eC = IX.etat().tenue[C_] || {};
+      ok(eC.comment === 'envoi' && eC.de === B && !('origine' in eC), 'R12 C : recu de B, sans origine (B n avait recu que 35k de A) : ' + JSON.stringify(eC));
+      const l = ligneE(papier(await pas([[C_, PAIRE, 792825.57]])).texte) || '';
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r4.h))} · ${lienT(r4.h, 'received')} from ${lienA(B)}`, 'R12 la ligne de C : « received from B », et rien de plus');
+      ok(!l.includes(A_) && !/bought|first/.test(l), 'R12 ni A, ni « bought », ni « first » : ' + l);
+    }
+
+    /* --- R12b (relecture du 13/10, E1) deux sauts : un sac que l achat d origine ne couvrait pas (A a achete
+       deux fois avant d envoyer : « and 1 more time » a un saut) ne se reprend pas plus loin. La ligne de C
+       s arrete a « received from B » --- */
+    for (const cas of ['deux achats', 'un achat et un envoi recu']) {
+      const { W: X, I: IX, pas } = await scene();
+      const A_ = N(385), B = N(386), C_ = N(387);
+      await pas([[PAIRE, A_, 1e6]]);
+      await pas(cas === 'deux achats' ? [[PAIRE, A_, 1e6]] : [[E1, A_, 1e6]]);
+      await pas([[A_, B, 2e6]]);
+      const oB = (IX.etat().tenue[B] || {}).origine || {};
+      ok(oB.qui === A_ && oB.part === (cas === 'deux achats' ? 'achats' : 'partie'), `R12b (${cas}) B : l origine de A, sa part : ` + JSON.stringify(oB));
+      const r4 = await pas([[B, C_, 2e6]]);
+      const eC = IX.etat().tenue[C_] || {};
+      ok(eC.comment === 'envoi' && eC.de === B && !('origine' in eC), `R12b (${cas}) C : recu de B, sans origine reprise : ` + JSON.stringify(eC));
+      const l = ligneE(papier(await pas([[C_, PAIRE, 2e6]])).texte) || '';
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r4.h))} · ${lienT(r4.h, 'received')} from ${lienA(B)}`, `R12b (${cas}) la ligne de C : « received from B », sans « by A »`);
+    }
+
+    /* --- R13 (relecture du 13/10, E2) un saut : « who bought on X » seulement si l achat lie couvre l envoi
+       (R3) ; l envoyeur a achete plusieurs fois pendant sa tenue et ses achats couvrent l envoi : « and N more
+       times » ; son sac a ete complete autrement (un envoi recu) : « bought part of it ». Mesure : 54, 82 et 1
+       des 137 entrees a un saut de l histoire ; avant, le lien montrait le premier achat seul dans 83 cas --- */
+    for (const cas of ['trois achats', 'un achat et un envoi recu', 'deux achats et un envoi recu']) {
+      const { W: X, I: IX, pas } = await scene();
+      const P = N(395), Q = N(396);
+      const r1 = await pas([[PAIRE, P, 1e6]]);
+      if (cas === 'trois achats') { await pas([[PAIRE, P, 1e6]]); await pas([[PAIRE, P, 1e6]]); }
+      else if (cas === 'un achat et un envoi recu') await pas([[E1, P, 2e6]]);
+      else { await pas([[PAIRE, P, 1e6]]); await pas([[E1, P, 2e6]]); }
+      const tot = cas === 'deux achats et un envoi recu' ? 4e6 : 3e6;
+      const r3 = await pas([[P, Q, tot]]);
+      const o = (IX.etat().tenue[Q] || {}).origine || {};
+      ok(o.h === r1.h && o.qui === P && o.part === (cas === 'trois achats' ? 'achats' : 'partie') && (cas !== 'trois achats' || o.n === 2),
+         `R13 (${cas}) l origine : le premier achat de P, et sa part : ` + JSON.stringify(o));
+      const l = ligneE(papier(await pas([[Q, PAIRE, tot]])).texte) || '';
+      const achat = (mots) => lienT(r1.h, `${mots} on ${heureBloc(X.C, blocTx(X.C, r1.h))}`);
+      const fin = cas === 'trois achats' ? `, who ${achat('bought')} and 2 more times` : `, who ${achat('bought part of it')}`;
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r3.h))} · ${lienT(r3.h, 'received')} from ${lienA(P)}${fin}`, `R13 (${cas}) la ligne`);
+    }
+
+    /* --- R14 (relecture du 13/10, A2) la maison et les exclus du JOUR : l envoyeur et l acheteur d origine
+       repassent par personne() au moment d annoncer. Une adresse devenue maison apres l entree (deps.maison :
+       inscription, deployeur V4 cree plus tard) ou ajoutee a TG_COMMUNAUTE_EXCLUS au redeploiement — le seul
+       reglage du proprietaire pour cacher une adresse — n est jamais nommee, comme dans les liens (groupe) --- */
+    {
+      const maisonDyn = [MAISON];
+      const { W: X, pas } = await scene({ plus: { maison: () => maisonDyn } });
+      const Hm = N(400), Q = N(401);
+      await pas([[PAIRE, Hm, 3e6]]);
+      const r2 = await pas([[Hm, Q, 3e6]]);
+      maisonDyn.push(Hm);
+      const l = ligneE(papier(await pas([[Q, PAIRE, 3e6]])).texte) || '';
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r2.h))} · ${lienT(r2.h, 'tx')}`, 'R14 envoyeur devenu maison : l heure et la tx, jamais son adresse');
+    }
+    {
+      const { W: X, pas } = await scene();
+      const A_ = N(402), B = N(403), C_ = N(404);
+      await pas([[PAIRE, A_, 3e6]]);
+      await pas([[A_, B, 3e6]]);
+      const r3 = await pas([[B, C_, 3e6]]);
+      const I2 = X.fabrique({ TG_COMMUNAUTE_EXCLUS: A_ });
+      const l = ligneE(papier(await pas([[C_, PAIRE, 3e6]], { inst: I2 })).texte) || '';
+      egal(l, `📥 In since ${heureBloc(X.C, blocTx(X.C, r3.h))} · ${lienT(r3.h, 'received')} from ${lienA(B)}`,
+           'R14 l acheteur d origine ajoute aux exclus au redeploiement : « received from B », sans « by A »');
+    }
+
+    /* --- R15 (relecture du 13/10, A3) un en-tete invraisemblable n ecrit aucune date : mauvais numero de bloc,
+       horodatage 0 (« Jan 1, 1970 »), demesure (« NaN »), illisible, a 3 h de l heure gardee ; a 1 h 50 il est
+       lu (l ecart mesure va jusqu a 54 min, la borne est a 2 h) --- */
+    for (const [nom, faux, lu] of [
+      ['mauvais numero', (C, b) => ({ number: hex(b + 1), timestamp: hex(Math.floor(C.tDe(b) / 1000)) }), false],
+      ['horodatage 0', (C, b) => ({ number: hex(b), timestamp: '0x0' }), false],
+      ['horodatage demesure', (C, b) => ({ number: hex(b), timestamp: '0xffffffffffffff' }), false],
+      ['horodatage illisible', (C, b) => ({ number: hex(b), timestamp: 'demain' }), false],
+      ['a 3 h de l heure gardee', (C, b) => ({ number: hex(b), timestamp: hex(Math.floor(C.tDe(b) / 1000) + 3 * 3600) }), false],
+      ['a 1 h 50 de l heure gardee', (C, b) => ({ number: hex(b), timestamp: hex(Math.floor(C.tDe(b) / 1000) + 110 * 60) }), true]]) {
+      const { W: X, I: IX, pas } = await scene();
+      const Q = N(405);
+      const r1 = await pas([[PAIRE, Q, 2e6]]);
+      const ill0 = IX.etat().compteurs.heuresEntreeIllisibles || 0;
+      X.C.entetesFaux = (b) => faux(X.C, b);
+      const r = await pas([[Q, PAIRE, 2e6]]);
+      X.C.entetesFaux = null;
+      const bQ = blocTx(X.C, r1.h);
+      const attendu = lu ? `📥 In since ${heureBloc({ tDe: (b) => X.C.tDe(b) + 110 * 60000 }, bQ)} · ${lienT(r1.h, 'bought')}` : `📥 Entry · ${lienT(r1.h, 'bought')}`;
+      ok(r.msg.length === 1, `R15 (${nom}) la paper hand part`);
+      egal(ligneE(papier(r).texte), attendu, `R15 (${nom}) la ligne`);
+      ok(((IX.etat().compteurs.heuresEntreeIllisibles || 0) - ill0) === (lu ? 0 : 1), `R15 (${nom}) ${lu ? 'aucun echec compte' : 'l echec est compte'}`);
+    }
+
+    /* --- R16 (relecture du 13/10, A4) la lecture des en-tetes est COURTE (LECTURE_COURTE) : un noeud en
+       panne (503) coute 2 essais et 2 s de recul, jamais les 5 essais et les 155 s de recul de rpcBrut (avec
+       un noeud qui pend : ~455 s par paper hand, 4 par tic) ; l annonce part, la ligne sans heure --- */
+    {
+      const doses = [];
+      const { W: X, I: IX, pas } = await scene({ plus: { dors: async (ms) => { doses.push(ms); } } });
+      const Q = N(410);
+      const r1 = await pas([[PAIRE, Q, 2e6]]);
+      const d0 = doses.length, a0 = X.C.appels.length, ill0 = IX.etat().compteurs.heuresEntreeIllisibles || 0;
+      /* la pointe (« latest ») passe, les en-tetes tombent en 503 sans JSON */
+      X.C.panne503 = 9; X.C.panne503Methode = 'eth_getBlockByNumber'; X.C.panne503Saute = 1;
+      const r = await pas([[Q, PAIRE, 2e6]]);
+      X.C.panne503 = 0; X.C.panne503Methode = null; X.C.panne503Saute = 0;
+      const pannes = X.C.appels.slice(a0).filter((m) => m === '503').length, reculs = doses.slice(d0).filter((ms) => ms >= M.RECUL_429_MS);
+      ok(r.msg.length === 1, 'R16 en-tetes en panne : la paper hand part');
+      egal(ligneE(papier(r).texte), `📥 Entry · ${lienT(r1.h, 'bought')}`, 'R16 la ligne garde son lien, sans heure');
+      ok(pannes === M.LECTURE_COURTE.essais && M.LECTURE_COURTE.essais === 2 && !reculs.length && doses.slice(d0).includes(M.LECTURE_COURTE.reculMs),
+         `R16 ${M.LECTURE_COURTE.essais} essais et ${M.LECTURE_COURTE.reculMs} ms de recul, aucun recul de ${M.RECUL_429_MS} ms ou plus : ${pannes} essais, reculs ${JSON.stringify(reculs)}`);
+      ok(M.LECTURE_COURTE.delaiMs <= 10000, 'R16 le delai d un essai : 10 s au plus (' + M.LECTURE_COURTE.delaiMs + ' ms)');
+      ok((IX.etat().compteurs.heuresEntreeIllisibles || 0) === ill0 + 1, 'R16 l echec est compte');
+    }
+
+    /* --- R17 (relecture du 13/10, A5) des frais pris dans la VENTE d une personne : P paie le routeur, qui
+       paie la paire et 10 000 au portefeuille de frais F. Une piscine est dans la tx : F n a ni « bought » ni
+       « received from » P (le mutant qui ote la condition de piscine survivait a la suite) --- */
+    {
+      const { W: X, I: IX, pas } = await scene();
+      const P = N(420), F = N(421);
+      await pas([[PAIRE, P, 5e6]]);
+      const rv = await pas([[P, ROUTEUR, 5e6], [ROUTEUR, PAIRE, 4.99e6], [ROUTEUR, F, 1e4]]);
+      const e = IX.etat().tenue[F] || {};
+      ok(e.h === rv.h && !('comment' in e) && !('de' in e) && !('origine' in e), 'R17 F : l entree garde sa tx, sans comment, envoyeur ni origine : ' + JSON.stringify(e));
+    }
+
+    /* --- R18 (relecture du 13/10, A5) l en-tete ne se lit que pour une paper hand qui PART : sous les 25 $,
+       aucun eth_getBlockByNumber hors de la pointe ; au-dessus, la pointe et UN en-tete (une entree par achat
+       n a pas d origine). La promesse « ~2,7 lots par jour, rien pour celles que les seuils taisent » --- */
+    {
+      const { W: X, I: IX, pas } = await scene();
+      const Q = N(430), Q2 = N(431);
+      await pas([[PAIRE, Q, 1e5]]);                       // 4,58 $ : le New holder se tait aussi
+      const lus0 = IX.etat().compteurs.heuresEntreeLues || 0, tus0 = IX.etat().compteurs.sousSeuil_paper || 0;
+      const a0 = X.C.appels.length;
+      const r = await pas([[Q, PAIRE, 1e5]]);
+      const entetes = X.C.appels.slice(a0).filter((m) => m === 'eth_getBlockByNumber').length;
+      ok(r.msg.length === 0 && (IX.etat().compteurs.sousSeuil_paper || 0) === tus0 + 1, 'R18 la paper hand de 4,58 $ est tue par le seuil');
+      ok(entetes === 1 && (IX.etat().compteurs.heuresEntreeLues || 0) === lus0, `R18 sous le seuil : la pointe seule, aucun en-tete d entree (${entetes} eth_getBlockByNumber)`);
+      await pas([[PAIRE, Q2, 2e6]]);
+      const a1 = X.C.appels.length;
+      const r2 = await pas([[Q2, PAIRE, 2e6]]);
+      const entetes2 = X.C.appels.slice(a1).filter((m) => m === 'eth_getBlockByNumber').length;
+      ok(r2.msg.length === 1 && entetes2 === 2 && (IX.etat().compteurs.heuresEntreeLues || 0) === lus0 + 1, `R18 au-dessus : la pointe et un en-tete (${entetes2})`);
     }
     process.env.TZ = TZ0 === undefined ? '' : TZ0;
     if (TZ0 === undefined) delete process.env.TZ;

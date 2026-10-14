@@ -352,8 +352,8 @@ const SEUIL_LIEN = 1000n * E18;                  // = SEUIL_DETENTEUR (plus bas)
    dit (annonces, recharges, releves) — jamais remis a neuf (VERSION_ETAT).
    3 (12/10/2026) : `tenue` (voir TENUE) — un etat au schema 2 n a pas l heure
    d entree de ses detenteurs, il est reconstruit une fois.
-   4 (13/10/2026) : l entree devient { t, b, h, comment, de, origine } (voir
-   ENTREE) — un etat au schema 3 n a que l heure (un nombre), ni la tx ni le
+   4 (13/10/2026) : l entree devient { t, b, h, q, comment, de, origine, n, qa }
+   (voir ENTREE) — un etat au schema 3 n a que l heure (un nombre), ni la tx ni le
    chemin : il est reconstruit une fois depuis la frappe (~3 min sans annonce,
    bornee au curseur de l ancien etat comme les migrations d avant). Tant que
    la reconstruction n a pas abouti, un nombre se lit comme { t } : la duree
@@ -386,40 +386,70 @@ const ANCRE_PAS = 8640000;                        // ~10 jours a ~100 ms/bloc
  * UTC ; 8 394 Transfer, 5 746 Sync depuis la frappe) :
  *  - le cas : l entree de 0x7a1d…165f (tx 0x1963a383…, 2026-10-03 22:03:01 UTC)
  *    est un ACHAT a la paire v2 : paire → 0x09215a47… → 0xb92fe925… → 0x7a1d,
- *    les deux intermediaires sont des contrats (44 782 et 9 442 octets de code,
+ *    les deux intermediaires sont des contrats (22 390 et 4 720 octets de code,
  *    net nul), la tx est signee par un relais. L explorateur montre le jeton
  *    arriver « de 0xb92fe925… » : c est le dernier saut d un routeur, pas un
  *    autre wallet ;
  *  - 118 detenteurs (personnes >= 1 000) : 86 entres par un achat (72,9 %), 18
  *    par envoi d une personne (15,3 %) dont 17 d un portefeuille entre lui-meme
  *    par un achat (16 a un saut, 1 a deux), 14 autrement (11 portefeuilles de
- *    frais passes a 1 000 dans l echange d un autre, une conversion $SWOGEBET,
- *    un echange partage avec un contrat, un retrait du coffre du casino) ;
+ *    frais passes a 1 000 dans l echange d un autre, un echange $SWOGEBET
+ *    partage avec un contrat, un retrait de liquidite v4 — launchpad, 20 pools —
+ *    et un retrait du coffre du casino) ;
  *  - 53 paper hands en 30 jours : entree par achat 48 (90,6 %), par envoi d un
  *    portefeuille qui avait achete 3 (5,7 %), autre 2, inconnue 0 ; aucune
  *    entree par achat dont le sac serait venu ensuite surtout par envoi (0/53) ;
- *  - 144 entrees par envoi dans l histoire : 0 tx a plus d un envoyeur (net
- *    negatif) — « celui qui a envoye le plus » est l envoyeur unique observe ;
  *  - l heure gardee est INTERPOLEE entre les ancres (voir TENUE) : sur 140 blocs
  *    d entree et d origine, minute juste pour 27 seulement, ecart median 1,7
  *    min, maximum 54 min. « UTC a la minute » se LIT donc dans l en-tete du bloc,
  *    au moment d annoncer : un lot de 1 ou 2 eth_getBlockByNumber par paper hand
  *    qui part (~2,7 par jour), rien pour celles que les seuils taisent.
  * L entree d un detenteur (S.tenue) : { t (ms, l heure gardee), b (bloc), h
- * (tx), comment, de, origine }. `comment` : « achat » si la personne est le
- * BENEFICIAIRE d un achat de marche dans cette tx (la regle de classe, la meme
- * que les annonces) ; « envoi » si la tx ne touche aucune piscine et que
- * l adresse au plus grand net negatif (le plus gros envoyeur) est une personne,
- * `de` ; absent sinon (frais pris dans l echange d un autre, conversion,
- * liquidite, contrat ou maison qui envoie) — l heure et la tx restent, le
- * comment ne s invente pas. `origine` (envoi) : { h, b, t, qui } de l achat qui
- * a fait entrer l envoyeur, lu AVANT que l envoi ne l efface ; s il etait entre
- * lui-meme par envoi, son origine est reprise (deux sauts ou plus, `qui` dit
- * l acheteur). Hors de la fenetre des recus (8 jours), la construction classe
+ * (tx), q, comment, de, origine, n, qa }. `q` : ce que la tx d entree lui a
+ * apporte (son net, en wei, une chaine). `comment` : « achat » si la personne
+ * est le BENEFICIAIRE d un achat de marche dans cette tx (la regle de classe, la
+ * meme que les annonces) ; « envoi » si la tx ne touche aucune piscine et n a
+ * qu UNE adresse a net negatif, une personne, `de` ; absent sinon (frais pris
+ * dans l echange d un autre, conversion, liquidite, contrat ou maison qui
+ * envoie, plusieurs envoyeurs) — l heure et la tx restent, le comment ne
+ * s invente pas. Hors de la fenetre des recus (8 jours), la construction classe
  * sans recu : piscines de marche par S.autres (WETH, USDG ; pas le v4), la
  * liquidite de la paire par ses Sync — comme le prix d achat moyen (COUT).
+ * Relecture du 13/10 (cache de la relecture, toute l histoire rejouee, 0 appel ;
+ * script correctifs/mesure_regles.js) :
+ *  - L ENVOYEUR (A1, E5). « Le plus grand net negatif » pouvait nommer un wallet
+ *    qui n avait rien envoye a l entrant : P1 envoie a X, P2 a Q dans la meme tx
+ *    (un lot de relais, un bundle 4337 — 17 detenteurs entres par EntryPoint),
+ *    Q etait annonce « received from P1 ». Un SEUL net negatif, par la
+ *    conservation des jetons, est la source de tout ce qui arrive dans la tx,
+ *    routeurs a net nul compris. Mesure : 144 entrees par envoi sous l ancienne
+ *    regle, 144 sous la nouvelle (0 perdue) ; 0 tx sans piscine a plusieurs nets
+ *    negatifs dans les 8 394 de l histoire.
+ *  - L ORIGINE A UN SAUT (E2). `origine` : { h, b, t, qui, part, n } de l achat
+ *    qui a fait entrer l envoyeur, lu AVANT que l envoi ne l efface. `n` et `qa`
+ *    de l envoyeur : ses achats pendant la tenue apres l entree, et tout ce
+ *    qu ils lui ont apporte, entree comprise. `part` : « entiere » si son achat
+ *    d entree couvre ce qu il envoie (q >= recu) ; « achats » si ses achats de la
+ *    tenue le couvrent ensemble (n plus) ; « partie » sinon. Mesure, 137
+ *    entrees a un saut d un acheteur dans l histoire : 54 entiere, 82 achats
+ *    (tous couverts par la somme), 1 partie ; detenteurs actuels : 2 sur 16 pas
+ *    en entier (0x5520… ← 0x7509…, deux achats ; 0xd0f7… ← 0xeb22…, trois) ;
+ *    paper hands des 30 jours : 0 sur 3. Avant, « who bought on X » pointait le
+ *    premier achat seul dans 83 cas sur 137.
+ *  - DEUX SAUTS OU PLUS (E1). L origine de l envoyeur n est reprise que s il
+ *    etait entre par envoi d un sac ENTIER (part « entiere ») et que sa tx
+ *    d entree lui avait apporte au moins ce qu il envoie ; sinon la ligne
+ *    s arrete a « received from ». Cas reel du 07/08 : 0x176a… entre par 35 097
+ *    jetons venus de 0x1d1c… (origine 0x2197…), achete lui-meme 757 728 en 5 tx,
+ *    envoie 792 826 a 0x838a… qui vend : l annonce nommait 0x2197… pour un sac
+ *    achete a 95,6 % par 0x176a…. Mesure : 6 origines a plusieurs sauts dans
+ *    l histoire, 5 gardees, la seule retiree est 0x838a…. « first » est ote : le
+ *    lien n est pas toujours le premier achat de l acheteur (faux 2 fois sur 6).
  * Le texte : une ligne 📥 sous « and left after », jamais d accusation : on
- * decrit une tx et des wallets. Sans entree connue : aucune ligne. */
+ * decrit une tx et des wallets. Sans entree connue : aucune ligne. L envoyeur
+ * et l acheteur d origine repassent par personne() au moment d annoncer (A2) :
+ * une adresse devenue maison ou exclue (COMPTES_MAISON, TG_COMMUNAUTE_EXCLUS,
+ * deployeur V4) n y est jamais nommee, comme dans les liens (groupe). */
 
 /* ---- LES PISCINES, DETAILLEES (12/10/2026) ----
  * Le proprietaire, sur « 67.5% of supply outside pools » : « alors que je vois
@@ -550,6 +580,20 @@ const LOT_CODES = 20, ESPACE_LOTS_MS = 2000;      // lots de 100 : 6 refus sur 1
  * de 20, comme les codes. */
 const LOT_RECUS = 20;
 const RECUL_429_MS = 5000;                        // puis double a chaque refus
+/* La lecture FACULTATIVE des en-tetes d une paper hand (voir ENTREE) : 2 essais
+   de 10 s au plus, 2 s entre les deux, rien apres le dernier. Relecture du
+   13/10 : avec les 5 essais de 60 s et le recul de 5 a 80 s (rpcBrut), un noeud
+   qui pend bloquait le tic ~455 s par paper hand, jusqu a 4 par tic (PLAFOND_HEURE)
+   — tout l envoi, releve compris, retarde d ~30 min. Desormais ~24 s au pire
+   par paper hand. Mesure du 13/10 (20 lots de 2 en-tetes au RPC officiel, 1 par
+   seconde) : mediane 76 ms, 90e centile 134 ms, max 237 ms, 1 refus 429 sur 20
+   — d ou un second essai : sans lui, ~1 ligne sur 20 perdrait son heure. */
+const LECTURE_COURTE = { essais: 2, delaiMs: 10000, reculMs: 2000 };
+/* l en-tete lu doit tomber a moins de 2 h de l heure gardee (relecture du 13/10,
+   A3) : un noeud fautif (bon numero, horodatage 0 ou demesure) ecrivait
+   « Jan 1, 1970 » ou « NaN » sur le canal. Ecart mesure entre l heure gardee et
+   l en-tete : 54 min au plus sur 140 blocs (voir ENTREE). */
+const ECART_ENTETE_MAX_MS = 2 * 3600 * 1000;
 const PRIX_TTL_MS = 10 * 60 * 1000;
 const PRIX_VIEUX_MS = 6 * 3600 * 1000;            // au-dela, pas de prix = pas d annonce
 const REESSAI_CONSTRUCTION_MS = 10 * 60 * 1000;
@@ -811,9 +855,16 @@ function cree(deps0) {
 
   // ---------------------------------------------------------- le noeud
   let dernierAppel = 0, echecsCodes = 0;
-  async function rpcBrut(corps) {
+  /** `court` : LECTURE_COURTE pour une lecture facultative (moins d essais, un
+   *  delai court, aucun recul apres le dernier) ; absent : 5 essais, comme avant. */
+  async function rpcBrut(corps, court) {
     let derniere = '429';
-    for (let essai = 0; essai < 5; essai++) {
+    const essais = court ? court.essais : 5;
+    const recule = async (essai) => {
+      if (!court) { await deps.dors(RECUL_429_MS * 2 ** essai); return; }
+      if (essai + 1 < essais) await deps.dors(court.reculMs);
+    };
+    for (let essai = 0; essai < essais; essai++) {
       const attente = dernierAppel + ESPACE_RPC_MS - Date.now();
       if (attente > 0) await deps.dors(attente);
       dernierAppel = Date.now();
@@ -821,24 +872,24 @@ function cree(deps0) {
       let r, j;
       try {
         r = await deps.prendre(deps.rpcUrl, { method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(corps), signal: AbortSignal.timeout(60000) });
+          body: JSON.stringify(corps), signal: AbortSignal.timeout(court ? court.delaiMs : 60000) });
         j = await r.json().catch(() => null);
       } catch (e) {
         derniere = String((e && e.message) || e).slice(0, 80);
-        await deps.dors(RECUL_429_MS * 2 ** essai);
+        await recule(essai);
         continue;
       }
       const msg = (x) => String((x && x.error && x.error.message) || '');
       const limite = r.status === 429 || (j && !Array.isArray(j) && /too many requests|rate limit/i.test(msg(j)))
         || (Array.isArray(j) && j.some((x) => /too many requests|rate limit/i.test(msg(x))));
-      if (limite) { S.refus429++; await deps.dors(RECUL_429_MS * 2 ** essai); continue; }
+      if (limite) { S.refus429++; await recule(essai); continue; }
       /* Relecture du 12/10 : UNE reponse 503 sans JSON faisait echouer toute la
          construction (sans reessai). Une page d erreur de passerelle est une
          panne passagere, comme un 429 : on recule et on redemande. */
-      if (!j || r.status >= 500) { compte('pannesNoeud'); derniere = 'HTTP ' + (r && r.status) + (j ? '' : ' sans JSON'); await deps.dors(RECUL_429_MS * 2 ** essai); continue; }
+      if (!j || r.status >= 500) { compte('pannesNoeud'); derniere = 'HTTP ' + (r && r.status) + (j ? '' : ' sans JSON'); await recule(essai); continue; }
       return j;
     }
-    throw new Error('noeud : abandon apres 5 refus ou pannes (' + derniere + ')');
+    throw new Error('noeud : abandon apres ' + essais + ' refus ou pannes (' + derniere + ')');
   }
   async function rpc(method, params) {
     const j = await rpcBrut({ jsonrpc: '2.0', id: 1, method, params });
@@ -846,9 +897,9 @@ function cree(deps0) {
     return j.result;
   }
   /** Un lot : rend les resultats dans l ordre des appels ({ result } ou { error }). */
-  async function lot(appels) {
+  async function lot(appels, court) {
     if (!appels.length) return [];
-    const j = await rpcBrut(appels.map((a, i) => ({ jsonrpc: '2.0', id: i + 1, method: a[0], params: a[1] })));
+    const j = await rpcBrut(appels.map((a, i) => ({ jsonrpc: '2.0', id: i + 1, method: a[0], params: a[1] })), court);
     const parId = new Map((Array.isArray(j) ? j : [j]).map((x) => [x.id, x]));
     return appels.map((a, i) => parId.get(i + 1) || { error: { message: 'absent du lot' } });
   }
@@ -1126,29 +1177,62 @@ function cree(deps0) {
       if (ap >= SEUIL_DETENTEUR) S.deja.add(a);
     }
   }
+  /** Un montant en wei garde en chaine (voir ENTREE), ou null s il est illisible. */
+  const wei = (x) => (typeof x === 'string' && /^\d{1,40}$/.test(x) ? BigInt(x) : null);
+  /** L origine d une entree par envoi (voir ENTREE) : l entree `s` de l ENVOYEUR
+   *  `env`, qui envoie `recu` (le net de l entrant). Un saut : son achat
+   *  d entree, et quelle part de l envoi ses achats couvrent ; deux sauts ou
+   *  plus : son origine, seulement pour un sac entier recu et renvoye. Sinon
+   *  rien — la ligne s arrete a « received from ». */
+  function origineDe(s, env, recu) {
+    if (!s || !s.h) return undefined;
+    const q = wei(s.q);
+    if (q === null) return undefined;
+    if (s.comment === 'achat') {
+      const o = { h: s.h, b: s.b, t: s.t, qui: env };
+      const qa = wei(s.qa), n = Number.isInteger(s.n) ? s.n : 0;
+      if (q >= recu) o.part = 'entiere';
+      else if (n > 0 && qa !== null && qa >= recu) { o.part = 'achats'; o.n = n; }
+      else o.part = 'partie';
+      return o;
+    }
+    if (s.comment === 'envoi' && s.origine && s.origine.h && s.origine.part === 'entiere' && q >= recu) return Object.assign({}, s.origine);
+    return undefined;
+  }
   /** L entree des detenteurs (voir TENUE et ENTREE), apres une transaction deja
-   *  appliquee : posee au passage du seuil vers le haut, effacee sous le seuil.
+   *  appliquee : posee au passage du seuil vers le haut, effacee sous le seuil ;
+   *  un achat pendant la tenue y est compte (n, qa).
    *  `tx` : { h, b } ; `k` : son genre (classe), null si elle n en a pas.
    *  L entree de l ENVOYEUR est lue avant tout effacement : il peut passer sous
    *  le seuil dans la tx meme ou il envoie (un sac deplace en entier). */
   function noteTenue(net, avant, t, tx, k) {
     const neuves = new Map();
     if (typeof t === 'number' && isFinite(t)) {
-      /* un envoi : aucune piscine dans la tx (comme LIENS), et le plus gros
-         envoyeur — le plus grand net negatif — est une personne */
+      /* un envoi : aucune piscine dans la tx (comme LIENS), et UNE seule adresse a
+         net negatif, une personne (voir ENTREE : 0 tx a plusieurs dans l histoire) */
       const touche = [...net.keys()].some((a) => S.pools.has(a));
-      let env = null, q = 0n;
-      for (const [a, d] of net) if (d < 0n && -d > q) { env = a; q = -d; }
-      for (const a of net.keys()) {
-        if (!(avant.get(a) < SEUIL_DETENTEUR && solde(a) >= SEUIL_DETENTEUR)) continue;
-        const e = { t: Math.round(t) };
+      const negs = [...net].filter(([, d]) => d < 0n);
+      const env = !touche && negs.length === 1 ? negs[0][0] : null;
+      for (const [a, d] of net) {
+        const av = avant.get(a), ap = solde(a);
+        if (av >= SEUIL_DETENTEUR && ap >= SEUIL_DETENTEUR) {
+          /* un achat pendant la tenue (believer) : compte, avec ce qu il apporte */
+          const e = S.tenue[a];
+          if (k && k.qui === a && k.achat && d > 0n && e && typeof e === 'object') {
+            e.n = (Number.isInteger(e.n) ? e.n : 0) + 1;
+            const qa = wei(e.qa);
+            if (qa !== null) e.qa = (qa + d).toString();
+          }
+          continue;
+        }
+        if (!(av < SEUIL_DETENTEUR && ap >= SEUIL_DETENTEUR)) continue;
+        const e = { t: Math.round(t), q: d.toString() };
         if (tx && tx.h) { e.h = tx.h; e.b = tx.b; }
-        if (k && k.qui === a && k.achat) e.comment = 'achat';
-        else if (!touche && env && env !== a && personne(env)) {
+        if (k && k.qui === a && k.achat) { e.comment = 'achat'; e.n = 0; e.qa = e.q; }
+        else if (env && env !== a && personne(env)) {
           e.comment = 'envoi'; e.de = env;
-          const s = entreeDe(S.tenue[env]);
-          if (s && s.comment === 'achat' && s.h) e.origine = { h: s.h, b: s.b, t: s.t, qui: env };
-          else if (s && s.comment === 'envoi' && s.origine && s.origine.h) e.origine = Object.assign({}, s.origine);
+          const o = origineDe(entreeDe(S.tenue[env]), env, d);
+          if (o) e.origine = o;
         }
         neuves.set(a, e);
       }
@@ -1573,7 +1657,9 @@ function cree(deps0) {
   }
   /** La ligne d entree d une paper hand (voir ENTREE) : quand (UTC, en-tete du
    *  bloc), comment (achat, ou envoi et par qui) et, pour un envoi, l achat
-   *  d origine ; null sans tx d entree connue — rien d invente. */
+   *  d origine ; null sans tx d entree connue — rien d invente. L envoyeur et
+   *  l acheteur d origine repassent par personne() ICI, au moment d annoncer :
+   *  la maison et les exclus du jour ne sont jamais nommes (A2). */
   const HASH = /^0x[0-9a-fA-F]{64}$/, ADR = /^0x[0-9a-f]{40}$/;
   function ligneEntree(ev) {
     const e = ev.entree;
@@ -1581,14 +1667,21 @@ function cree(deps0) {
     const lien = (h, mot) => `<a href="${deps.explorer}/tx/${h}">${mot} ↗</a>`;
     const quand = typeof e.tBloc === 'number' ? `In since ${heureUtc(e.tBloc, ev.t)}` : 'Entry';
     if (e.comment === 'achat') return `📥 ${quand} · ${lien(e.h, 'bought')}`;
-    if (e.comment !== 'envoi' || !ADR.test(String(e.de))) return `📥 ${quand} · ${lien(e.h, 'tx')}`;
+    if (e.comment !== 'envoi' || !ADR.test(String(e.de)) || !personne(e.de)) return `📥 ${quand} · ${lien(e.h, 'tx')}`;
     let l = `📥 ${quand} · ${lien(e.h, 'received')} from ${lienAdr(e.de)}`;
     const o = e.origine;
-    if (!o || !HASH.test(String(o.h))) return l;
-    const achat = lien(o.h, 'bought' + (typeof o.tBloc === 'number' ? ` on ${heureUtc(o.tBloc, ev.t)}` : ''));
-    if (o.qui === e.de) l += `, who ${achat}`;
-    else if (o.qui === ev.qui) l += ` · first ${achat} by this wallet`;
-    else if (ADR.test(String(o.qui))) l += ` · first ${achat} by ${lienAdr(o.qui)}`;
+    if (!o || !HASH.test(String(o.h)) || !ADR.test(String(o.qui))) return l;
+    const le = typeof o.tBloc === 'number' ? ` on ${heureUtc(o.tBloc, ev.t)}` : '';
+    if (o.qui === e.de) {
+      /* un saut : quelle part de l envoi l achat lie couvre (voir ENTREE, E2) */
+      if (o.part === 'entiere') l += `, who ${lien(o.h, 'bought' + le)}`;
+      else if (o.part === 'achats' && Number.isInteger(o.n) && o.n > 0) l += `, who ${lien(o.h, 'bought' + le)} and ${pluriel(o.n, 'more time')}`;
+      else if (o.part === 'partie') l += `, who ${lien(o.h, 'bought part of it' + le)}`;
+    } else if (o.part === 'entiere') {
+      /* deux sauts ou plus : l acheteur, jamais « first » (voir ENTREE, E1) */
+      if (o.qui === ev.qui) l += ` · ${lien(o.h, 'bought' + le)} by this wallet`;
+      else if (personne(o.qui)) l += ` · ${lien(o.h, 'bought' + le)} by ${lienAdr(o.qui)}`;
+    }
     return l;
   }
   function texte(ev) {
@@ -1614,10 +1707,11 @@ function cree(deps0) {
       const apresTenue = typeof ev.tenueMs === 'number' && isFinite(ev.tenueMs) ? ` after ${dureeTenue(ev.tenueMs)}` : '';
       corps.push(`${lienAdr(ev.qui)} sold <b>${fmtJetons(ev.q)} $SWOGE</b>${usd} and left${apresTenue}${ev.apres >= 1 ? ` (kept ${fmtJetons(ev.apres)})` : ''}`);
       /* sous « and left after », la ligne d entree (voir ENTREE). Longueur : la
-         ligne la plus longue (deux sauts) fait 112 signes visibles, 124 avec deux
-         annees ; l annonce entiere au pire de chaque champ en fait 654, sous les
-         1 024 de la legende (essai R10) ; les annonces reelles rejouees : 383 a
-         468. Une ligne de plus ne fait donc jamais tomber la photo. */
+         ligne la plus longue (un saut, « and N more times ») fait 111 signes
+         visibles, 128 avec deux annees et un compte a 6 chiffres ; l annonce
+         entiere au pire de chaque champ en fait 648, sous les 1 024 de la legende
+         (essai R10) ; les annonces reelles rejouees : 383 a 468. Une ligne de plus
+         ne fait donc jamais tomber la photo. */
       const le = ligneEntree(ev);
       if (le) corps.push(le);
       corps.push(lignePnl(ev));
@@ -1667,19 +1761,21 @@ function cree(deps0) {
     } catch (e) { compte('noncesIllisibles'); }
   }
   /** L heure EXACTE de l entree d une paper hand et de son achat d origine (voir
-   *  ENTREE) : l en-tete de leurs blocs, un lot de 1 ou 2 appels, seulement pour
-   *  une annonce qui part. Illisible : la ligne garde ses liens, sans l heure. */
+   *  ENTREE) : l en-tete de leurs blocs, un lot de 1 ou 2 appels en lecture
+   *  courte (LECTURE_COURTE), seulement pour une annonce qui part. Illisible ou
+   *  invraisemblable : la ligne garde ses liens, sans l heure. */
   async function heuresEntree(ev) {
     const e = ev.entree;
     if (ev.genre !== 'paper' || !e || !e.h) return;
     const qui = [e, e.origine].filter((x) => x && x.h && Number.isInteger(x.b) && x.b > 0);
     if (!qui.length) return;
     try {
-      const rep = await lot(qui.map((x) => ['eth_getBlockByNumber', [hex(x.b), false]]));
+      const rep = await lot(qui.map((x) => ['eth_getBlockByNumber', [hex(x.b), false]]), LECTURE_COURTE);
       rep.forEach((r, i) => {
         const x = r && r.result;
-        /* l en-tete du BON bloc, ou rien */
-        if (x && parseInt(x.number, 16) === qui[i].b && /^0x[0-9a-fA-F]+$/.test(String(x.timestamp))) qui[i].tBloc = parseInt(x.timestamp, 16) * 1000;
+        /* l en-tete du BON bloc, a moins de 2 h de l heure gardee (A3), ou rien */
+        const tb = x && /^0x[0-9a-fA-F]{1,16}$/.test(String(x.timestamp)) ? parseInt(x.timestamp, 16) * 1000 : NaN;
+        if (x && parseInt(x.number, 16) === qui[i].b && isFinite(tb) && typeof qui[i].t === 'number' && Math.abs(tb - qui[i].t) <= ECART_ENTETE_MAX_MS) qui[i].tBloc = tb;
         else compte('heuresEntreeIllisibles');
       });
       compte('heuresEntreeLues');
@@ -2088,7 +2184,7 @@ function cree(deps0) {
       (C.heureBrute !== C.heure ? ` (TG_COMMUNAUTE_HEURE=${C.heureBrute} illisible)` : '') +
       `, detenteur >= 1 000 $SWOGE, seuils new ${MIN_USD.nouveau} $ / believer ${MIN_USD.believer} $ / paper ${MIN_USD.paper} $ / partielle ${MIN_USD.partielle} $ et ${PARTIELLE_PART_MIN * 100} % du sac, 1 annonce par adresse et par famille en 24 h, ${PLAFOND_HEURE}/h, rien au-dela de 30 min de retard` +
       `, gain/perte en ETH contre le prix d achat moyen, portefeuilles relies par envoi direct >= 1 000 $SWOGE (degre <= ${DEGRE_MAX}), cours 7 jours sur la chaine` +
-      `, entree des paper hands (tx, achat ou envoyeur, achat d origine, heure UTC lue dans l en-tete)` +
+      `, entree des paper hands (tx, achat ou envoyeur seul, achat d origine et sa part, heure UTC lue dans l en-tete en lecture courte)` +
       (C.exclus.length ? `, ${C.exclus.length} adresse(s) exclue(s) en plus` : '');
     if (C.mode === 'observe') return `[communaute] OBSERVATION (TG_COMMUNAUTE=observe) : ${base} — n annonce rien, aucune image`;
     return `[communaute] ANNONCES ARMEES (TG_COMMUNAUTE=1) sur le canal public : ${base} ; images ${deps.imageCle ? 'generees une fois (OPENAI_API_KEY posee)' : 'absentes : OPENAI_API_KEY non posee, texte seul'}`;
@@ -2142,6 +2238,7 @@ module.exports = {
   TOPIC_SYNC, TOPIC_SWAP_V3, PISCINE_ETH_USD, DECIMALES_USDG, FENETRE_ETH_USD, PART_CONNUE_MIN, EQUILIBRE_PCT,
   NONCE_NEUF_MAX, DEGRE_MAX, GROUPE_MAX, SEUIL_LIEN, FRAIS_VENTE_MAX, SCHEMA, PARTIELLE_PART_MIN,
   ANCRE_PAS, BLAGUES_PAPER, dureeTenue, blaguePaper, SWOGEBET, PART_POOL_MIN, detailPools, entreeDe, heureUtc,
+  LECTURE_COURTE, ECART_ENTETE_MAX_MS, RECUL_429_MS,
   SCENES, GENRES_IMAGE, VERSION_IMAGES, ESSAIS_IMAGE_MAX, COUT_IMAGE_USD, ESPACE_RPC_MS, LOT_CODES, ESPACE_LOTS_MS,
   minuitParis, jourParis, fmtJetons,
 };
