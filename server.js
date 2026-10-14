@@ -6688,6 +6688,9 @@ const server = http.createServer(async (req, res) => {
     }
     const lm = /^\/studio\/planches\/lot\/([0-9a-f]{24})$/.exec(path);
     if (lm && req.method === 'GET') { const r = planches.etat(lm[1], addr); return json(r.ok ? 200 : r.code, r); }
+    /* refaire la finition sur les clips deja payes : aucun appel xAI (planches.refais) */
+    const rm = /^\/studio\/planches\/refinition\/([0-9a-f]{24})$/.exec(path);
+    if (rm && req.method === 'POST') { const r = planches.refais(rm[1], addr); return json(r.ok ? 200 : r.code, r); }
     if (path !== '/studio/planches' || req.method !== 'POST') return json(404, { ok: false, raison: 'unknown' });
     let q;
     try { q = JSON.parse((await corps(req, 4 * 1024)).toString('utf8') || '{}'); }

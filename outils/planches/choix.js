@@ -187,9 +187,25 @@ function choisis1(action, F, Fh, C, fps, dir, n, sol) {
     /* l'ips EST le pas de temps : chaque image dure ce qu'elle dure dans le clip */
     return { idx, ips: pasS > 0 ? 1 / pasS : 8, boucle: false, geste: true, a, b, pic, gesteS: (b - a) / fps, pasMs: Math.round(pasS * 1000) };
   }
-  /* idle : le clip entier, a pas egaux */
-  const idx = []; for (let k = 0; k < n; k++) idx.push(Math.min(L - 1, Math.round(k * L / n)));
-  return { idx, ips: n * fps / L, boucle: true };
+  /* idle : la fenetre (debut s, longueur P) dont les n images bouclent le mieux — la
+     couture 7 -> 0 rapportee au pas moyen, ce que mesure le controle « boucle ».
+     Le clip entier (s = 0, P = L) est un candidat ; une fenetre plus courte doit
+     faire mieux de 0,05 pour le remplacer, et P >= la moitie du clip (un repos de
+     moins d'une seconde se voit). Revue du 14/10/2026 : piratesse, lot du 14/10,
+     clip entier 2,48-2,62 dans les 4 directions (seuil 1,8) — le clip epingle
+     revient a la pose d'un coup dans ses dernieres images. */
+  const sc = (s, P) => {
+    const id = []; for (let k = 0; k < n; k++) id.push(Math.min(L - 1, s + Math.round(k * P / n)));
+    let m = 0; for (let k = 0; k + 1 < n; k++) m += T.ecart(Fh[id[k]], Fh[id[k + 1]], nh);
+    m /= Math.max(1, n - 1);
+    return { id, v: m > 0 ? T.ecart(Fh[id[n - 1]], Fh[id[0]], nh) / m : Infinity };
+  };
+  let best = Object.assign({ s: 0, P: L }, sc(0, L));
+  for (let s = 0; s <= Math.floor(L / 3); s++) for (let P = Math.ceil(L / 2); s + P <= L - 1; P++) {
+    const r = sc(s, P);
+    if (r.v < best.v - 0.05) best = Object.assign({ s, P }, r);
+  }
+  return { idx: best.id, ips: n * fps / best.P, boucle: true, s: best.s, P: best.P, periodeS: best.P / fps, coutureRepos: best.v };
 }
 
 module.exports = { choisis, ecartPieds, cotePied, alternances, AXE };

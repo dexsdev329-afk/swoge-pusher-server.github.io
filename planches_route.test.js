@@ -245,6 +245,18 @@ async function connecte(port, w) {
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json', { headers: bob.H })).status, 403, 'un non-proprietaire : 403');
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json')).status, 401, 'sans session : 401');
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/..%2Fplanches_essais.json', { headers: proprio.H })).status, 404, 'un chemin hors du lot : 404');
+  /* refaire la finition sur les clips deja payes : proprietaire du lot seulement, AUCUN appel xAI */
+  const postsAvantRefait = xaiPosts();
+  eq((await vraiFetch(base + '/studio/planches/refinition/' + r.id, { method: 'POST', headers: bob.H })).status, 403, 'refaire la finition : un non-proprietaire 403');
+  eq((await vraiFetch(base + '/studio/planches/refinition/' + r.id, { method: 'POST', headers: proprio2.H })).status, 404, 'un autre proprietaire : 404');
+  eq((await vraiFetch(base + '/studio/planches/refinition/' + r.id, { method: 'POST' })).status, 401, 'sans session : 401');
+  const rf = await vraiFetch(base + '/studio/planches/refinition/' + r.id, { method: 'POST', headers: proprio.H });
+  const rfj = await rf.json().catch(() => ({}));
+  ok(rf.status === 200 && rfj.statut === 'finition', 'le proprietaire relance la finition (' + rf.status + ', ' + rfj.statut + ')');
+  let rfl = null;
+  for (let i = 0; i < 1200; i++) { rfl = await api('/studio/planches/lot/' + r.id, proprio.H); if (rfl.statut === 'fini') break; await dort(100); }
+  ok(rfl.statut === 'fini' && rfl.planches.length === 1 && (rfl.planches[0].prises || []).length === 2 && xaiPosts() === postsAvantRefait,
+     'refaite : planche rendue, ' + ((rfl.planches[0] || {}).prises || []).join(', ') + ', aucun appel xAI de plus');
 
   console.log('\n-- 6. un hote qui n est pas x.ai --');
   const ra = await api('/studio/planches', proprio.H, 'POST', { lot: 'ailleurs' });
@@ -378,6 +390,41 @@ async function connecte(port, w) {
   const xe = neuf({ charge: async (u) => { await dort(50); return chargeM(u); }, fournisseur: { actif: () => true, lanceVideo: async () => { appE++; return 're' + appE; }, litVideo: async () => ({ status: 'pending' }) } });
   const [e1, e2] = await Promise.all([xe.lance({ addr: '0xp', lot: 'deux' }), xe.lance({ addr: '0xp', lot: 'deux' })]);
   ok([e1.code || 200, e2.code || 200].sort().join(',') === '200,429' && appE === 2, 'module : deux lance() simultanes, ' + [e1.code || 200, e2.code || 200].join(' et ') + ', ' + appE + ' appels (un seul lot)');
+
+  console.log('\n-- 10. refaire la finition : la meilleure prise, les autres lots du meme monstre, 0 $ --');
+  {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-reprise-')); AEFFACER.push(d);
+    const jr10 = path.join(d, 'j.jsonl'); fs.writeFileSync(jr10, '');
+    const poseA = 'p'.repeat(48) + '.png', poseB = 'q'.repeat(48) + '.png', poseX = 'x'.repeat(48) + '.png';
+    fs.writeFileSync(path.join(d, poseA), pose); fs.writeFileSync(path.join(d, poseB), pose); fs.writeFileSync(path.join(d, poseX), Buffer.concat([pose, Buffer.from('autre')]));
+    const clip = (action, modele, f) => ({ monstre: 'pirate', action, mode: 'bande', modele, duree: 2, reserve: 0.4, statut: 'done', coutUsd: 0.3, fichier: f.repeat(48) + '.mp4' });
+    const idA = '1'.repeat(24), idB = '2'.repeat(24), idX = '3'.repeat(24), idC = '4'.repeat(24);
+    const ecrit10 = (m) => fs.writeFileSync(path.join(d, m.id + '.json'), JSON.stringify(m));
+    /* A : marche 1.5 puis marche lite (la lite est la DERNIERE), attaque ; B : la sonde (repos, meme pose) ;
+       X : un saut sur une AUTRE pose ; C : une course qui a echoue (pas de fichier) */
+    ecrit10({ id: idA, t: 2000, addr: '0xp', lot: 'pirate', statut: 'fini', poses: { pirate: poseA },
+              clips: [clip('walk', 'grok-imagine-video-1.5', 'a'), clip('attack', 'grok-imagine-video-1.5', 'b'), clip('walk', 'grok-imagine-video-1.5-lite', 'c')] });
+    ecrit10({ id: idB, t: 1000, addr: '0xp', lot: 'sonde', statut: 'fini', poses: { pirate: poseB }, clips: [clip('idle', 'grok-imagine-video-1.5', 'd')] });
+    ecrit10({ id: idX, t: 3000, addr: '0xp', lot: 'autre', statut: 'fini', poses: { pirate: poseX }, clips: [clip('jump', 'grok-imagine-video-1.5', 'e')] });
+    ecrit10({ id: idC, t: 4000, addr: '0xp', lot: 'encore', statut: 'fini', poses: { pirate: poseA }, clips: [Object.assign(clip('run', 'grok-imagine-video-1.5', 'f'), { statut: 'failed', fichier: null })] });
+    let appels10 = 0, recu = null, attente = null;
+    const m10 = P.cree({ dossier: d, journal: jr10, site: 'https://site.example', pollMs: 10, plafondUsd: 7.5,
+      fournisseur: { actif: () => true, lanceVideo: async () => { appels10++; return 'r'; }, litVideo: async () => { appels10++; return {}; } },
+      finition: async (o) => { recu = o; await new Promise((r9) => { attente = r9; }); return { qc: { verdict: 'ok', echecs: [] }, actions: {} }; } });
+    eq(m10.refais(idA, '0xautre').code, 404, 'refaire le lot d un autre : 404');
+    eq(m10.refais('zz', '0xp').code, 404, 'un identifiant invalide : 404');
+    const r10 = m10.refais(idA, '0xp');
+    ok(r10.ok && r10.statut === 'finition', 'refaire le lot A : accepte');
+    for (let i = 0; i < 50 && !recu; i++) await dort(10);
+    eq(m10.refais(idB, '0xp').code, 429, 'pendant ce temps, un autre « refaire » : 429');
+    const pris = recu ? recu.clips.map((c) => c.action + '=' + path.basename(c.fichier).slice(0, 1)).sort().join(' ') : '';
+    eq(pris, 'attack=b idle=d walk=a', 'la marche 1.5 (a) gardee contre la lite (c) arrivee apres ; le repos de la sonde (d, meme pose) ajoute ; le saut d une AUTRE pose (e) et la course ratee (f) ignores');
+    if (attente) attente();
+    for (let i = 0; i < 50 && m10.enCours(); i++) await dort(10);
+    const e10 = m10.etat(idA, '0xp');
+    ok(e10.statut === 'fini' && m10.enCours() === null && appels10 === 0 && m10.depense() === 0, 'lot A fini de nouveau, verrou rendu, zero appel xAI, 0 $ (' + appels10 + ' appels)');
+    ok((e10.planches[0].prises || []).join(',') === 'walk 1.5,attack 1.5,idle 1.5', 'la page voit les prises gardees (' + (e10.planches[0].prises || []).join(', ') + ')');
+  }
 
   /* f. le plafond ne peut que baisser */
   const dPf = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-reprise-')); AEFFACER.push(dPf);

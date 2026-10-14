@@ -87,6 +87,49 @@ function detoure(src, w, h, cle, t0, t1, opts) {
   return out;
 }
 
+/* La teinte de la cle restee DANS la figure, guidee par la palette de la pose. Le flou
+   de mouvement d'un saut melange la figure et le fond sur plusieurs pixels : ces
+   pixels passent opaques mais roses, loin du bord (le debordement ci-dessus ne
+   traite que 2 px). Pirate, lot ce307577 du 14/10/2026, saut : residus 0,052-0,114
+   et franges 0,206-0,296 (seuils 0,03 et 0,15) ; la piratesse 0,086-0,107 et
+   0,295-0,388. Un pixel dont la couleur est DANS la palette de la pose ne bouge pas
+   (la chemise rouge du pirate tire aussi vers le magenta) ; un autre perd la
+   composante de chrominance dans la direction de la cle, par quarts, jusqu'a tomber
+   dans la palette — la luminance ne bouge pas. Meme chose
+   dans l'autre sens (teinte verte laissee par un demelange trop fort).
+   `pal` pour l'interieur, `palBord` (l'interieur des poses) pour le bord a 1 px. */
+function nettoieCle(d, w, h, cle, pal, palBord) {
+  if (!pal) return 0;
+  const [kr, kg, kb] = cle, m0 = (kr + kg + kb) / 3, un = Math.hypot(kr - m0, kg - m0, kb - m0) || 1;
+  const ux = (kr - m0) / un, uy = (kg - m0) / un, uz = (kb - m0) / un;
+  const cas = (r, g, b) => (Math.max(0, Math.min(255, Math.round(r))) >> 4) * 256 + (Math.max(0, Math.min(255, Math.round(g))) >> 4) * 16 + (Math.max(0, Math.min(255, Math.round(b))) >> 4);
+  const transp = (x, y) => x < 0 || y < 0 || x >= w || y >= h || d[(y * w + x) * 4 + 3] <= ALPHA;
+  let nb = 0;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const o = (y * w + x) * 4;
+    if (d[o + 3] <= ALPHA) continue;
+    const r = d[o], g = d[o + 1], b = d[o + 2];
+    const bord = transp(x - 1, y) || transp(x + 1, y) || transp(x, y - 1) || transp(x, y + 1);
+    const P = bord && palBord ? palBord : pal;
+    if (P[cas(r, g, b)]) continue;
+    const gm = (r + g + b) / 3, p = (r - gm) * ux + (g - gm) * uy + (b - gm) * uz;
+    /* p < 0 : le demelange du bord a retire TROP de cle (alpha lu sur une couleur deja
+       floue) et le pixel tire vers le vert, l'anti-magenta — meme traitement, en rendant */
+    if (Math.abs(p) <= 8) continue;
+    /* seulement si un pas TOMBE dans la palette : un pixel que rien ne ramene a une
+       couleur de la pose garde la sienne (le baton fin du mannequin synthetique,
+       planches_chaine.test.js : franges de course 0,111 sans nettoyage, 0,151 quand
+       tout pixel hors palette perdait toute sa composante — le reechantillonnage
+       melangeait ces gris aux voisins) */
+    let q = null;
+    for (const f of [0.25, 0.5, 0.75, 1]) { if (P[cas(r - f * p * ux, g - f * p * uy, b - f * p * uz)]) { q = f * p; break; } }
+    if (q == null) continue;
+    d[o] = r - q * ux; d[o + 1] = g - q * uy; d[o + 2] = b - q * uz;
+    nb++;
+  }
+  return nb;
+}
+
 /** La cle la plus loin du personnage : part des pixels opaques a moins de 140 de chaque cle. */
 function choisitCle(img) {
   const parts = {};
@@ -227,4 +270,4 @@ function ecart(f, g, n) {
 function xor(a, b, i0, i1) { let u = 0, x = 0; for (let i = i0 || 0, n = i1 == null ? a.length : i1; i < n; i++) { if (a[i] | b[i]) { u++; if (a[i] !== b[i]) x++; } } return u ? x / u : 0; }
 function iou(a, b) { let u = 0, k = 0; for (let i = 0; i < a.length; i++) { if (a[i] | b[i]) { u++; if (a[i] & b[i]) k++; } } return u ? k / u : 0; }
 
-module.exports = { CLES, ALPHA, detoure, choisitCle, masque, bbox, torse, reperes, place, miroir, moitie, ecart, xor, iou };
+module.exports = { CLES, ALPHA, detoure, nettoieCle, choisitCle, masque, bbox, torse, reperes, place, miroir, moitie, ecart, xor, iou };

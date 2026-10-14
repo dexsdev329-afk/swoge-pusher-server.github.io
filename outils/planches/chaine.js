@@ -141,18 +141,32 @@ async function finis(o) {
     const lw = s.w / nDirs, x0 = Math.round(i * lw), w = Math.round((i + 1) * lw) - x0;
     const V = await M.images(c.fichier, { x: x0, y: 0, w, h: s.h });
     const k = corps * C / (r.h * sv), ax = r.tx * sv, ay = r.pied * sv;
-    const F = [], Fh = [], coupesF = [], sortieF = [];
+    const F = [], Fh = [], coupesF = [], sortieF = [], decale = [];
     for (const f of V.frames) {
       const d = T.detoure(f, V.w, V.h, cle, null, null, dt);
+      if (p.nettoie !== false) T.nettoieCle(d, V.w, V.h, cle, pal, palInt);
       /* la figure touche-t-elle le bord gauche, droit ou haut de son emplacement ? (elle en sort) */
       let touche = false;
       for (let y = 0; y < V.h && !touche; y++) touche = d[(y * V.w) * 4 + 3] > T.ALPHA || d[(y * V.w + V.w - 1) * 4 + 3] > T.ALPHA;
       for (let x = 0; x < V.w && !touche; x++) touche = d[x * 4 + 3] > T.ALPHA;
-      const pl = T.place(d, V.w, V.h, k, ax, ay, C, sol);
+      /* le haut du saut : la figure qui sortirait par le HAUT de la case est descendue
+         juste assez pour y tenir (2 px de marge) — le saut parait un peu moins haut,
+         rien n'est coupe. Pirate, lot ce307577 du 14/10/2026 : 79 a 134 px coupes par
+         direction (le chapeau au sommet) ; le guide du 12/10 montait a 1,60 corps, la
+         video plus haut. Le decalage de chaque image est dans la fiche (haut_px). */
+      let dy = 0;
+      if (c.action === 'jump') {
+        let y0 = -1;
+        for (let y = 0; y < V.h && y0 < 0; y++) for (let x = 0; x < V.w; x++) if (d[(y * V.w + x) * 4 + 3] > T.ALPHA) { y0 = y; break; }
+        if (y0 >= 0) { const v0 = (y0 - ay) * k + sol * C; if (v0 < 2) dy = (2 - v0) / k; }
+      }
+      decale.push(dy);
+      const pl = T.place(d, V.w, V.h, k, ax, ay - dy, C, sol);
       F.push(pl.data); Fh.push(T.moitie(pl.data, C, C));
       coupesF.push(pl.coupes); sortieF.push(touche ? 1 : 0);
     }
     const info = choisis(c.action, F, Fh, C, V.fps, dir, n, sol, HD ? HD.n : 0);
+    if (decale.some((x) => x > 0)) info.hautPx = Math.round(Math.max(...info.idx.map((j) => decale[j])) * k * 10) / 10;
     const G = info.idx.map((j) => F[j]);
     /* ce qui compte : les images GARDEES (une figure qui deborde ailleurs dans le clip n'entre pas dans la planche) */
     const garde = info.idx.concat(HD ? info.idxHD.filter((j) => !info.idx.includes(j)) : []);
@@ -166,7 +180,9 @@ async function finis(o) {
       const Ch = HD.C, kh = corps * Ch / (r.h * sv);
       if (!hdPlanche[c.action]) { hdPlanche[c.action] = M.image(HD.n * Ch, dirs.length * Ch); hdLignes[c.action] = new Set(); }
       info.idxHD.forEach((j, col) => {
-        const pl = T.place(T.detoure(V.frames[j], V.w, V.h, cle, null, null, dt), V.w, V.h, kh, ax, ay, Ch, sol).data;
+        const dj = T.detoure(V.frames[j], V.w, V.h, cle, null, null, dt);
+        if (p.nettoie !== false) T.nettoieCle(dj, V.w, V.h, cle, pal, palInt);
+        const pl = T.place(dj, V.w, V.h, kh, ax, ay - decale[j], Ch, sol).data;
         const rr = dirs.indexOf(dir);
         for (let y = 0; y < Ch; y++) hdPlanche[c.action].data.set(pl.subarray(y * Ch * 4, (y + 1) * Ch * 4), ((rr * Ch + y) * HD.n * Ch + col * Ch) * 4);
       });
@@ -197,8 +213,13 @@ async function finis(o) {
     actions[action] = { f: p.nom + '/' + path.basename(f), n, case: C, ips: Math.round(moy('ips') * 10) / 10, boucle: !!infos[0].boucle,
                         mo: mo(n * C, dirs.length * C), ko: Math.round(fs.statSync(f).size / 1024) };
     if (action === 'walk' || action === 'run') actions[action].pas = Math.round(moy('pasCase') * 1000) / 1000;
+    if (infos.some((x) => x.hautPx)) actions[action].haut_px = Math.max(...infos.map((x) => x.hautPx || 0));
     if (HD && hdFichiers[action]) {
-      actions[action].hd = { f: p.nom + '/' + path.basename(hdFichiers[action]), n: HD.n, case: HD.C, ips: Math.round(moy('ipsHD') * 10) / 10,
+      /* en boucle, la HD joue nHD/n fois plus d'images au MEME rythme : derive de l'ips du jeu
+         arrondi (repos, 14/10/2026 : la fenetre de boucle differe d'une direction a l'autre,
+         et 2 x 7,3 arrondi ne donnait plus 14,5) */
+      const ipsHD = infos[0].boucle ? Math.round(actions[action].ips * HD.n / n * 10) / 10 : Math.round(moy('ipsHD') * 10) / 10;
+      actions[action].hd = { f: p.nom + '/' + path.basename(hdFichiers[action]), n: HD.n, case: HD.C, ips: ipsHD,
                              mo: mo(HD.n * HD.C, dirs.length * HD.C), ko: Math.round(fs.statSync(hdFichiers[action]).size / 1024) };
     }
   }

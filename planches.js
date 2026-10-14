@@ -94,12 +94,18 @@ const COMMUN = {
   d: (cle) => 'One game character, centered, on a flat solid ' + cle
     + ' background. Fixed camera: no zoom, no pan, no cut. The character keeps its size, its ground line and the direction it faces. No floor, no shadow, no text, no new objects. No dust, no motion trails, no speed lines, no particles.',
 };
+/* Marche et course, revue du 14/10/2026 sur les lots pirate et piratesse (clips 1.5, 3 s) :
+   course du pirate qui GRANDIT (taille contre la pose 1,15-1,23, seuil 1,08 : le
+   personnage avance vers la camera), derive du torse 3,3-7,6 % (seuil 3), foulee
+   0,56-0,68 du guide (seuil 0,7) ; course de la piratesse aux jambes qui n'alternent pas
+   (4 directions sur 4). La consigne dit maintenant ce que les controles mesurent : meme
+   taille, meme place, jambes gauche et droite tour a tour, grands pas. */
 const MOUVEMENT = {
   idle: ['breathe and shift their weight a little in a calm idle loop, feet planted.', 'breathes and shifts its weight a little in a calm idle loop, feet planted.'],
-  walk: ['walk in place, like on a treadmill: a clear walking cycle, legs stepping and arms swinging, feet coming back to the same spot, no forward travel.',
-         'walks in place, like on a treadmill: a clear walking cycle, legs stepping and arms swinging, feet coming back to the same spot, no forward travel.'],
-  run: ['run in place, like on a treadmill: a clear running cycle with knees high and arms pumping, no forward travel.',
-        'runs in place, like on a treadmill: a clear running cycle with knees high and arms pumping, no forward travel.'],
+  walk: ['walk in place, like on a treadmill: a steady walking cycle with long steps, left and right legs passing each other in turn, arms swinging, feet coming back to the same spot, no forward travel. Each figure keeps exactly its size and its place.',
+         'walks in place, like on a treadmill: a steady walking cycle with long steps, left and right legs passing each other in turn, arms swinging, feet coming back to the same spot, no forward travel. It keeps exactly its size and its place.'],
+  run: ['run in place, like on a treadmill: a steady running cycle with long strides, left and right legs alternating, arms pumping, no forward travel. Each figure keeps exactly its size and its place: it never comes closer to the camera and never slides sideways.',
+        'runs in place, like on a treadmill: a steady running cycle with long strides, left and right legs alternating, arms pumping, no forward travel. It keeps exactly its size and its place: it never comes closer to the camera and never slides sideways.'],
   attack: ['perform one attack with their weapon: wind-up, strike, then back to the starting pose.', 'performs one attack with its weapon: wind-up, strike, then back to the starting pose.'],
   jump: ['crouch, jump straight up, land on the same spot, then stand back in the starting pose.', 'crouches, jumps straight up, lands on the same spot, then stands back in the starting pose.'],
 };
@@ -276,7 +282,37 @@ function cree({ dossier, fournisseur, journal, site, maintenant, pollMs, maxMs, 
     setTimeout(tour, POLL).unref();
   }
 
-  /* ---- la finition : une planche par monstre dont des clips sont arrives ---- */
+  /* ---- la finition : une planche par monstre dont des clips sont arrives ----
+     Les clips du MEME monstre, sur la MEME pose (fichier identique au sha256 pres), venus
+     des autres lots du meme proprietaire comptent aussi : la sonde (repos du pirate)
+     completait le lot « pirate », qui n'avait pas de repos (14/10/2026). */
+  const shaFichier = (nom) => { try { return crypto.createHash('sha256').update(fs.readFileSync(path.join(dossier, nom))).digest('hex'); } catch (e) { return null; } };
+  function clipsDuMonstre(m, monstre) {
+    const sha = m.poses[monstre] ? shaFichier(m.poses[monstre]) : null;
+    const out = [];
+    m.clips.forEach((c, i) => { if (c.monstre === monstre && c.statut === 'done' && c.fichier) out.push({ c, t: m.t, i }); });
+    if (!sha) return out;
+    for (const f of fs.readdirSync(dossier)) {
+      const mm = /^([0-9a-f]{24})\.json$/.exec(f);
+      if (!mm || mm[1] === m.id) continue;
+      const m2 = litManif(mm[1]);
+      if (!m2 || m2.addr !== m.addr || !m2.poses || !m2.poses[monstre] || shaFichier(m2.poses[monstre]) !== sha) continue;
+      m2.clips.forEach((c, i) => { if (c.monstre === monstre && c.statut === 'done' && c.fichier && c.mode !== 'd') out.push({ c, t: m2.t, i }); });
+    }
+    return out;
+  }
+  /* La prise gardee pour chaque (action, mode, dir) : un modele EPINGLE (debut ET fin sur
+     la pose) avant un modele qui ne l'est pas, puis la plus recente. Avant : la derniere
+     de la liste — le lot « pirate » du 14/10/2026 finissait par une marche 1.5-lite, qui
+     remplacait la marche 1.5 : 10 controles de marche rates sur la lite (foulee 0,03-0,33,
+     derive, couture), la marche 1.5 du meme lot n'en ratait que 2 (appui). */
+  function meilleuresPrises(prises) {
+    const rang = (x) => [EPINGLE.has(x.c.modele) ? 1 : 0, x.t, x.i];
+    const plus = (a, b) => { const ra = rang(a), rb = rang(b); for (let k = 0; k < 3; k++) if (ra[k] !== rb[k]) return ra[k] > rb[k]; return false; };
+    const garde = new Map();
+    for (const x of prises) { const k = x.c.action + ':' + x.c.mode + ':' + (x.c.dir || ''); if (!garde.has(k) || plus(x, garde.get(k))) garde.set(k, x); }
+    return [...garde.values()].map((x) => x.c);
+  }
   async function termine(m) {
     if (m.statut === 'fini' || m.statut === 'finition') return;
     m.statut = 'finition'; ecritManif(m);
@@ -284,16 +320,16 @@ function cree({ dossier, fournisseur, journal, site, maintenant, pollMs, maxMs, 
     m.clips.forEach((c) => { if (c.statut === 'done' && c.fichier) (parMonstre[c.monstre] = parMonstre[c.monstre] || []).push(c); });
     m.planches = [];
     for (const [monstre, cs] of Object.entries(parMonstre)) {
-      /* la derniere prise de chaque (action, mode, dir) — une reprise remplace la precedente */
-      const garde = new Map(); for (const c of cs) garde.set(c.action + ':' + c.mode + ':' + (c.dir || ''), c);
+      const prises = meilleuresPrises(clipsDuMonstre(m, monstre));
       const sortie = path.join(dossier, 'lot_' + m.id);
       try {
         const fiche = await lance1({ nom: monstre, pose: m.poses[monstre] ? path.join(dossier, m.poses[monstre]) : null, sortie,
           ancienne: m.anciennes && m.anciennes[monstre] ? path.join(dossier, m.anciennes[monstre]) : null,
-          clips: [...garde.values()].map((c) => ({ action: c.action, mode: c.mode, dir: c.dir, fichier: path.join(dossier, c.fichier),
+          clips: prises.map((c) => ({ action: c.action, mode: c.mode, dir: c.dir, fichier: path.join(dossier, c.fichier),
                                                   pose: c.mode === 'd' ? path.join(dossier, m.poses[monstre + '_' + c.dir]) : null })),
           coutUsd: arrondi(cs.reduce((s, c) => s + (Number(c.coutUsd) || 0), 0), 4) });
         m.planches.push({ monstre, verdict: fiche.qc.verdict, echecs: fiche.qc.echecs.slice(0, 40), fiche: monstre + '.json',
+                          prises: prises.map((c) => c.action + (c.mode === 'd' ? ':' + c.dir : '') + ' ' + String(c.modele || '').replace('grok-imagine-video-', '')),
                           fichiers: [monstre + '.json'].concat(Object.values(fiche.actions).map((a) => a.f), Object.values(fiche.actions).filter((a) => a.hd).map((a) => a.hd.f)) });
       } catch (e) { m.planches.push({ monstre, erreur: String(e.message || e).slice(0, 200) }); }
     }
@@ -493,6 +529,25 @@ function cree({ dossier, fournisseur, journal, site, maintenant, pollMs, maxMs, 
     return Object.assign({ ok: true }, vueLot(m));
   }
 
+  /**
+   * Refaire la finition d'un lot fini, sur ses clips deja payes : AUCUN appel a xAI,
+   * 0 $. Pour le proprietaire qui l'a lance seulement, un lot a la fois (le meme verrou
+   * que « Run »). Sert quand la chaine de finition change (14/10/2026 : nettoyage de la
+   * cle, haut du saut, boucle du repos, choix de la prise).
+   */
+  function refais(id, addr) {
+    if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
+    if (!ID.test(String(id || ''))) return { ok: false, code: 404, raison: 'unknown batch' };
+    const m = litManif(id);
+    if (!m || m.addr !== addr) return { ok: false, code: 404, raison: 'unknown batch' };
+    if (EN_COURS) return { ok: false, code: 429, raison: 'one batch at a time — wait for the current one' };
+    if (m.statut !== 'fini') return { ok: false, code: 409, raison: 'this batch is not finished yet' };
+    if (!m.clips.some((c) => c.statut === 'done' && c.fichier)) return { ok: false, code: 409, raison: 'no clip to finish in this batch' };
+    EN_COURS = m.id; m.statut = 'lance'; m.refaite = (m.refaite || 0) + 1;
+    termine(m).catch((e) => { console.error('[planches] ' + e.message); if (EN_COURS === m.id) EN_COURS = null; });
+    return { ok: true, id: m.id, statut: 'finition' };
+  }
+
   /** Un fichier d'un lot (clip, planche, fiche), pour le proprietaire qui l'a lance seulement. */
   function fichier(id, rel, addr) {
     if (!ID.test(String(id || ''))) return null;
@@ -507,7 +562,7 @@ function cree({ dossier, fournisseur, journal, site, maintenant, pollMs, maxMs, 
     try { return { octets: fs.readFileSync(f), type }; } catch (e) { return null; }
   }
 
-  return { lance, vue, etat, fichier, depense, lots, avance, PLAFOND, enCours: () => EN_COURS };
+  return { lance, refais, vue, etat, fichier, depense, lots, avance, PLAFOND, enCours: () => EN_COURS };
 }
 
 /* La finition dans un processus a part : le calcul d'image ne bloque jamais la
