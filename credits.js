@@ -21,8 +21,9 @@
  *
  * L'ordre de la recharge : x402 VERIFIE la signature, puis la REGLE ; le credit
  * n'est ajoute qu'apres le reglement (reponse 200), une seule fois par
- * transaction. Un reglement en attente (Base) : rien n'est credite, le client
- * represente la meme signature et le credit tombe quand la chaine a tranche.
+ * transaction. Un reglement en attente (Base, et Solana depuis le 13/10) : rien n'est
+ * credite, le client represente la meme signature et le credit tombe quand la chaine a
+ * tranche — une fois, a la session qui l'a demande, apres relecture de la transaction.
  *
  * Une reserve ouverte au moment d'un arret du serveur est RENDUE au demarrage :
  * le fournisseur a peut-etre deja facture, la maison le paie.
@@ -151,9 +152,13 @@ function cree(deps) {
 
   /** Ajouter au credit, une seule fois par transaction. Rend le solde, ou null si deja credite. */
   function ajoute(a, usd, recu) {
-    const tx = String((recu && recu.transaction) || '').toLowerCase();
+    /* Une signature Solana est en base58 : la casse en fait partie (13/10 : le journal gardait
+       `5kgnq9kz…`, une signature qu'aucun explorateur ne retrouve). Un hash 0x reste en minuscules.
+       L'anti-doublon regarde aussi la forme en minuscules, celle des recharges Solana d'avant. */
+    const brut = String((recu && recu.transaction) || '');
+    const tx = /^0x/i.test(brut) ? brut.toLowerCase() : brut;
     if (!tx) return null;
-    if (E.tx[tx]) return null;
+    if (E.tx[tx] || E.tx[tx.toLowerCase()]) return null;
     const k = cle(a), micro = versMicro(usd);
     E.tx[tx] = 1;
     E.soldes[k] = (E.soldes[k] || 0) + micro;
@@ -178,7 +183,10 @@ function cree(deps) {
     if (versMicro(v) + soldeMicro(k) > versMicro(MAX_SOLDE_USD())) return json(400, { ok: false, raison: 'your credit would go above $' + MAX_SOLDE_USD() + ' - spend some first' });
     /* `sert` ne credite pas : il porte l'adresse et le montant jusqu'au reglement. */
     const sert = async () => ({ ok: true, credit: { addr: k, usd: v } });
-    const r = await x.traite({ outil: 'credit', url: deps.url, entete: entete || null, sert, args: { usd: v }, canal: 'rest', qui, client });
+    /* `lien` : la session. Un reglement « en attente » (Base ou Solana) n est repris que par la
+       session qui l a demande ; une autre qui represente la meme signature est refusee, et
+       l attente reste a la premiere (credit_solana_attente.test.js). */
+    const r = await x.traite({ outil: 'credit', url: deps.url, entete: entete || null, sert, args: { usd: v }, canal: 'rest', qui, client, lien: k });
     if (r.status !== 200) return r;
     let c;
     try { c = JSON.parse(r.corps); } catch (e) { c = null; }

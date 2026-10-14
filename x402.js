@@ -289,7 +289,7 @@ function cree(deps) {
   const prixEmis = new Map();      /* même clé → le prix en $ de ce devis (pour compter ce qui a été payé) */
   const ressourcesEmises = new Map();   /* clé d'un devis Base → la ressource annoncée (renvoyée à Coinbase, à l'adresse du canal) */
   const pris = new Map();          /* from|nonce déjà présentés → deadline (ms) : pas de rejeu ; oubliés une fois la deadline passée (la signature ne vaut plus rien) */
-  const enAttente = new Map();     /* base|from|nonce → un résultat retenu pendant qu'un règlement est « en attente » (10 min) */
+  const enAttente = new Map();     /* base|from|nonce, ou solana|sha256(transaction) → un résultat retenu pendant qu'un règlement est « en attente » (10 min) */
   const MESURE = { devis: 0, payes: 0, refuses: 0, echecsReglement: 0, gasUsed: [], gazParMethode: {}, parReseau: {},
     base: { etat: 'off', raison: deps.base ? 'not probed yet' : 'no CDP key', derniereSonde: null, jusqua: 0, lieuxDeSuite: 0,
       /* En memoire : remis a zero a chaque demarrage. `depuis` le dit (28/09 : un « 0 » lu
@@ -307,7 +307,9 @@ function cree(deps) {
          coute rien et ne deplace rien). */
       second: { nom: (deps.base && deps.base.second && deps.base.second.nom) || null, etat: deps.base && deps.base.second ? 'off' : 'absent', raison: null, jusqua: 0 },
       parFacilitateur: {} },
-    solana: { etat: deps.solana ? 'off' : 'absent', raison: deps.solana ? 'not probed yet' : 'no X402_SOLANA_PAYTO', feePayer: null, jusqua: 0, confirmes: 0, nonConfirmes: 0, compteUsdc: null, compteExiste: null } };
+    solana: { etat: deps.solana ? 'off' : 'absent', raison: deps.solana ? 'not probed yet' : 'no X402_SOLANA_PAYTO', feePayer: null, jusqua: 0, confirmes: 0, nonConfirmes: 0, compteUsdc: null, compteExiste: null,
+      /* Les reglements « en attente » retenus puis rattrapes a la reprise (13/10, voir regleSolana). */
+      retenus: 0, rattrapes: 0, rattrapageRefuse: 0 } };
   let file = Promise.resolve();    /* un règlement à la fois : le portefeuille de gaz n'a qu'un nonce */
   let agentEnVol = 0;
   const maintenant = () => (deps.maintenant ? deps.maintenant() : Date.now());
@@ -720,7 +722,7 @@ function cree(deps) {
     const cleN = 'base|' + String(a.from || '').toLowerCase() + '|' + String(a.nonce || '').toLowerCase();
     /* Une attente de plus de 10 min sans issue : oubliée — et pour ask_agent, comptée comme
        servie sans être encaissée (le registre des pertes doit rester du bon côté). */
-    for (const [k, v] of enAttente) if (v.fin < maintenant()) { enAttente.delete(k); nonRegle(v.outil, v.from, v.resultat, 'pending expired'); }
+    purgeAttente();
     if (adresseOk(a.from) && enAttente.has(cleN)) {
       /* « Retry with the SAME signature » (contrat §A.5 étape 5) : `from` et `nonce`
          sont publics dès que Coinbase diffuse la transaction (données d'appel, puis
@@ -730,7 +732,7 @@ function cree(deps) {
          arguments ; la signature elle-même est lisible sur la chaîne, ce sont
          l'outil et les arguments (jamais publiés) qui lient la reprise à la
          demande d'origine. Tout autre : refusé, l'attente intacte. */
-      if (memeQueRetenu(enAttente.get(cleN), pl, outil, args)) return { ok: true, reconcilie: true, cleN, reseau: B.reseau };
+      if (memeQueRetenu(enAttente.get(cleN), pl, outil, args, ctx.lien)) return { ok: true, reconcilie: true, cleN, reseau: B.reseau };
       return non('invalid_payload', 'this nonce was already presented');
     }
     if (!baseActif()) return non('invalid_network', 'Base payments are paused right now - pay on Robinhood Chain or try again later');
@@ -831,6 +833,24 @@ function cree(deps) {
    */
   async function verifieSolana(p, acc, outil, args, ctx) {
     const non = (raison, detail) => ({ ok: false, raison, detail, reseau: SOL.reseau });
+    /* ---- LA REPRISE D UN REGLEMENT « EN ATTENTE » (13/10/2026) ----
+       Revue du Studio : une recharge Solana dont la signature n etait pas encore confirmee
+       repondait « retry the same request with the same PAYMENT-SIGNATURE », et la reprise
+       tombait sur l anti-rejeu (« this nonce was already presented ») : l USDC partait, le
+       credit ne venait jamais (credit_solana_attente.test.js, 7 RATE sur le code d avant).
+       Comme Base : la MEME transaction (meme empreinte), pour le MEME outil, les MEMES
+       arguments et le MEME lien (la session qui a demande la recharge), va a la
+       reconciliation — AVANT l anti-rejeu et meme Solana en pause : elle est deja partie.
+       Toute autre : refusee, l attente intacte. */
+    purgeAttente();
+    const tx0 = (p.payload || {}).transaction;
+    const cle0 = typeof tx0 === 'string' && tx0 ? 'solana|' + crypto.createHash('sha256').update(tx0).digest('hex') : null;
+    if (cle0 && enAttente.has(cle0)) {
+      const g = enAttente.get(cle0);
+      if (g.outil === outil && g.empreinte === empreinte(args) && g.lien === String((ctx && ctx.lien) || '')) return { ok: true, reconcilie: true, cleN: cle0, reseau: SOL.reseau };
+      MS.rattrapageRefuse++;
+      return non('invalid_payload', 'this transaction was already presented');
+    }
     if (!solanaActif()) return non('invalid_network', 'Solana payments are off right now - pay in USDC on Base or on Robinhood Chain');
     if (SOLANA_EXCLUS.includes(outil)) return non('invalid_network', outil + ' is not sold on Solana (a Solana transaction expires before the work ends) - pay on Base');
     if (acc.asset !== SOL.usdc || acc.payTo !== SOL.payTo) return non('invalid_payment_requirements');
@@ -883,13 +903,7 @@ function cree(deps) {
       else if (c === 'echec') etat = 'echec';
       else if (etat === 'paye') MS.nonConfirmes++;           /* le facilitateur dit paye, sans noeud pour le relire : on le croit, et on le compte */
     }
-    const livre = () => {
-      MESURE.payes++; par(SOL.reseau).payes++;
-      if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: hash, methode: 'solana', network: SOL.reseau });
-      note('paye_x402', { qui: v.from, usd: Number(v.montant) / 1e6, coutUsd: FRAIS_SOLANA_USD, sorte: 'USDC_SOLANA', tx: hash, reseau: SOL.reseau });
-      return { etape: 'paye', resultat: r, reponse: { success: true, transaction: hash, network: SOL.reseau, payer: v.from }, recu: { transaction: hash, network: SOL.reseau, amount: v.montant, asset: v.asset } };
-    };
-    if (etat === 'paye') return livre();
+    if (etat === 'paye') return livreSolana(v, r, hash, outil, note);
     if (etat === 'echec' || !hash) {
       /* Echec, ou issue inconnue SANS signature : rien n'a pu etre relu, le resultat est retenu ;
          la transaction du payeur expire d'elle-meme en ~90 s si elle n'est pas partie. */
@@ -901,8 +915,41 @@ function cree(deps) {
       return { etape: 'reglement', reponse: { success: false, errorReason: x.erreur || 'unexpected_settle_error', transaction: '', network: SOL.reseau, payer: v.from },
         raison: 'the payment could not be settled - the result is withheld and nothing was charged', detail: x.erreur || null, exige: e };
     }
+    /* Une signature connue, pas encore confirmee : le resultat est RETENU 10 min sous l empreinte
+       de la transaction (comme retiensBase), pour la reprise de la meme transaction. */
+    enAttente.set(v.cleNonce, { reseau: SOL.reseau, v, resultat: r, hash, fin: maintenant() + GARDE_ATTENTE_MS, outil, args, from: v.from, montant: v.montant,
+      empreinte: empreinte(args), lien: String(v.lien || '') });
+    MS.retenus++;
     par(SOL.reseau).enAttente++;
     return { etape: 'attente', reponse: { success: false, errorReason: 'settlement_pending', transaction: hash, network: SOL.reseau, payer: v.from } };
+  }
+  /* Un paiement Solana encaisse : compte, journalise, rendu. */
+  function livreSolana(v, r, hash, outil, note) {
+    MESURE.payes++; par(SOL.reseau).payes++;
+    if (deps.journal) deps.journal({ t: maintenant(), outil, payer: v.from, asset: v.asset, montant: v.montant, transaction: hash, methode: 'solana', network: SOL.reseau });
+    note('paye_x402', { qui: v.from, usd: Number(v.montant) / 1e6, coutUsd: FRAIS_SOLANA_USD, sorte: 'USDC_SOLANA', tx: hash, reseau: SOL.reseau });
+    return { etape: 'paye', resultat: r, reponse: { success: true, transaction: hash, network: SOL.reseau, payer: v.from }, recu: { transaction: hash, network: SOL.reseau, amount: v.montant, asset: v.asset } };
+  }
+  /* ---- LA TRANSACTION RETENUE, RELUE SUR LA CHAINE (13/10/2026) ----
+     Pas seulement « confirmee » (getSignatureStatuses) : la transaction elle-meme, en jsonParsed,
+     doit porter un TransferChecked de l USDC vers le compte associe de payTo, du montant du devis,
+     signe par le payeur que le facilitateur a verifie, sans erreur. Sinon rien n est livre.
+     Absente (pas encore vue, noeud muet) : toujours en attente. */
+  async function lisSolana(g) {
+    if (!SOL.rpc || !g.hash) return { etat: 'inconnu' };
+    let t;
+    try { t = await SOL.rpc('getTransaction', [g.hash, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0, commitment: 'confirmed' }]); } catch (e) { return { etat: 'inconnu' }; }
+    if (!t || !t.meta || !t.transaction) return { etat: 'inconnu' };
+    if (t.meta.err) return { etat: 'echec', raison: 'the transaction failed on chain' };
+    const dest = MS.compteUsdc || require('./solana_ata').ata(SOL.payTo, SOL.usdc);
+    const ix = (t.transaction.message && t.transaction.message.instructions) || [];
+    const bon = ix.some((i) => {
+      const p = i && i.parsed, inf = p && p.info;
+      return !!inf && p.type === 'transferChecked' && (i.program === 'spl-token' || i.programId === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+        && inf.mint === SOL.usdc && inf.destination === dest && inf.authority === g.from
+        && String(inf.tokenAmount && inf.tokenAmount.amount) === String(g.montant);
+    });
+    return bon ? { etat: 'paye', hash: g.hash } : { etat: 'echec', raison: 'the transaction does not pay ' + SOL.payTo + ' the quoted amount from the verified payer' };
   }
 
   async function lisChaine(e) {
@@ -964,7 +1011,7 @@ function cree(deps) {
    * `sert(payeur)` rend le résultat de l'outil ({ ok, ... }) ; rien n'est réglé s'il échoue.
    * Rend { etape: 'exige'|'refuse'|'indisponible'|'occupe'|'outil'|'reglement'|'attente'|'paye', … }.
    */
-  async function paie({ outil, url, paiement, args, sert, canal, qui, sonde, bazaar, client }) {
+  async function paie({ outil, url, paiement, args, sert, canal, qui, sonde, bazaar, client, lien }) {
     /* Les compteurs durables (compteurs.js) : 402 émis, payé, échec — `qui` est
        l'empreinte d'IP avant paiement, l'adresse VÉRIFIÉE du payeur après. */
     const note = (ev, info) => { if (deps.note) { try { deps.note(ev, Object.assign({ outil, canal: canal || 'rest' }, info)); } catch (e) { /* jamais bloquant */ } } };
@@ -982,13 +1029,14 @@ function cree(deps) {
       if (agentEnVol >= Math.max(1, deps.agent.enVolMax || 3)) return { etape: 'occupe' };
       agentEnVol++;
     }
-    try { return await paieSuite({ outil, url, paiement, args, sert, qui, note, opts, ctx: { url, bazaar } }); }
+    try { return await paieSuite({ outil, url, paiement, args, sert, qui, note, opts, ctx: { url, bazaar, lien: String(lien || '') } }); }
     finally { if (agent) agentEnVol--; }
   }
 
   async function paieSuite({ outil, url, paiement, args, sert, qui, note, opts, ctx }) {
     const v = await verifie(paiement, outil, args, ctx);
     if (v.reconcilie) return reconcilie(v, outil, url, args, opts, note);
+    if (v.ok) v.lien = (ctx && ctx.lien) || '';
     if (!v.ok) {
       MESURE.refuses++;
       par(v.reseau || RESEAU).refuses++;
@@ -1063,13 +1111,21 @@ function cree(deps) {
     a = a || {};
     return ['from', 'to', 'value', 'validAfter', 'validBefore', 'nonce'].map((k) => String(a[k] === undefined || a[k] === null ? '' : a[k]).toLowerCase()).join('|');
   }
-  /* Le paiement représenté est-il EXACTEMENT celui qu'on a retenu, pour le même appel ? */
-  function memeQueRetenu(g, pl, outil, args) {
+  /* Le paiement représenté est-il EXACTEMENT celui qu'on a retenu, pour le même appel ?
+     `lien` (13/10) : ce que l'appelant lie au paiement — la session qui demande une recharge du
+     crédit. Vide pour un appel sans session : rien ne change pour lui. */
+  function memeQueRetenu(g, pl, outil, args, lien) {
     if (!g || !g.sig) return false;
     return String((pl && pl.signature) || '').toLowerCase() === g.sig
       && autorisationNormee(pl && pl.authorization) === g.auth
       && outil === g.outil
-      && empreinte(args) === g.empreinte;
+      && empreinte(args) === g.empreinte
+      && String(g.lien || '') === String(lien || '');
+  }
+  /* Une attente de plus de 10 min sans issue : oubliée — et pour ask_agent, comptée comme
+     servie sans être encaissée (le registre des pertes doit rester du bon côté). */
+  function purgeAttente() {
+    for (const [k, v] of enAttente) if (v.fin < maintenant()) { enAttente.delete(k); nonRegle(v.outil, v.from, v.resultat, 'pending expired'); }
   }
 
   /* L'issue inconnue : le résultat gardé 10 min sous base|from|nonce, AUCUNE nouvelle demande de paiement. */
@@ -1079,7 +1135,7 @@ function cree(deps) {
        telles que reçues, l'outil, l'empreinte des arguments (voir memeQueRetenu). */
     const pl0 = (v.args && v.args.paiement && v.args.paiement.payload) || {};
     enAttente.set(cleN, { v, resultat: r, hash: hash || '', depuisBloc, fin: maintenant() + GARDE_ATTENTE_MS, outil, args, from: v.from, nonce: v.nonce, montant: v.montant, validBefore: v.validBefore,
-      sig: String(pl0.signature || '').toLowerCase(), auth: autorisationNormee(pl0.authorization), empreinte: empreinte(args) });
+      sig: String(pl0.signature || '').toLowerCase(), auth: autorisationNormee(pl0.authorization), empreinte: empreinte(args), lien: String(v.lien || '') });
     par(B.reseau).enAttente++;
     return { etape: 'attente', reponse: { success: false, errorReason: hash ? 'settlement_pending' : 'unexpected_settle_error', transaction: hash || '', network: B.reseau, payer: v.from } };
   }
@@ -1114,6 +1170,7 @@ function cree(deps) {
   /* Le MÊME paiement représenté pendant l'attente : la chaîne décide, sans nouveau verify ni règlement. */
   async function reconcilie(v, outil, url, args, opts, note) {
     const g = enAttente.get(v.cleN);
+    if (SOL && g.reseau === SOL.reseau) return reconcilieSolana(v.cleN, g, outil, url, args, opts, note);
     const c = await lisChaine(g);
     if (c.etat === 'paye') { enAttente.delete(v.cleN); return livreBase(g.v, g.resultat, c.hash, g.outil, note); }
     if (c.etat === 'echec' || c.etat === 'annule') {
@@ -1131,13 +1188,29 @@ function cree(deps) {
     return { etape: 'attente', reponse: { success: false, errorReason: g.hash ? 'settlement_pending' : 'unexpected_settle_error', transaction: g.hash || '', network: B.reseau, payer: g.from } };
   }
 
+  /* La MEME transaction Solana representee pendant l attente : la chaine decide (lisSolana). */
+  async function reconcilieSolana(cleN, g, outil, url, args, opts, note) {
+    const c = await lisSolana(g);
+    if (c.etat === 'paye') { enAttente.delete(cleN); MS.rattrapes++; MS.confirmes++; return livreSolana(g.v, g.resultat, c.hash, g.outil, note); }
+    if (c.etat === 'echec') {
+      enAttente.delete(cleN);
+      MESURE.echecsReglement++;
+      par(SOL.reseau).echecsReglement++;
+      note('echec', { qui: g.from, sorte: 'reglement' });
+      nonRegle(g.outil, g.from, g.resultat, 'settlement failed on chain');
+      const e = await exige(outil, url, 'invalid_transaction_state: ' + c.raison + ' - sign a new one', args, opts);
+      return { etape: 'refuse', exige: e, raison: 'invalid_transaction_state', detail: c.raison + ' - sign a new one' };
+    }
+    return { etape: 'attente', reponse: { success: false, errorReason: 'settlement_pending', transaction: g.hash, network: SOL.reseau, payer: g.from } };
+  }
+
   /**
    * Un appel payé en x402 sur HTTP : l'enveloppe de `paie`. Rend { status, entetes, corps } —
    * octet pour octet ce qu'attend x402_route.test.js pour Robinhood Chain.
    */
-  async function traite({ outil, url, entete, sert, args, canal, qui, sonde, client }) {
+  async function traite({ outil, url, entete, sert, args, canal, qui, sonde, client, lien }) {
     const json = (status, corps, entetes) => ({ status, entetes: Object.assign({ 'content-type': 'application/json' }, entetes || {}), corps: JSON.stringify(corps) });
-    const r = await paie({ outil, url, paiement: entete || null, args, sert, canal, qui, sonde, client });
+    const r = await paie({ outil, url, paiement: entete || null, args, sert, canal, qui, sonde, client, lien });
     switch (r.etape) {
       case 'exige': return json(402, Object.assign({ ok: false }, r.exige), { 'payment-required': b64(r.exige) });
       case 'indisponible': return json(503, { ok: false, raison: 'x402 payment is unavailable right now (price or gas unknown)' });

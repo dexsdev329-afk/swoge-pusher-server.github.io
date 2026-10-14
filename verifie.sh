@@ -138,6 +138,7 @@ lance fondsesim "$SRV" node fonds_esim.test.js   # fonds de la page eSIM : 3 ima
 lance passerelle "$SRV" node passerelle.test.js   # passerelle de depense : un agent paie un service avec SA cle, permission du proprietaire, plafond par appel et par jour, Idempotency-Key, audit chaine
 lance mcpextras "$SRV" node mcp_extras.test.js   # MCP : eSIM (gratuite, sans cle) et passerelle (cle + idempotency_key) listees ; la consigne nomme la seule exception a « rien n achete »
 lance credits  "$SRV" node credits.test.js   # credit en dollars : credite apres le reglement seulement, une fois par transaction, a la session ; debit au cout reel, reste rendu ; reserve ouverte rendue au redemarrage
+lance credsol  "$SRV" node credit_solana_attente.test.js   # recharge Solana « en attente » (14/10) : retenue 10 min, reprise de la MEME transaction par la MEME session, relue sur la chaine (destinataire, montant, payeur verifie), creditee une fois
 lance clescred "$SRV" node cles_credit.test.js   # cle swg_ au credit en dollars : payeur choisi par la session, debit et plafond en dollars, reponse sans $SWOGE, passerelle sur le credit, video refusee
 lance store    "$SRV" node store_agents.test.js   # fiches de l Agent Store : agents exterieurs seulement, aucun taux sous 10 tentatives, permissions et paiements vrais, aucune note inventee
 lance passeport "$SRV" node passeport.test.js   # passeport d une cle : signe Ed25519 par une cle dediee, verifiable avec la seule cle publique, un champ change casse la signature, prive par defaut
@@ -311,8 +312,10 @@ lance dexmc   "$SITE" node dexscreener_mcap.test.js   # capitalisation : le chif
 lance lpv4page "$SITE" node launchpad_v4_page.test.js   # launchpad.html : choix du pool ($SWOGE, ETH, V3), fiche GoPlus lue (cases vides dites « not readable »), copies refusees par le vrai propose, kit du createur, portefeuille de la page
 lance passpage "$SITE" node agent_passport.test.js   # Agent Passport : champs en texte, signature verifiee dans le navigateur (ou par le serveur, dit), passeport modifie refuse, publier par la session
 lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px
+lance menurang "$SITE" node menu_rangee.test.js   # sous 1360 px le menu commun est une rangee qui defile (14/10) : les neuf entrees, Studio compris, recoivent le clic sur les 36 pages a colonne, 320 a 1360 px, sans faire defiler la page en largeur ; colonne au-dessus
 lance x402page "$SITE" node x402_essai_page.test.js   # payer un appel en USDC sur Base depuis son portefeuille : offre Base du 402, EIP-3009 signe et verifie, resultat echappe, 320 px
 lance x402sol "$SITE" node x402_solana.test.js   # la transaction Solana de la page : octet pour octet celle de web3.js (vecteurs figes), comptes USDC associes, memo aleatoire
+lance paieatt "$SITE" node x402_paie_attente.test.js   # apres la signature : un reglement Solana en attente est represente (la MEME signature) ; « already presented » d un serveur d avant ne fait ni conclure ni resigner
 lance ecopage "$SITE" node economie_page.test.js   # la carte $SWOGE ECONOMY et le whitepaper suivent /economie.json
 lance predictpage "$SITE" node predict_page.test.js
 lance accueil  "$SITE" node accueil_refonte.test.js      # accueil en douze sections : tout ce qui vivait reste, colonie lue avec son effectif, aucune promesse inverifiable, 360 px

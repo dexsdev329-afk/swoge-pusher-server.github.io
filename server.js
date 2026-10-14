@@ -3142,7 +3142,9 @@ async function x402Etat(detail) {
               solana: x.solanaPayTo ? { actif: !!(x.solanaActif && x.solanaActif()), network: X.RESEAU_SOLANA, asset: X.USDC_SOLANA, payTo: x.solanaPayTo, facilitateur: 'payai',
                 etat: (x.MESURE.solana || {}).etat, raison: (x.MESURE.solana || {}).raison, feePayer: (x.MESURE.solana || {}).feePayer,
                 confirmes: (x.MESURE.solana || {}).confirmes, nonConfirmes: (x.MESURE.solana || {}).nonConfirmes, exclus: X.SOLANA_EXCLUS,
-                compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste } : null,
+                compteUsdc: (x.MESURE.solana || {}).compteUsdc, compteExiste: (x.MESURE.solana || {}).compteExiste,
+                /* 13/10 : les reglements « en attente » retenus, rattrapes a la reprise (transaction relue), reprises refusees. */
+                retenus: (x.MESURE.solana || {}).retenus, rattrapes: (x.MESURE.solana || {}).rattrapes, rattrapageRefuse: (x.MESURE.solana || {}).rattrapageRefuse } : null,
               autoInscription: AUTO_INSCRIPTION ? AUTO_INSCRIPTION.etat() : null,
               autoBazaar: AUTO_BAZAAR ? AUTO_BAZAAR.etat() : null,
               /* L'agent qui embauche (embauche.js) : adresse publique, depense du jour, plafonds. */
