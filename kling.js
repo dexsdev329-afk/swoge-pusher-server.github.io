@@ -38,6 +38,29 @@
  *   suivre  GET /v1/images/generations/<task_id> → data { task_status,
  *           task_status_msg, task_result: { images: [{ index, url }] } }
  *   prix    (pricing/base/image.md) Kling Image 3.0 : 0,028 $ l'image en 1K ou 2K.
+ *
+ * ---- L'EDITION D'UN CLIP, KLING O1 (lu le 14/10/2026) ----
+ *   Demande du proprietaire, 14 octobre 2026 : remplacer UNE personne d'un clip
+ *   court par SWOGE (une image de reference), en gardant le son d'origine.
+ *   Doc : https://kling.ai/document-api/api/video/o1/video-omni.md
+ *   creer   POST /omni-video/kling-o1 { contents: [{type:'prompt',text},
+ *           {type:'refer_image', url (URL ou base64), id:'image_1'},
+ *           {type:'base_video', url (URL SEULEMENT), id:'video_1'}],
+ *           settings: { resolution '720p'|'1080p', audio 'original'|'off' },
+ *           options: { external_task_id } } ; le texte cite @image_1 / @video_1.
+ *           `aspect_ratio` n'est exige que « sans first frame ni video de
+ *           reference » et `duration` n'apparait pas dans l'exemple base_video :
+ *           ni l'un ni l'autre ne sont envoyes, la sortie suit le clip.
+ *   video   .mp4/.mov, <= 200 Mo, 3 a 10 s (inclus), 700 a 2160 px de cote,
+ *           24 a 60 i/s, une seule video ; un base_video n'accepte ni premiere
+ *           ni derniere image.
+ *   image   .jpg/.jpeg/.png, <= 50 Mo, >= 300 px, rapport 1:2,5 a 2,5:1 ; avec
+ *           une video, images + elements <= 4.
+ *   suivre  GET /tasks?task_ids= (etat()), qui rend aussi `billing[]`.
+ *   prix    (pricing/base/video.md, lu le 14/10/2026) « Kling O1, With Video
+ *           Input » : 0,9 unite (0,126 $) /s en 720p, 1,2 unite (0,168 $) /s en
+ *           1080p. La page ne dit pas si la seconde entamee compte : on estime
+ *           sur la seconde entamee (plafond), donc au pire.
  * ======================================================================== */
 const crypto = require('crypto');
 
@@ -49,6 +72,51 @@ const MODELES = {
 const TEXTE_MAX = 2500;
 const IMAGE_MAX_OCTETS = 50 * 1024 * 1024;
 const DELAI_MS = 30000;
+
+/* ---- L'edition O1 : les bornes de la doc (video-omni.md, 14/10/2026) ---- */
+const EDITION_MODELE = 'kling-o1';
+const EDITION_PRIX = { '720p': 0.126, '1080p': 0.168 };   /* $ par seconde, « With Video Input » */
+const EDITION_DUREE = { min: 3, max: 10 };
+const EDITION_COTE = { min: 700, max: 2160 };
+const REF_IMAGE_COTE_MIN = 300;
+const REF_IMAGE_RAPPORT_MAX = 2.5;
+
+/** Le prix estime d'une edition : la seconde entamee compte (le pire cas), ou null. */
+function prixEdition(resolution, dureeS) {
+  const p = EDITION_PRIX[resolution]; const d = Number(dureeS);
+  if (!(p > 0) || !(d >= EDITION_DUREE.min && d <= EDITION_DUREE.max)) return null;
+  return Math.round(p * Math.ceil(d - 1e-9) * 1000) / 1000;
+}
+
+/**
+ * Le format et la taille d'une image PNG ou JPEG lus dans ses octets, ou null.
+ * PNG : signature 8 octets, puis IHDR (largeur u32 a 16, hauteur u32 a 20).
+ * JPEG : FFD8, puis les segments jusqu'a un SOFn (C0-C3, C5-C7, C9-CB, CD-CF),
+ * hauteur u16 a +5, largeur u16 a +7. Le type annonce par la page ne prouve rien.
+ */
+function dimensionsImage(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 24) return null;
+  if (buf.readUInt32BE(0) === 0x89504E47 && buf.readUInt32BE(4) === 0x0D0A1A0A && buf.toString('latin1', 12, 16) === 'IHDR') {
+    return { format: 'png', largeur: buf.readUInt32BE(16), hauteur: buf.readUInt32BE(20) };
+  }
+  if (buf[0] === 0xFF && buf[1] === 0xD8) {
+    let o = 2;
+    while (o + 4 <= buf.length) {
+      if (buf[o] !== 0xFF) return null;
+      const mq = buf[o + 1];
+      if (mq === 0xFF) { o++; continue; }
+      if (mq === 0xD8 || mq === 0x01 || (mq >= 0xD0 && mq <= 0xD7)) { o += 2; continue; }
+      const l = buf.readUInt16BE(o + 2);
+      if (l < 2) return null;
+      if (mq >= 0xC0 && mq <= 0xCF && mq !== 0xC4 && mq !== 0xC8 && mq !== 0xCC) {
+        if (o + 9 > buf.length) return null;
+        return { format: 'jpeg', largeur: buf.readUInt16BE(o + 7), hauteur: buf.readUInt16BE(o + 5) };
+      }
+      o += 2 + l;
+    }
+  }
+  return null;
+}
 
 /** Le prix en dollars d'une video, ou null si la combinaison n'existe pas. */
 function prixUsd(modele, resolution, audio, duree) {
@@ -126,9 +194,60 @@ function cree(deps) {
       const t = Array.isArray(d) ? d[0] : null;
       if (!t) return { ok: false, code: 404, raison: 'unknown task' };
       const v = (t.outputs || []).find((x) => x && x.type === 'video');
+      /* `billing[]` (doc O1) : ce que Kling a reellement deduit — garde, borne, pour la mesure. */
+      const facturation = Array.isArray(t.billing) ? t.billing.slice(0, 4).map((b) => ({ type: String(b && b.charge_type || '').slice(0, 16),
+        montant: String(b && b.amount || '').slice(0, 24), devise: String(b && (b.currency || b.package_type) || '').slice(0, 16) })) : null;
       return { ok: true, id: String(t.id), statut: t.status, message: t.message || null,
-               url: v && /^https:\/\//.test(String(v.url)) ? v.url : null, duree: v && v.duration ? Number(v.duration) : null };
+               url: v && /^https:\/\//.test(String(v.url)) ? v.url : null, duree: v && v.duration ? Number(v.duration) : null, facturation };
     } catch (e) { return { ok: false, code: 502, raison: 'Kling: ' + e.message }; }
+  }
+
+  /**
+   * L'EDITION O1 : un clip existant (base_video, par URL publique SEULEMENT —
+   * la doc n'accepte pas de base64 pour une video) refait d'apres une image de
+   * reference (refer_image : URL https, data-URL PNG/JPEG ou base64 nu).
+   * q : { videoUrl, image, prompt, resolution, audio, dureeS }. `dureeS` (lue
+   * dans l'en-tete du MP4 par l'appelant) sert a l'estimation et au refus des
+   * clips hors 3-10 s. Tout refus est rendu AVANT le moindre envoi.
+   */
+  async function lanceEdition(q) {
+    q = q || {};
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    const texte = String(q.prompt || '').trim();
+    if (!texte) return { ok: false, code: 400, raison: 'write what to change in the clip' };
+    if (texte.length > TEXTE_MAX) return { ok: false, code: 400, raison: 'prompt too long (' + TEXTE_MAX + ' characters at most)' };
+    const videoUrl = String(q.videoUrl || '');
+    if (!/^https?:\/\/[^\s]+$/i.test(videoUrl)) return { ok: false, code: 400, raison: 'the clip must be reachable at a public URL' };
+    const resolution = q.resolution === '1080p' ? '1080p' : '720p';
+    const audio = q.audio === 'off' ? 'off' : 'original';
+    const dureeS = Number(q.dureeS);
+    const estimationUsd = prixEdition(resolution, dureeS);
+    if (estimationUsd === null) return { ok: false, code: 400, raison: 'the clip must last ' + EDITION_DUREE.min + ' to ' + EDITION_DUREE.max + ' s (Kling limit)' };
+    let image = null, imageSource = null;
+    const brute = q.image == null ? '' : String(q.image);
+    if (!brute) return { ok: false, code: 400, raison: 'a reference picture is needed' };
+    if (/^https:\/\//i.test(brute)) { image = brute; imageSource = 'url'; }
+    else {
+      const m = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(brute);
+      const nu = m ? brute.slice(m[0].length) : brute;
+      if (!/^[A-Za-z0-9+/=\s]+$/.test(nu)) return { ok: false, code: 400, raison: 'the reference must be a PNG or JPEG picture' };
+      const octets = Buffer.from(nu, 'base64');
+      if (octets.length > IMAGE_MAX_OCTETS) return { ok: false, code: 400, raison: 'picture too large (50 MB at most)' };
+      const dim = dimensionsImage(octets);
+      if (!dim) return { ok: false, code: 400, raison: 'the reference must be a PNG or JPEG picture (Kling takes no WebP here)' };
+      const petit = Math.min(dim.largeur, dim.hauteur), grand = Math.max(dim.largeur, dim.hauteur);
+      if (petit < REF_IMAGE_COTE_MIN) return { ok: false, code: 400, raison: 'the reference is ' + dim.largeur + '×' + dim.hauteur + ' px — ' + REF_IMAGE_COTE_MIN + ' px at least on each side' };
+      if (grand / petit > REF_IMAGE_RAPPORT_MAX) return { ok: false, code: 400, raison: 'the reference is too narrow (between 1:2.5 and 2.5:1)' };
+      image = octets.toString('base64'); imageSource = dim.format;
+    }
+    const contents = [{ type: 'prompt', text: texte }, { type: 'refer_image', url: image, id: 'image_1' }, { type: 'base_video', url: videoUrl, id: 'video_1' }];
+    const externe = crypto.randomBytes(12).toString('hex');
+    try {
+      const d = await appel('/omni-video/' + EDITION_MODELE, { method: 'POST', body: JSON.stringify({ contents, settings: { resolution, audio }, options: { external_task_id: externe } }) });
+      if (!d || !d.id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
+      return { ok: true, id: String(d.id), externe, statut: d.status || 'submitted', modele: EDITION_MODELE, edition: true,
+               resolution, audio, dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, image: imageSource };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message }; }
   }
 
   /* ---- L'IMAGE ----
@@ -209,11 +328,12 @@ function cree(deps) {
     }
   }
 
-  return { actif, lance, etat, lanceImage, etatImage, image, video };
+  return { actif, lance, etat, lanceEdition, lanceImage, etatImage, image, video };
 }
 
 const IMAGE_MODELES = ['kling-v3', 'kling-v2-1'];
 const IMAGE_FORMATS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9'];
 const IMAGE_PRIX_USD = 0.028;
 
-module.exports = { cree, prixUsd, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD };
+module.exports = { cree, prixUsd, prixEdition, dimensionsImage, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
+  EDITION_MODELE, EDITION_PRIX, EDITION_DUREE, EDITION_COTE };

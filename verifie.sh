@@ -195,6 +195,10 @@ lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichie
 lance klingjev "$SRV" node kling_jev.test.js   # Kling (nouveau standard, cle API, grille officielle) et Jev (systemone, probabilites, cout) : rien ne part sans cle, jamais la cle dans une reponse
 lance klingrte "$SRV" node kling_route.test.js   # essai Kling sur un vrai serveur : proprietaire seul, 403 avant Kling, journalise, aucun debit
 lance klingtg "$SRV" node kling_telegram.test.js   # image Kling postee sur Telegram a heure fixe : une fois, jamais en retard, rien sur le canal si Kling echoue
+lance klingedit "$SRV" node kling_edition.test.js   # Kling O1 edition : corps de la doc (refer_image + base_video par URL, son original), refus avant envoi, clip efface a la fin/au delai/au refus
+lance klingedrte "$SRV" node kling_edition_route.test.js   # edition Kling sur un vrai serveur : 403 avant le corps, clip servi a Kling par son nom puis efface, fin journalisee une fois
+lance wan     "$SRV" node wan_remplace.test.js   # Wan 2.2 Animate Replace (fal) : 16 i/s avant l envoi, prix images/16, son d origine remis par ffmpeg, entrees effacees
+lance wanrte  "$SRV" node wan_route.test.js   # Wan sur un vrai serveur : proprietaire seul, resultat final servi avec la session seulement, cle fal jamais montree
 lance observ  "$SRV" node observatoire.test.js   # Solana/Ethereum/Robinhood, observer seulement : moyenne bornee a +300 % et recalculee depuis les .jsonl, devs qui poussent sur lancements plausibles, decouverte unique, securite sans GoPlus, prix a 30 min par le meme service, disparus a part, rien que 4 services
 lance banque  "$SRV" node banque_papier.test.js   # banque papier : achat seulement sur devis d achat ET de revente, temoin et bras, ventes a 10/30/60 min, invendable = 0, panne != pas de route, aucune signature
 lance sortie  "$SRV" node epreuve_sortie.test.js   # can_i_sell : verdict du Cobaye, facture seulement une reponse, 60 s de cache, 2 en vol, journal sans payeur
@@ -303,6 +307,7 @@ lance studiopage "$SITE" node studio_page.test.js
 lance chatpage "$SITE" node chat_page.test.js   # SWOGE AI Chat : jeton et jamais adresse, texte echappe, 320 px
 lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs : jeton jamais adresse, photo reduite, echappe, 320 px
 lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
+lance klingpage "$SITE" node kling_edition_page.test.js   # kling_essai.html « Edit a clip » : Kling O1 et Wan sur le meme clip, duree refusee dans la page, resultat Wan lu avec la session, 320 px
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance agentqr  "$SITE" node agent_qr.test.js   # le QR de la carte eSIM = le generateur prouve du portefeuille (200 empreintes segno), jamais un faux QR
 lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, payer Base (EIP-3009) ou Solana, lien secret, QR, ?order= retrouve, echappe, 320 px

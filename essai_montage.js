@@ -363,4 +363,4 @@ function cree({ dossier, fournisseur, urlPublique, journal, maintenant, pollMs, 
   return { lance, etat, vue, fichier, avance, MESURE, EN_COURS };
 }
 
-module.exports = { dureeMp4, cree, DUREE_MAX_S, OCTETS_MAX, PAR_JOUR, SENS, SENS_LISTE, API, PROMPT_MAX, VIDEO_PREFIXE, NOM };
+module.exports = { dureeMp4, enfants, cree, DUREE_MAX_S, OCTETS_MAX, PAR_JOUR, SENS, SENS_LISTE, API, PROMPT_MAX, VIDEO_PREFIXE, NOM };

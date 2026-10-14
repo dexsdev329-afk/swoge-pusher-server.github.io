@@ -2383,6 +2383,26 @@ const observatoire = require('./observatoire').cree({ dossier: require('path').j
 /* Kling : video, en essai proprietaire d'abord (kling.js, route /studio/kling). KLING_API_KEY. */
 const kling = require('./kling').cree({});
 const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
+/* L'edition d'un clip par Kling O1 (kling_edition.js, 14/10/2026) : le clip est
+   servi a Kling par un nom tire au hasard le temps de la tache, puis efface. La
+   reference par defaut est l'image de SWOGE du site (en pied, JPEG 1024×1536,
+   dans les bornes de la doc : >= 300 px, rapport 1:1,5), passee par son URL. */
+const klingEditionMod = require('./kling_edition');
+const klingEdition = klingEditionMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'kling_edition'), kling,
+  urlPublique: (nom) => MOI_URL + klingEditionMod.VIDEO_PREFIXE + nom,
+  imageDefaut: SITE_URL + require('./studio_comprend').REFERENCE_CHEMIN,
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
+/* Le second moteur de l'essai d'edition : Wan 2.2 Animate Replace chez fal
+   (wan_remplace.js, 14/10/2026), sur le meme clip, pour comparer. FAL_KEY. */
+const wanMod = require('./wan_remplace');
+const wan = wanMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'wan_edition'),
+  urlPublique: (nom) => MOI_URL + wanMod.VIDEO_PREFIXE + nom,
+  imageDefaut: SITE_URL + require('./studio_comprend').REFERENCE_CHEMIN,
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
 /* Une image Kling postee sur Telegram a heure fixe, une seule fois (kling_telegram.js). KLING_TG=0 la coupe. */
 /* La derniere image d'une video, pour enchainer les scenes (derniere_image.js, ffmpeg dans le Dockerfile). */
 const derniereImage = require('./derniere_image').cree({});
@@ -6670,6 +6690,22 @@ const server = http.createServer(async (req, res) => {
                          'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.octets);
   }
+  /* Le clip d'une edition Kling O1 EN COURS : public par son nom (48 hexa),
+     Kling doit le lire ; avant tout controle de session. Efface a la fin. */
+  if (path.startsWith(klingEditionMod.VIDEO_PREFIXE)) {
+    const f = (req.method === 'GET' || req.method === 'HEAD') ? klingEdition.fichier(path.slice(klingEditionMod.VIDEO_PREFIXE.length)) : null;
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
+  /* Les entrees d'un remplacement Wan EN COURS (clip 16 i/s, image fournie) :
+     publiques par leur nom (48 hexa), fal doit les lire ; effacees a la fin. */
+  if (path.startsWith(wanMod.VIDEO_PREFIXE)) {
+    const f = (req.method === 'GET' || req.method === 'HEAD') ? wan.fichier(path.slice(wanMod.VIDEO_PREFIXE.length)) : null;
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
   /* ---- KLING, ESSAI PROPRIETAIRE (27/09/2026) ----
    * Comme l'essai de restylage : session signee, AI_OWNER reverifie a chaque geste,
    * aucun debit (c'est le compte Kling du proprietaire qui paie), chaque essai
@@ -6703,13 +6739,59 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/kling' && req.method === 'GET') {
       let essais = [];
       try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
-      return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat() });
+      return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat(),
+                         edition: klingEdition.vue(addr), wan: wan.vue(addr) });
+    }
+    /* Wan 2.2 Animate Replace (fal) : { video, image?, resolution, audio }. Le
+       resultat final (son remis) ne sort que pour l'adresse qui l'a lance. */
+    if (path === '/studio/kling/wan') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let q;
+      try { q = JSON.parse((await corps(req, klingEditionMod.CORPS_MAX)).toString('utf8') || '{}'); }
+      catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (clip ' + (wanMod.OCTETS_MAX / 1048576) + ' MB, picture 6 MB at most)' }); }
+      if (!q || typeof q !== 'object') q = {};
+      const d = /^data:[a-z0-9.+\/-]*;base64,/i.exec(String(q.video || ''));
+      const octets = d ? Buffer.from(String(q.video).slice(d[0].length), 'base64') : Buffer.alloc(0);
+      let r;
+      try { r = await wan.lance({ addr, octets, image: q.image, resolution: q.resolution, garderSon: q.audio !== 'off' }); }
+      catch (e) { console.error('[wan] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
+    const wm = /^\/studio\/kling\/wan\/([0-9a-f]{24})(\/video)?$/.exec(path);
+    if (wm && req.method === 'GET') {
+      if (!wm[2]) { const r = await wan.rafraichit(wm[1], addr); return json(r.ok ? 200 : r.code, r); }
+      const f = wan.resultat(wm[1], addr);
+      if (!f) return json(404, { ok: false, raison: 'no result for this edit' });
+      res.writeHead(200, Object.assign({ 'content-type': f.type, 'content-length': f.octets.length, 'cache-control': 'no-store',
+        'content-disposition': 'inline; filename="wan_' + wm[1] + '.mp4"' }, cors));
+      return res.end(f.octets);
+    }
+    /* L'edition d'un clip (Kling O1) : { video: data-URL MP4, image?: data-URL
+       PNG/JPEG (absente : SWOGE), prompt, resolution, audio }. Le corps n'est lu
+       qu'apres AI_OWNER ; l'en-tete MP4 est relu ici, le type annonce ne prouve rien. */
+    if (path === '/studio/kling/edition') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let q;
+      try { q = JSON.parse((await corps(req, klingEditionMod.CORPS_MAX)).toString('utf8') || '{}'); }
+      catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (clip ' + (klingEditionMod.OCTETS_MAX / 1048576) + ' MB, picture ' + (klingEditionMod.IMAGE_OCTETS_MAX / 1048576) + ' MB at most)' }); }
+      if (!q || typeof q !== 'object') q = {};
+      const d = /^data:[a-z0-9.+\/-]*;base64,/i.exec(String(q.video || ''));
+      const octets = d ? Buffer.from(String(q.video).slice(d[0].length), 'base64') : Buffer.alloc(0);
+      let r;
+      try { r = await klingEdition.lance({ addr, octets, image: q.image, prompt: q.prompt, resolution: q.resolution, audio: q.audio }); }
+      catch (e) { console.error('[kling-edition] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      return json(r.ok ? 200 : (r.code || 500), r);
     }
     const m = /^\/studio\/kling\/([0-9A-Za-z_-]{1,64})$/.exec(path);
     if (m && req.method === 'GET') {
       const r = await kling.etat(m[1]);
-      if (r.ok && (r.statut === 'succeeded' || r.statut === 'failed')) journalKling({ id: r.id, statut: r.statut, duree: r.duree, message: r.message });
-      return json(r.ok ? 200 : r.code, r);
+      /* une edition : sa fin efface le clip et s'ecrit une fois (kling_edition.js) */
+      const edition = klingEdition.connue(m[1]);
+      if (r.ok && (r.statut === 'succeeded' || r.statut === 'failed')) {
+        if (edition) klingEdition.conclut(m[1], r);
+        else journalKling({ id: r.id, statut: r.statut, duree: r.duree, message: r.message });
+      }
+      return json(r.ok ? 200 : r.code, Object.assign(r, edition ? { edition: true } : {}));
     }
     if (path !== '/studio/kling' || req.method !== 'POST') return json(404, { ok: false, raison: 'unknown' });
     let q;
