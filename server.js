@@ -2409,6 +2409,19 @@ const klingEntier = klingEntierMod.cree({
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
 });
 klingEntier.demarre();
+/* SWOGE SWAP, le meme moteur ouvert aux joueurs (swap.js, 14/10/2026) : n'importe quelle session,
+   personnages maison seulement, prix = pire cas Kling × SWAP_MARGE (2) au cent, paye au credit en
+   dollars (reserve DURABLE au lancement, reglee sur les morceaux livres) ; SWAP_PARALLELE passes
+   chez Kling a la fois (2, les autres en file), SWAP_PLAFOND_JOUR_USD (50 $) par jour UTC. Le
+   credit est lu au moment du geste (credits() se construit a la demande, plus bas). */
+const swapMod = require('./swap');
+const SWAP_JOURNAL = require('path').join(cfg.DATA_DIR, 'swap_journal.jsonl');
+const swap = swapMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'swap'), kling, site: SITE_URL, moi: MOI_URL,
+  credits: { soldeDurable: (q) => credits().soldeDurable(q), soldeUsd: (a) => credits().soldeUsd(a) },
+  journal: (o) => { try { require('fs').appendFileSync(SWAP_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
+swap.demarre();
 /* Le second moteur de l'essai d'edition : Wan 2.2 Animate Replace chez fal
    (wan_remplace.js, 14/10/2026), sur le meme clip, pour comparer. FAL_KEY. */
 const wanMod = require('./wan_remplace');
@@ -6720,6 +6733,69 @@ const server = http.createServer(async (req, res) => {
     if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
+  /* Un morceau d'une video SWOGE Swap EN COURS chez Kling : public par son nom (48 hexa),
+     Kling doit le lire ; efface des que Kling a rendu le sien. */
+  if (path.startsWith(swapMod.VIDEO_PREFIXE)) {
+    const f = (req.method === 'GET' || req.method === 'HEAD') ? swap.fichier(path.slice(swapMod.VIDEO_PREFIXE.length)) : null;
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
+  /* ---- SWOGE SWAP (swap.js) : POUR TOUTE SESSION, PAS SEULEMENT LE PROPRIETAIRE ----
+   * GET /studio/swap : les personnages, les cibles, les bornes, le prix par seconde (sans
+   * session : tout sauf la passe) ; POST /studio/swap : le corps BRUT (video/mp4), avec
+   * l'en-tete x-swap-rights: yes (la case cochee) — refuse AVANT de lire le corps sans elle,
+   * sans session, ou au-dela de la taille annoncee. Puis GET /studio/swap/<id> (l'etat ; avance
+   * le suivi), POST …/<id>/lance { personnage, cible, confirmeUsd } (images et prompt sont
+   * transmis au moteur pour y etre REFUSES), …/<id>/reessaie/<n> (une fois, gratuit),
+   * …/<id>/termine, …/<id>/abandonne, GET …/<id>/video (le resultat, avec la session qui l'a
+   * lance, jamais par une adresse publique). Chaque geste n'agit que pour l'adresse de la SESSION. */
+  if (path === '/studio/swap' || path.startsWith('/studio/swap/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization, x-swap-rights' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (path === '/studio/swap' && req.method === 'GET') return json(200, Object.assign({ ok: true, connecte: !!addr }, swap.vue(addr || null), addr ? {} : { passe: null }));
+    if (!addr) { if (req.method === 'POST') res.setHeader('connection', 'close'); return json(401, { ok: false, raison: 'sign in with your wallet first' }); }
+    if (path === '/studio/swap') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      const droits = String(req.headers['x-swap-rights'] || '').trim().toLowerCase() === 'yes';
+      if (!kling.actif()) { res.setHeader('connection', 'close'); return json(503, { ok: false, raison: 'SWOGE Swap is not open yet' }); }
+      let r;
+      try { r = await swap.cree(addr, req, req.headers['content-length'], { droits }); }
+      catch (e) { console.error('[swap] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
+    const sm = /^\/studio\/swap\/([0-9a-f]{24})(?:\/(lance|reessaie|termine|abandonne|video)(?:\/(\d{1,3}))?)?$/.exec(path);
+    if (!sm) return json(404, { ok: false, raison: 'unknown' });
+    const [, sid, geste, num] = sm;
+    if (!geste && req.method === 'GET') { swap.tour().catch(() => {}); const r = swap.etat(sid, addr); return json(r.ok ? 200 : r.code, r); }
+    if (geste === 'video' && req.method === 'GET') {
+      const f = swap.resultat(sid, addr);
+      if (!f) return json(404, { ok: false, raison: 'no result for this video' });
+      res.writeHead(200, Object.assign({ 'content-type': 'video/mp4', 'content-length': f.taille, 'cache-control': 'no-store, private',
+        'content-disposition': 'inline; filename="' + f.nom + '"' }, cors));
+      return require('fs').createReadStream(f.chemin).pipe(res);
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    let r;
+    try {
+      if (geste === 'lance') {
+        let q;
+        try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); }
+        catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request' }); }
+        if (!q || typeof q !== 'object') q = {};
+        r = await swap.lance(sid, addr, { personnage: q.personnage, cible: q.cible, confirmeUsd: q.confirmeUsd, images: q.images, prompt: q.prompt, resolution: q.resolution });
+      } else if (geste === 'reessaie' && num != null) r = await swap.relance(sid, addr, num);
+      else if (geste === 'termine') r = swap.termine(sid, addr);
+      else if (geste === 'abandonne') r = swap.abandonne(sid, addr);
+      else r = { ok: false, code: 404, raison: 'unknown' };
+    } catch (e) { console.error('[swap] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+    return json(r.ok ? 200 : (r.code || 500), r);
   }
   /* Les entrees d'un remplacement Wan EN COURS (clip 16 i/s, image fournie) :
      publiques par leur nom (48 hexa), fal doit les lire ; effacees a la fin. */
@@ -11274,6 +11350,11 @@ server.listen(cfg.PORT, () => {
     const b = studioMedia.reprendVideos(Object.assign(depsMedia(), { cours: async () => 1, solde: credits().soldeDurable('video') }), credits().durables());
     if (b.reprises || b.rendues) console.log('[studio] credit videos after restart: ' + b.reprises + ' resumed, ' + b.rendues + ' refunded');
   } catch (e) { console.error('[studio] credit video resume: ' + (e && e.message || e)); }
+  /* SWOGE Swap : chaque reserve durable « swap » rapprochee de sa passe ; sans passe vivante, rendue. */
+  try {
+    const b = swap.reprendReserves(credits().durables());
+    if (b.gardees || b.rendues) console.log('[swap] reserves after restart: ' + b.gardees + ' kept, ' + b.rendues + ' refunded');
+  } catch (e) { console.error('[swap] reserve resume: ' + (e && e.message || e)); }
 
   /* ---- LA COLONIE TOURNE, QUE QUELQU'UN REGARDE OU NON ----
    * Elle se relit sur le disque et reprend ou elle en etait : les positions

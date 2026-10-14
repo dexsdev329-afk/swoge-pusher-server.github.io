@@ -151,6 +151,16 @@ function cree(deps) {
         const s = regleMicro(id, weiVersMicro(fw || 0), quoi);
         return s === null ? null : String(s);
       },
+      /* Une reserve dont le travail est VIVANT (une video entiere en file ou en cours, swap.js :
+         plus longue que DURABLE_MAX_MS) remet son heure a maintenant : elle n'est rendue au
+         demarrage que si plus rien ne l'a rafraichie depuis DURABLE_MAX_MS. */
+      ravive: (id) => {
+        const o = E.ouvertes[id];
+        if (!o || !o.durable) return false;
+        o.t = maintenant();
+        ecrit();
+        return true;
+      },
     };
   }
   /** Les reserves durables encore ouvertes (relues au demarrage), pour reprendre leur travail. */

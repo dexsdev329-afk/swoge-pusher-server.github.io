@@ -50,6 +50,18 @@
  *   est garde 48 h. Les morceaux et resultats intermediaires sont effaces a la
  *   fin ; au demarrage, les restes aussi.
  *
+ * ---- LE MEME MOTEUR, DEUX PAYEURS (14 octobre 2026) ----
+ *   Le proprietaire (routes /studio/kling/entier*) : ses references, son texte,
+ *   son compte Kling, aucun debit. Le service PUBLIC « SWOGE Swap » (swap.js,
+ *   routes /studio/swap*) passe `deps.public` : n'importe quelle session, des
+ *   personnages MAISON seulement (aucune image ni aucun texte du joueur), le
+ *   prix montre = pire cas Kling × marge, reserve DURABLE sur le credit en
+ *   dollars au lancement, reglee a la fin sur les morceaux LIVRES ; une file
+ *   globale (passes en cours en meme temps), un plafond de depense par jour,
+ *   une relance gratuite par morceau, puis le morceau garde l'image d'origine
+ *   et n'est pas facture. Sans `deps.public`, rien de tout cela n'existe : le
+ *   chemin du proprietaire est celui d'avant, octet pour octet dans ses reponses.
+ *
  * ---- LE REDEMARRAGE ----
  *   Railway redemarre a chaque poussee : l'etat d'une passe est ecrit sur le
  *   disque (etat.json, ecriture atomique) a chaque changement. Au demarrage,
@@ -183,6 +195,12 @@ const executer = (bin, args, ms) => new Promise((res, rej) => execFile(bin, args
  */
 function cree(deps) {
   const dossier = deps.dossier;
+  /* null : le proprietaire. Sinon le profil public (swap.js) : { choisit, prixClient, paie,
+     passesMax, plafondJourUsd, relancesGratuites, decoupesMax, pretMaxMs, incompletMaxMs,
+     droitsTexte, urlVideo, catalogue, marge } */
+  const PUB = deps.public || null;
+  const OCTETS_MAX = deps.octetsMax > 0 ? Number(deps.octetsMax) : ENTREE_OCTETS_MAX;
+  const DUREE_MAX = deps.dureeMax > 0 ? Number(deps.dureeMax) : DUREE_ENTIER_MAX;
   const kling = deps.kling;
   const ffmpeg = deps.ffmpeg || 'ffmpeg', ffprobe = deps.ffprobe || 'ffprobe';
   const temps = () => (deps.maintenant ? deps.maintenant() : Date.now());
@@ -192,7 +210,7 @@ function cree(deps) {
   const MORCEAU_MAX = deps.morceauMaxMs != null ? Number(deps.morceauMaxMs) : MORCEAU_MAX_MS;
   const ATTENTE = Object.assign({}, ATTENTE_LIMITE_MS, deps.attenteLimiteMs || {});
   const hoteOk = deps.hoteOk || hotesPermis(process.env.KLING_CDN_HOTES);
-  const note = (o) => { try { if (deps.journal) deps.journal(o); } catch (e) { /* jamais bloquant */ } };
+  const note = (o) => { try { if (deps.journal) deps.journal(PUB ? Object.assign({ swap: true }, o) : o); } catch (e) { /* jamais bloquant */ } };
   const DEFAUT = Array.isArray(deps.imagesDefaut) && deps.imagesDefaut.length ? deps.imagesDefaut.slice(0, K.EDITION_IMAGES_MAX) : [deps.imageDefaut];
   const JETONS = { swoge: DEFAUT[0], 'swoge-face': DEFAUT[1] };
   const propre = (m) => String(m || '').replace(/[\u0000-\u001f]/g, ' ').slice(0, 240);
@@ -212,7 +230,8 @@ function cree(deps) {
     try { fs.writeFileSync(t, JSON.stringify(s)); fs.renameSync(t, f); }
     catch (e) { console.error('[kling-entier] etat non ecrit : ' + e.message); }
   }
-  const ACTIFS = ['decoupe', 'en_cours', 'assemblage'];
+  /* 'file' : lancee et payee, en attente d'une place (public seulement) */
+  const ACTIFS = ['decoupe', 'file', 'en_cours', 'assemblage'];
 
   /* ---- au demarrage : relire, purger, reprendre ---- */
   function relit() {
@@ -287,14 +306,19 @@ function cree(deps) {
    * Une nouvelle passe pour `addr` (la SESSION) a partir du flux `flux` (le
    * corps brut, video/mp4). Rend { ok, id, statut: 'decoupe' } tout de suite ;
    * le decoupage tourne en fond (la page suit par etat()).
+   * o (public seulement) : { droits: true } — la case « j'ai le droit d'utiliser
+   * cette video » cochee par le joueur ; sans elle, rien n'est lu.
    */
-  async function cree_(addr, flux, octetsAnnonces) {
+  async function cree_(addr, flux, octetsAnnonces, o) {
     if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-    if (Number(octetsAnnonces) > ENTREE_OCTETS_MAX) return { ok: false, code: 413, raison: 'the video is ' + (Number(octetsAnnonces) / 1048576).toFixed(1) + ' MB — ' + (ENTREE_OCTETS_MAX / 1048576) + ' MB max' };
+    if (PUB && !(o && o.droits === true)) return { ok: false, code: 400, raison: 'tick the box first: ' + PUB.droitsTexte };
+    if (Number(octetsAnnonces) > OCTETS_MAX) return { ok: false, code: 413, raison: 'the video is ' + (Number(octetsAnnonces) / 1048576).toFixed(1) + ' MB — ' + (OCTETS_MAX / 1048576) + ' MB max' };
     for (const P of PASSES.values()) {
       if (P.addr !== addr) continue;
-      if (ACTIFS.includes(P.statut) || P.statut === 'incomplet') return { ok: false, code: 429, raison: 'a whole-video edit is already running — wait for it (or retry its failed parts)' };
+      if (ACTIFS.includes(P.statut) || P.statut === 'incomplet') return { ok: false, code: 429, raison: PUB ? 'you already have a video in progress — wait for it to finish' : 'a whole-video edit is already running — wait for it (or retry its failed parts)' };
     }
+    /* Public : ffmpeg coupe au plus `decoupesMax` videos a la fois, toutes adresses confondues. */
+    if (PUB && [...PASSES.values()].filter((P) => P.statut === 'decoupe').length >= PUB.decoupesMax) return { ok: false, code: 503, raison: 'the server is busy preparing other videos — try again in a minute' };
     /* un plan non lance (ou rate) du meme proprietaire est remplace */
     for (const P of [...PASSES.values()]) if (P.addr === addr && ['pret', 'erreur', 'abandon'].includes(P.statut)) supprime(P);
     try { await executer(ffmpeg, ['-version'], 10000); await executer(ffprobe, ['-version'], 10000); }
@@ -305,10 +329,12 @@ function cree(deps) {
     try { fs.mkdirSync(rep(id), { recursive: true }); }
     catch (e) { return { ok: false, code: 500, raison: 'the server could not store the video' }; }
     let n;
-    try { n = await recoit(flux, fic(P, 'orig.mp4'), ENTREE_OCTETS_MAX); }
-    catch (e) { try { fs.rmSync(rep(id), { recursive: true, force: true }); } catch (x) { /* rien */ } return e.trop ? { ok: false, code: 413, raison: 'the video is larger than ' + (ENTREE_OCTETS_MAX / 1048576) + ' MB' } : { ok: false, code: 400, raison: 'upload interrupted' }; }
+    try { n = await recoit(flux, fic(P, 'orig.mp4'), OCTETS_MAX); }
+    catch (e) { try { fs.rmSync(rep(id), { recursive: true, force: true }); } catch (x) { /* rien */ } return e.trop ? { ok: false, code: 413, raison: 'the video is larger than ' + (OCTETS_MAX / 1048576) + ' MB' } : { ok: false, code: 400, raison: 'upload interrupted' }; }
     if (!n) { try { fs.rmSync(rep(id), { recursive: true, force: true }); } catch (x) { /* rien */ } return { ok: false, code: 400, raison: 'choose a video first' }; }
     P.octets = n;
+    /* la case cochee, gardee avec la passe (et au journal du plan) */
+    if (PUB) P.droits = { accepte: true, t: temps(), texte: PUB.droitsTexte };
     PASSES.set(id, P); ecrit(P);
     P.travail = decoupe(P).catch((e) => { P.statut = 'erreur'; P.message = 'cutting failed: ' + propre(e.err || e.message); nettoie(P); ecrit(P); })
       .finally(() => { P.travail = null; });
@@ -322,7 +348,7 @@ function cree(deps) {
     const refuse = (m) => { P.statut = 'erreur'; P.message = m; efface(P, 'orig.mp4'); ecrit(P); };
     if (!s || !s.video || !(s.duree > 0)) return refuse('not a video ffmpeg can read');
     if (s.duree < DECOUPE.min) return refuse('the video is ' + s.duree.toFixed(2) + ' s long — ' + DECOUPE.min + ' s at least');
-    if (s.duree > DUREE_ENTIER_MAX) return refuse('the video is ' + s.duree.toFixed(1) + ' s long — ' + DUREE_ENTIER_MAX + ' s at most');
+    if (s.duree > DUREE_MAX) return refuse('the video is ' + s.duree.toFixed(1) + ' s long — ' + DUREE_MAX + ' s at most');
     const cotes = cotesSortie(s.largeur, s.hauteur);
     if (!cotes) return refuse('the video is ' + s.largeur + '×' + s.hauteur + ' px — too narrow for Kling (700 to 2160 px per side)');
     const F = fpsSortie(s.fps);
@@ -360,24 +386,40 @@ function cree(deps) {
     P.segments = segs;
     P.scenes = sc.length;
     P.prixPlan = { '720p': prixPire(segs.map((x) => x.duree), '720p'), '1080p': prixPire(segs.map((x) => x.duree), '1080p') };
+    /* public : le prix montre au joueur, 720p seulement */
+    if (PUB) P.prixClient = P.prixPlan['720p'] != null ? PUB.prixClient(P.prixPlan['720p']) : null;
     P.statut = 'pret';
     ecrit(P);
-    note({ entier: P.id, plan: true, dureeS: P.source.duree, morceaux: segs.length, scenes: sc.length, durees: segs.map((x) => x.duree), fps: F, prixPire: P.prixPlan });
+    note(Object.assign({ entier: P.id, plan: true, dureeS: P.source.duree, morceaux: segs.length, scenes: sc.length, durees: segs.map((x) => x.duree), fps: F, prixPire: P.prixPlan },
+      PUB ? { prixUsd: P.prixClient, droits: !!(P.droits && P.droits.accepte) } : {}));
   }
 
   /* ---- 2. la confirmation ---- */
 
-  /**
-   * Lance une passe planifiee. q : { images: [URL https | data-URL PNG/JPEG]
-   * (vide : SWOGE), prompt, resolution, confirmeUsd (le prix montre) }.
-   * Tout est verifie AVANT le premier envoi : etat, texte, images (1 a 4),
-   * prix au pire sous le plafond, et egal a celui que la page a montre.
-   */
-  async function lance(id, addr, q) {
-    q = q || {};
-    const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
-    if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown whole-video edit' };
-    if (P.statut !== 'pret') return { ok: false, code: 409, raison: 'this edit is ' + P.statut + ', not waiting for a go' };
+  /* Le plafond du jour (public) : la depense Kling ENGAGEE ce jour UTC, sur le disque (un
+     redemarrage ne le remet pas a zero). Engagee = le pire cas au lancement, plus chaque
+     relance gratuite ; corrigee a la fin sur ce qui est vraiment parti chez Kling. */
+  const fJour = () => path.join(dossier, 'jour.json');
+  const jourDe = (t) => new Date(t).toISOString().slice(0, 10);
+  function lisJour() {
+    const j = jourDe(temps());
+    let o = null;
+    try { o = JSON.parse(fs.readFileSync(fJour(), 'utf8')); } catch (e) { o = null; }
+    return o && o.jour === j && Number.isFinite(Number(o.usd)) ? { jour: j, usd: Number(o.usd) } : { jour: j, usd: 0 };
+  }
+  function ajouteJour(usd, jour) {
+    const o = lisJour();
+    if (jour && jour !== o.jour) return;   /* une correction d'un autre jour : ce jour-la est clos */
+    o.usd = Math.max(0, arrondi3(o.usd + usd));
+    try { fs.mkdirSync(dossier, { recursive: true }); fs.writeFileSync(fJour() + '.tmp', JSON.stringify(o)); fs.renameSync(fJour() + '.tmp', fJour()); }
+    catch (e) { console.error('[kling-entier] jour non ecrit : ' + e.message); }
+  }
+  const jourPlein = (plus) => lisJour().usd + (plus || 0) > PUB.plafondJourUsd + 1e-9;
+  const MSG_JOUR = 'SWOGE Swap has reached its spending limit for today — try again tomorrow (it resets at 00:00 UTC). You were not charged.';
+
+  /* Le choix du proprietaire : ses images (1 a 4 ; « swoge », « swoge-face », URL https ou
+     data-URL PNG/JPEG), son texte, sa resolution. Rend { ok, liste, texte, resolution } ou un refus. */
+  function choixProprietaire(q) {
     const texte = String(q.prompt || '').trim();
     if (!texte) return { ok: false, code: 400, raison: 'write what to change in the video' };
     if (texte.length > K.TEXTE_MAX) return { ok: false, code: 400, raison: 'prompt too long (' + K.TEXTE_MAX + ' characters at most)' };
@@ -386,6 +428,41 @@ function cree(deps) {
     const brutes = Array.isArray(q.images) ? q.images.filter((x) => x != null && x !== '').map((x) => (Object.prototype.hasOwnProperty.call(JETONS, x) ? JETONS[x] : x)) : [];
     const liste = brutes.length ? brutes : DEFAUT.slice();
     if (liste.some((x) => x == null)) return { ok: false, code: 400, raison: 'unknown default picture' };
+    return { ok: true, liste, texte, resolution: q.resolution === '1080p' ? '1080p' : '720p' };
+  }
+  /* Le choix d'un joueur : un personnage MAISON et qui remplacer, rien d'autre. Une image ou un
+     texte envoyes quand meme sont REFUSES (pas ignores) : l'outil ne doit jamais pouvoir mettre
+     le visage de n'importe qui dans une video. 720p seulement. */
+  function choixPublic(q) {
+    const images = q.images, texte = q.prompt;
+    if ((Array.isArray(images) ? images.some((x) => x != null && x !== '') : images != null && images !== '') || (texte != null && String(texte).trim() !== '')) {
+      return { ok: false, code: 400, raison: 'custom pictures and prompts are not accepted — pick one of our characters and who to replace' };
+    }
+    if (q.resolution != null && q.resolution !== '720p') return { ok: false, code: 400, raison: 'SWOGE Swap renders in 720p only' };
+    const c = PUB.choisit(q.personnage, q.cible);
+    if (!c || !c.ok) return { ok: false, code: 400, raison: (c && c.raison) || 'pick a character and who to replace' };
+    return { ok: true, liste: c.images.slice(), texte: c.prompt, resolution: '720p', choix: { personnage: c.personnage, cible: c.cible } };
+  }
+
+  /* Les passes qui occupent Kling (public : la file attend qu'une place se libere). */
+  const occupees = () => [...PASSES.values()].filter((P) => P.statut === 'en_cours' || P.statut === 'assemblage').length;
+  const fileDAttente = () => [...PASSES.values()].filter((P) => P.statut === 'file').sort((a, b) => a.tFile - b.tFile);
+
+  /**
+   * Lance une passe planifiee. Proprietaire, q : { images: [URL https | data-URL PNG/JPEG]
+   * (vide : SWOGE), prompt, resolution, confirmeUsd (le prix montre) }. Public, q :
+   * { personnage, cible, confirmeUsd } — et le credit est reserve ici.
+   * Tout est verifie AVANT le premier envoi : etat, texte, images (1 a 4),
+   * prix au pire sous le plafond, et egal a celui que la page a montre.
+   */
+  async function lance(id, addr, q) {
+    q = q || {};
+    const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
+    if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown whole-video edit' };
+    if (P.statut !== 'pret') return { ok: false, code: 409, raison: 'this edit is ' + P.statut + ', not waiting for a go' };
+    const c = PUB ? choixPublic(q) : choixProprietaire(q);
+    if (!c.ok) return c;
+    const liste = c.liste, texte = c.texte, resolution = c.resolution;
     if (liste.length > K.EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: K.EDITION_IMAGES_MAX + ' reference pictures at most (Kling limit with a video)' };
     const refs = [];
     for (let i = 0; i < liste.length; i++) {
@@ -394,12 +471,30 @@ function cree(deps) {
       if (r.source !== 'url' && Buffer.byteLength(r.image, 'base64') > 6 * 1024 * 1024) return { ok: false, code: 413, raison: 'picture ' + (i + 1) + ' is too large (6 MB max)' };
       refs.push(r);
     }
-    const resolution = q.resolution === '1080p' ? '1080p' : '720p';
     const prix = prixPire(P.segments.map((s) => s.duree), resolution);
     if (prix === null) return { ok: false, code: 400, raison: 'no price for this plan' };
     if (prix > PLAFOND + 1e-9) return { ok: false, code: 402, raison: 'worst case $' + prix.toFixed(2) + ' is over the $' + PLAFOND.toFixed(2) + ' cap per run — use 720p or a shorter video' };
-    if (!(Math.abs(Number(q.confirmeUsd) - prix) < 0.0005)) return { ok: false, code: 409, raison: 'the price to confirm is $' + prix.toFixed(3) + ' — confirm that amount' };
+    /* ce que le joueur paie (public), ou le pire cas Kling (proprietaire) */
+    const aPayer = PUB ? PUB.prixClient(prix) : prix;
+    if (PUB) { if (!(Math.abs(Number(q.confirmeUsd) - aPayer) < 0.005)) return { ok: false, code: 409, raison: 'the price to confirm is $' + aPayer.toFixed(2) + ' — confirm that amount' }; }
+    else if (!(Math.abs(Number(q.confirmeUsd) - prix) < 0.0005)) return { ok: false, code: 409, raison: 'the price to confirm is $' + prix.toFixed(3) + ' — confirm that amount' };
     if (!kling.actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    if (PUB) {
+      if (jourPlein(prix)) { note({ entier: P.id, refus: 'plafond-jour', jourUsd: lisJour().usd, prixKlingUsd: prix, plafondJourUsd: PUB.plafondJourUsd }); return { ok: false, code: 429, raison: MSG_JOUR }; }
+      /* la reserve DURABLE (credits.soldeDurable) : gardee a un redemarrage, reglee a la fin */
+      const jeton = PUB.paie.reserve(addr, aPayer, { genre: 'swap', id: P.id, addr, usd: aPayer, t0: temps() });
+      if (!jeton) {
+        const solde = PUB.paie.solde ? PUB.paie.solde(addr) : null;
+        note({ entier: P.id, refus: 'credit', prixUsd: aPayer, soldeUsd: solde });
+        return { ok: false, code: 402, raison: 'your dollar credit is too low: $' + aPayer.toFixed(2) + ' needed' + (solde != null ? ', you have $' + Number(solde).toFixed(2) : '') + ' — top it up first',
+                 prixUsd: aPayer, soldeUsd: solde, manqueUsd: solde != null ? Math.ceil((aPayer - solde) * 100 - 1e-9) / 100 : null };
+      }
+      P.paiement = { jeton, usd: aPayer, t: temps(), regle: null };
+      P.choix = c.choix;
+      P.jour = jourDe(temps()); P.engageJourUsd = prix;
+      ajouteJour(prix);
+      note({ entier: P.id, paiement: 'reserve', prixUsd: aPayer, prixKlingUsd: prix, personnage: c.choix.personnage, cible: c.choix.cible });
+    }
     /* les images fournies vont sur le disque (l'etat reste petit) */
     P.images = refs.map((r, i) => {
       if (r.source === 'url') return { type: 'url', url: r.image };
@@ -407,13 +502,16 @@ function cree(deps) {
       fs.writeFileSync(fic(P, nom), Buffer.from(r.image, 'base64'));
       return { type: 'fichier', nom, format: r.source };
     });
-    P.prompt = texte; P.resolution = resolution; P.prixConfirme = prix; P.tLance = temps();
+    P.prompt = texte; P.resolution = resolution; P.prixConfirme = PUB ? aPayer : prix; P.tLance = temps();
     for (const s of P.segments) s.statut = 'attente';
-    P.statut = 'en_cours';
+    /* public : une place parmi `passesMax`, sinon la file (la reserve est deja prise) */
+    if (PUB && occupees() >= PUB.passesMax) { P.statut = 'file'; P.tFile = temps(); }
+    else P.statut = 'en_cours';
     ecrit(P);
-    note({ entier: P.id, lance: true, morceaux: P.segments.length, resolution, images: P.images.map((x) => (x.type === 'url' ? (x.url === DEFAUT[0] ? 'swoge' : x.url === DEFAUT[1] ? 'swoge-face' : 'url') : x.format)), prixPire: prix, plafondUsd: PLAFOND, parallele: PAR });
+    note({ entier: P.id, lance: true, morceaux: P.segments.length, resolution, images: P.images.map((x) => (x.type === 'url' ? (x.url === DEFAUT[0] ? 'swoge' : x.url === DEFAUT[1] ? 'swoge-face' : 'url') : x.format)), prixPire: prix, plafondUsd: PLAFOND, parallele: PAR,
+           ...(P.statut === 'file' ? { file: fileDAttente().length } : {}) });
     /* les premiers envois partent avant la reponse : la page voit tout de suite un refus de Kling */
-    await pompe(P).catch((e) => console.error('[kling-entier] ' + e.message));
+    if (P.statut === 'en_cours') await pompe(P).catch((e) => console.error('[kling-entier] ' + e.message));
     return Object.assign({ ok: true }, vue1(P));
   }
 
@@ -474,8 +572,67 @@ function cree(deps) {
     if (P.statut !== 'en_cours' && P.statut !== 'incomplet') return;
     const ouverts = P.segments.filter((s) => ['attente', 'envoi', 'soumis', 'telechargement'].includes(s.statut)).length;
     if (ouverts) { if (P.statut !== 'en_cours') { P.statut = 'en_cours'; ecrit(P); } return; }
-    if (P.segments.every((s) => s.statut === 'reussi')) { P.statut = 'assemblage'; ecrit(P); P.travail = assemble(P); return; }
+    if (P.segments.every((s) => s.statut === 'reussi' || (PUB && s.statut === 'origine'))) { P.statut = 'assemblage'; ecrit(P); P.travail = assemble(P); return; }
+    if (PUB) {
+      /* public : un morceau rate a droit a UNE relance gratuite ; quand plus aucun ne peut
+         etre relance, la video se finit seule, l'image d'origine a la place de ces morceaux */
+      if (P.segments.every((s) => s.statut !== 'echec' || !rejouable(s))) return termine_(P);
+      if (P.statut !== 'incomplet') {
+        P.statut = 'incomplet'; P.tIncomplet = temps();
+        P.message = 'some parts failed — retry each one once for free, or finish now with the original footage there (those parts are refunded)';
+        ecrit(P);
+      }
+      return;
+    }
     if (P.statut !== 'incomplet') { P.statut = 'incomplet'; P.message = 'some parts failed — retry them one by one'; ecrit(P); }
+  }
+
+  /** Un morceau rate peut-il repartir ? Retelecharger (deja paye chez Kling) : toujours ;
+      renvoyer : avec son fichier, et pour un joueur tant qu'il lui reste une relance gratuite. */
+  function rejouable(s) {
+    if (s.statut !== 'echec') return false;
+    if (s.url && !s.resultat) return true;
+    return !!s.fichier && (!PUB || (s.gratuites || 0) < PUB.relancesGratuites);
+  }
+
+  /* ---- public : le reglement, une seule fois ----
+     Le joueur paie les morceaux LIVRES (marge comprise, au cent superieur, jamais plus que la
+     reserve) ; un morceau rate puis garde d'origine, ou jamais parti, est rendu. Ce que Kling a
+     facture pour un morceau rate ou une relance gratuite est pour la maison. */
+  function regle(P) {
+    if (!PUB || !P.paiement || P.paiement.regle) return;
+    const livres = P.segments.filter((s) => s.statut === 'reussi');
+    const klingLivre = arrondi3(livres.reduce((a, s) => a + (K.prixEdition(P.resolution || '720p', s.duree) || 0), 0));
+    const du = klingLivre > 0 ? Math.min(P.paiement.usd, PUB.prixClient(klingLivre)) : 0;
+    const solde = PUB.paie.regle(P.paiement.jeton, du);
+    P.paiement.regle = { usd: du, renduUsd: Math.round((P.paiement.usd - du) * 100) / 100, t: temps(), dejaRendue: solde === null };
+    /* le jour : ce qui est vraiment parti chez Kling, a la place du pire cas engage */
+    ajouteJour(arrondi3((P.depenseMaxUsd || 0) - (P.engageJourUsd || 0)), P.jour);
+    ecrit(P);
+    note({ entier: P.id, paiement: 'regle', reserveUsd: P.paiement.usd, factureUsd: du, renduUsd: P.paiement.regle.renduUsd, morceauxLivres: livres.length, morceaux: P.segments.length,
+           klingLivreUsd: klingLivre, depenseKlingUsd: P.depenseMaxUsd, dejaRendue: solde === null });
+  }
+
+  /* ---- public : finir avec l'image d'origine a la place des morceaux rates ---- */
+  function termine_(P) {
+    for (const s of P.segments) if (s.statut === 'echec') { s.statut = 'origine'; s.message = 'kept the original footage here — this part is refunded'; }
+    if (!P.segments.some((s) => s.statut === 'reussi')) {
+      P.statut = 'erreur'; P.message = 'no part could be changed — you were fully refunded';
+      regle(P); nettoie(P); P.t = temps(); ecrit(P);
+      note({ entier: P.id, statut: 'erreur', message: P.message });
+      return;
+    }
+    P.statut = 'assemblage'; P.message = null; ecrit(P);
+    note({ entier: P.id, termine: true, origine: P.segments.filter((s) => s.statut === 'origine').map((s) => s.i) });
+    P.travail = assemble(P);
+  }
+  /** Le geste du joueur : « finir maintenant » (les morceaux rates gardent l'image d'origine). */
+  function termine(id, addr) {
+    const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
+    if (!PUB || !P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown video' };
+    if (P.statut !== 'incomplet') return { ok: false, code: 409, raison: 'this video is ' + P.statut + ', nothing to finish' };
+    termine_(P);
+    return Object.assign({ ok: true }, vue1(P));
   }
 
   /* ---- le suivi : un pas pour chaque morceau soumis ---- */
@@ -541,9 +698,52 @@ function cree(deps) {
         }
         if (P.travail) await P.travail.catch(() => {});
         if (['fini', 'erreur', 'abandon'].includes(P.statut) && temps() - Number(P.t) > GARDE_MS) supprime(P);
+        if (PUB) entretien(P);
       }
+      if (PUB) await promeut();
     })();
     try { await tourEnCours; } finally { tourEnCours = null; }
+  }
+
+  /* ---- public : la file, les plans oublies, les reserves gardees en vie ---- */
+  function entretien(P) {
+    if (!PASSES.has(P.id)) return;
+    /* un arret entre la fin (ecrite) et le reglement : regle au premier tour qui suit */
+    if (['fini', 'erreur', 'abandon'].includes(P.statut) && P.paiement && !P.paiement.regle) regle(P);
+    /* un plan jamais lance : la video du joueur ne reste pas sur le disque */
+    if (P.statut === 'pret' && temps() - Number(P.t) > PUB.pretMaxMs) { supprime(P); note({ entier: P.id, statut: 'plan-expire' }); return; }
+    /* une passe en suspens (morceau rate jamais relance, recollage rate) : finie d'office */
+    if (P.statut === 'incomplet' && temps() - Number(P.tIncomplet || P.tLance || P.t) > PUB.incompletMaxMs) { note({ entier: P.id, termine: 'delai' }); termine_(P); return; }
+    /* la reserve durable n'est rendue au demarrage qu'au-dela de CREDIT_DURABLE_MAX_MS (2 h) :
+       une passe vivante (file comprise) la rafraichit, une passe finie l'a deja reglee */
+    if (P.paiement && !P.paiement.regle && PUB.paie.ravive && ['file', 'en_cours', 'assemblage', 'incomplet'].includes(P.statut)
+        && !(temps() - (P.paiement.vu || 0) < 10 * 60e3)) { PUB.paie.ravive(P.paiement.jeton); P.paiement.vu = temps(); }
+  }
+  /** Les passes en file prennent les places libres, la plus ancienne d'abord. */
+  async function promeut() {
+    for (const P of fileDAttente()) {
+      if (occupees() >= PUB.passesMax) break;
+      P.statut = 'en_cours'; P.tSortieFile = temps(); ecrit(P);
+      note({ entier: P.id, sortieFile: true, attenteS: Math.round((temps() - P.tFile) / 1000) });
+      await pompe(P).catch((e) => console.error('[kling-entier] ' + e.message));
+    }
+  }
+  /**
+   * Au demarrage (public) : chaque reserve DURABLE « swap » encore ouverte est rapprochee de sa
+   * passe. Sans passe (effacee, illisible) ou deja reglee : rendue entiere. Rend { gardees, rendues }.
+   */
+  function reprendReserves(durables) {
+    const b = { gardees: 0, rendues: 0 };
+    if (!PUB) return b;
+    for (const d of durables || []) {
+      if (!d || !d.info || d.info.genre !== 'swap') continue;
+      const P = [...PASSES.values()].find((x) => x.paiement && x.paiement.jeton === d.id);
+      if (P && !P.paiement.regle) { b.gardees++; continue; }
+      PUB.paie.regle(d.id, 0);
+      b.rendues++;
+      note({ paiement: 'rendu-demarrage', reserve: d.id, entier: d.info.id || null });
+    }
+    return b;
   }
 
   /* ---- 4. la relance d'UN morceau ---- */
@@ -560,11 +760,15 @@ function cree(deps) {
       return Object.assign({ ok: true, retelecharge: true }, vue1(P));
     }
     if (!s.fichier) return { ok: false, code: 409, raison: 'the source of this part is gone — upload the video again' };
+    if (PUB && (s.gratuites || 0) >= PUB.relancesGratuites) return { ok: false, code: 409, raison: 'part ' + (s.i + 1) + ' was already retried — finish the video: that part keeps the original footage and is refunded' };
     const p = K.prixEdition(P.resolution, s.duree);
     if (P.depenseMaxUsd + p > PLAFOND + 1e-9) return { ok: false, code: 402, raison: 'retrying would take this run to $' + (P.depenseMaxUsd + p).toFixed(2) + ', over the $' + PLAFOND.toFixed(2) + ' cap' };
+    /* public : la relance est GRATUITE pour le joueur (la maison la paie), mais compte au jour */
+    if (PUB && jourPlein(p)) return { ok: false, code: 429, raison: 'SWOGE Swap has reached its spending limit for today — finish the video now (that part keeps the original footage and is refunded), or retry tomorrow' };
+    if (PUB) { s.gratuites = (s.gratuites || 0) + 1; ajouteJour(p); P.engageJourUsd = arrondi3((P.engageJourUsd || 0) + p); }
     s.statut = 'attente'; s.reessaiA = null; s.limites = 0; s.message = null; s.rid = null; s.url = null;
     P.statut = 'en_cours'; P.message = null; ecrit(P);
-    note({ entier: P.id, morceau: s.i, relance: true });
+    note(PUB ? { entier: P.id, morceau: s.i, relance: true, gratuite: true, klingUsd: p } : { entier: P.id, morceau: s.i, relance: true });
     await pompe(P);
     return Object.assign({ ok: true }, vue1(P));
   }
@@ -573,11 +777,16 @@ function cree(deps) {
   async function assemble(P) {
     try {
       const segs = P.segments;
-      const premier = await sonde(fic(P, segs[0].resultat));
+      const premier = await sonde(fic(P, segs.find((s) => s.resultat).resultat));
       const W = 2 * Math.round(premier.largeur / 2) || P.cotes.largeur, H = 2 * Math.round(premier.hauteur / 2) || P.cotes.hauteur, F = P.fps;
       const args = ['-v', 'error', '-y'];
-      for (const s of segs) args.push('-i', fic(P, s.resultat));
       const orig = fic(P, 'orig.mp4');
+      /* un morceau garde d'origine (public) : relu dans la source, recherche avant -i
+         (exacte avec un reencodage, comme le decoupage) */
+      for (const s of segs) {
+        if (s.statut === 'origine') args.push('-ss', s.debut.toFixed(3), '-t', s.dureePlan.toFixed(3), '-i', orig);
+        else args.push('-i', fic(P, s.resultat));
+      }
       args.push('-i', orig);
       /* chaque resultat ramene a la longueur EXACTE de son morceau source :
          prolonge (derniere image tenue) puis coupe ; meme taille, meme i/s */
@@ -585,7 +794,7 @@ function cree(deps) {
         + 'tpad=stop_mode=clone:stop_duration=' + (s.dureePlan + 1).toFixed(3) + ',trim=duration=' + s.dureePlan.toFixed(3) + ',setpts=PTS-STARTPTS[v' + k + ']');
       const filtre = f.join(';') + ';' + segs.map((s, k) => '[v' + k + ']').join('') + 'concat=n=' + segs.length + ':v=1:a=0[v]';
       const D = P.source.duree;
-      const nomFinal = 'swoge_' + P.id + '.final.mp4';
+      const nomFinal = (PUB ? 'swap_' : 'swoge_') + P.id + '.final.mp4';
       args.push('-filter_complex', filtre, '-map', '[v]');
       if (P.source.son) args.push('-map', segs.length + ':a:0', '-af', 'apad', '-c:a', 'aac', '-b:a', '192k');
       args.push('-c:v', 'libx264', '-preset', 'veryfast', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', String(F), '-t', D.toFixed(3), '-movflags', '+faststart', '-f', 'mp4', fic(P, nomFinal + '.part'));
@@ -597,12 +806,14 @@ function cree(deps) {
       /* garde 48 h a partir de la fin */
       P.t = temps();
       nettoie(P); ecrit(P);
+      regle(P);
       const factures = segs.map((s) => s.facturation).filter(Boolean);
       note({ entier: P.id, statut: 'fini', morceaux: segs.length, dureeS: D, dureeFinaleS: P.dureeFinale, son: P.source.son, estimationUsd: P.depenseMaxUsd, facturations: factures.length,
              secondes: Math.round((temps() - (P.tLance || P.t)) / 100) / 10 });
     } catch (e) {
-      efface(P, 'swoge_' + P.id + '.final.mp4.part');
+      efface(P, (PUB ? 'swap_' : 'swoge_') + P.id + '.final.mp4.part');
       P.statut = 'incomplet'; P.message = 'gluing failed: ' + propre(e.err || e.message);
+      if (PUB) { P.tIncomplet = temps(); P.message += ' — press Finish to try again'; }
       /* les resultats sont gardes : un clic de relance sur un morceau n'est pas
          necessaire, « Glue again » relance seulement l'assemblage */
       ecrit(P);
@@ -626,7 +837,12 @@ function cree(deps) {
     if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown whole-video edit' };
     if (P.statut === 'assemblage' || P.statut === 'decoupe') return { ok: false, code: 409, raison: 'wait a moment: the server is ' + (P.statut === 'decoupe' ? 'cutting' : 'gluing') };
     if (P.statut === 'fini') { supprime(P); return { ok: true, statut: 'supprime' }; }
-    P.statut = 'abandon'; P.message = 'abandoned by the owner';
+    /* public : annuler seulement avant le premier envoi (plan, ou file : tout est rendu) ; une
+       fois chez Kling, la video va au bout et les morceaux rates sont rendus */
+    if (PUB && !['pret', 'file', 'erreur', 'abandon'].includes(P.statut)) return { ok: false, code: 409, raison: 'this video is already being made — it cannot be cancelled now (failed parts are refunded)' };
+    if (PUB && P.statut === 'pret') { supprime(P); note({ entier: P.id, statut: 'plan-annule' }); return { ok: true, statut: 'supprime' }; }
+    P.statut = 'abandon'; P.message = PUB ? 'cancelled — you were fully refunded' : 'abandoned by the owner';
+    if (PUB) regle(P);
     nettoie(P); ecrit(P);
     note({ entier: P.id, statut: 'abandon', estimationUsd: P.depenseMaxUsd });
     return Object.assign({ ok: true }, vue1(P));
@@ -640,13 +856,21 @@ function cree(deps) {
   /* ---- ce qui sort ---- */
   function vue1(P) {
     const segs = P.segments.map((s) => ({ i: s.i, debut: s.debut, duree: s.duree, statut: s.statut === 'plan' ? 'planned' : s.statut === 'attente' ? 'waiting'
-      : s.statut === 'envoi' ? 'sending' : s.statut === 'soumis' ? 'processing' : s.statut === 'telechargement' ? 'downloading' : s.statut === 'reussi' ? 'done' : 'failed',
+      : s.statut === 'envoi' ? 'sending' : s.statut === 'soumis' ? 'processing' : s.statut === 'telechargement' ? 'downloading' : s.statut === 'reussi' ? 'done'
+      : PUB && s.statut === 'origine' ? 'original' : 'failed',
       message: s.message, essais: s.essais, estimationUsd: s.estimationUsd != null ? s.estimationUsd : K.prixEdition(P.resolution || '720p', s.duree),
-      facturation: s.facturation, rejouable: s.statut === 'echec' && !!(s.fichier || (s.url && !s.resultat)) }));
-    return { id: P.id, statut: P.statut, message: P.message, source: P.source, fps: P.fps, cotes: P.cotes, morceaux: segs, scenes: P.scenes != null ? P.scenes : null,
+      facturation: s.facturation, rejouable: rejouable(s) }));
+    const v = { id: P.id, statut: P.statut, message: P.message, source: P.source, fps: P.fps, cotes: P.cotes, morceaux: segs, scenes: P.scenes != null ? P.scenes : null,
              prixPire: P.prixPlan, plafondUsd: PLAFOND, parallele: PAR, resolution: P.resolution, prixConfirme: P.prixConfirme || null, depenseMaxUsd: P.depenseMaxUsd,
-             video: P.statut === 'fini' && P.final ? '/studio/kling/entier/' + P.id + '/video' : null, dureeFinale: P.dureeFinale || null,
+             video: P.statut === 'fini' && P.final ? (PUB ? PUB.urlVideo(P.id) : '/studio/kling/entier/' + P.id + '/video') : null, dureeFinale: P.dureeFinale || null,
              expire: P.statut === 'fini' ? Number(P.t) + GARDE_MS : null };
+    if (!PUB) return v;
+    /* public : le prix du joueur et son paiement ; jamais les couts Kling de la maison */
+    for (const m of segs) { delete m.estimationUsd; delete m.facturation; m.relanceGratuite = m.rejouable && !(P.segments[m.i].url && !P.segments[m.i].resultat); }
+    const file = P.statut === 'file' ? fileDAttente().findIndex((x) => x.id === P.id) + 1 : null;
+    return Object.assign(v, { prixPire: null, plafondUsd: undefined, depenseMaxUsd: undefined, prixUsd: P.prixClient != null ? P.prixClient : null, choix: P.choix || null,
+      droits: !!(P.droits && P.droits.accepte), file, paiement: P.paiement ? { reserveUsd: P.paiement.usd, factureUsd: P.paiement.regle ? P.paiement.regle.usd : null,
+        renduUsd: P.paiement.regle ? P.paiement.regle.renduUsd : null } : null });
   }
 
   /** L'etat d'une passe, pour SON adresse seulement. */
@@ -660,7 +884,7 @@ function cree(deps) {
   function resultat(id, addr) {
     const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
     if (!P || P.addr !== addr || P.statut !== 'fini' || !P.final) return null;
-    try { const c = fic(P, P.final); return { chemin: c, taille: fs.statSync(c).size, nom: 'swoge_whole_' + P.id.slice(0, 8) + '.mp4' }; } catch (e) { return null; }
+    try { const c = fic(P, P.final); return { chemin: c, taille: fs.statSync(c).size, nom: (PUB ? 'swoge_swap_' : 'swoge_whole_') + P.id.slice(0, 8) + '.mp4' }; } catch (e) { return null; }
   }
 
   /** Un morceau EN COURS chez Kling, par son nom (48 hexa) : ce que Kling lit. */
@@ -679,8 +903,15 @@ function cree(deps) {
   /** Ce que la page lit : les bornes, la grille, le plafond, la passe en cours. */
   function vue(addr) {
     const mienne = [...PASSES.values()].filter((P) => P.addr === addr).sort((a, b) => b.t - a.t)[0];
+    if (PUB) {
+      /* public : ce qu'il faut pour choisir et estimer AVANT de televerser ; aucun cout maison */
+      return Object.assign({ actif: kling.actif(), dureeMinS: DECOUPE.min, dureeMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, resolution: '720p',
+        prixParSecondeUsd: Math.ceil(K.EDITION_PRIX['720p'] * PUB.marge * 1e4 - 1e-9) / 1e4, partMaxS: DECOUPE.cible,
+        passesMax: PUB.passesMax, enFile: fileDAttente().length, occupees: occupees(), ouvertAujourdhui: lisJour().usd < PUB.plafondJourUsd,
+        relancesGratuites: PUB.relancesGratuites, gardeH: GARDE_MS / 3600e3, droitsTexte: PUB.droitsTexte, passe: mienne ? mienne.id : null }, PUB.catalogue());
+    }
     return { modele: K.EDITION_MODELE, prixParSeconde: K.EDITION_PRIX, dureeMinS: DECOUPE.min, dureeMaxS: DECOUPE.max, cibleS: DECOUPE.cible,
-             dureeEntierMaxS: DUREE_ENTIER_MAX, octetsMax: ENTREE_OCTETS_MAX, imagesMax: K.EDITION_IMAGES_MAX, imageOctetsMax: 6 * 1024 * 1024,
+             dureeEntierMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, imagesMax: K.EDITION_IMAGES_MAX, imageOctetsMax: 6 * 1024 * 1024,
              plafondUsd: PLAFOND, parallele: PAR, gardeH: GARDE_MS / 3600e3, passe: mienne ? mienne.id : null };
   }
 
@@ -693,7 +924,7 @@ function cree(deps) {
 
   relit();
   /* les passes reprises au demarrage repartent au premier tour */
-  return { cree: cree_, lance, relance, recolle, abandonne, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES,
+  return { cree: cree_, lance, relance, recolle, abandonne, termine, reprendReserves, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES, public: !!PUB,
            attend: async (id) => { const P = PASSES.get(id); if (P && P.travail) await P.travail; } };
 }
 
