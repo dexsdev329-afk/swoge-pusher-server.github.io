@@ -3344,6 +3344,12 @@ const planches = require('./planches').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'planches'), fournisseur: studioXai,
   journal: require('path').join(cfg.DATA_DIR, 'planches_essais.jsonl'), site: SITE_URL,
 });
+/* Les vignettes animees de studio.html (vignettes.js) : un clip lite 480p par carte,
+   proprietaire seul, SON plafond (VIGNETTES_PLAFOND_USD, 1,25 $ au plus), son journal. */
+const vignettes = require('./vignettes').cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'vignettes'), fournisseur: studioXai,
+  journal: require('path').join(cfg.DATA_DIR, 'vignettes_essais.jsonl'), site: SITE_URL,
+});
 const studioFichiers = require('./studio_fichiers');   /* les images generees, rangees sur le volume */   /* une reponse retrouvee apres un rechargement de la page */   /* offre, brule, coffre : lus sur la chaine */
 const perpMarches = require('./perp_marches');
 require('./osint_connecteurs');   /* les connecteurs se declarent au chargement */
@@ -6698,6 +6704,43 @@ const server = http.createServer(async (req, res) => {
     let r;
     try { r = await planches.lance({ addr, lot: q && q.lot }); }    /* addr = la SESSION, jamais une adresse lue dans le corps */
     catch (e) { console.error('[planches] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+    return json(r.ok ? 200 : (r.code || 500), r);
+  }
+  /* ---- LES VIGNETTES ANIMEES DU STUDIO (vignettes.js) — proprietaire seulement ----
+   * Memes gardes que les planches : AI_OWNER revérifié avant toute lecture du corps,
+   * le lot part pour l'adresse de la SESSION, les clips ne sortent que pour le
+   * proprietaire qui a lance le lot ; aucun debit de $SWOGE. */
+  if (path === '/studio/vignettes' || path.startsWith('/studio/vignettes/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (!proprietaireIA(addr)) {
+      if (path === '/studio/vignettes' && req.method === 'GET') return json(200, { ok: true, proprietaire: false });
+      return json(403, { ok: false, raison: 'owner only (AI_OWNER on the server)' });
+    }
+    if (path === '/studio/vignettes' && req.method === 'GET') {
+      return json(200, Object.assign({ ok: true, proprietaire: true, actif: studioXai.actif() }, await vignettes.vue(addr)));
+    }
+    const fm = /^\/studio\/vignettes\/fichier\/([0-9a-f]{24})\/([a-z0-9-]{1,48}\.(?:mp4|webm))$/.exec(path);
+    if (fm && req.method === 'GET') {
+      const x = vignettes.fichier(fm[1], fm[2], addr);
+      if (!x) return json(404, { ok: false, raison: 'unknown file' });
+      res.writeHead(200, Object.assign({ 'content-type': x.type, 'content-length': x.octets.length, 'cache-control': 'no-store' }, cors));
+      return res.end(x.octets);
+    }
+    const lm = /^\/studio\/vignettes\/lot\/([0-9a-f]{24})$/.exec(path);
+    if (lm && req.method === 'GET') { const r = vignettes.etat(lm[1], addr); return json(r.ok ? 200 : r.code, r); }
+    if (path !== '/studio/vignettes' || req.method !== 'POST') return json(404, { ok: false, raison: 'unknown' });
+    let q;
+    try { q = JSON.parse((await corps(req, 4 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(400, { ok: false, raison: 'unreadable request' }); }
+    let r;
+    try { r = await vignettes.lance({ addr, lot: q && q.lot }); }    /* addr = la SESSION, jamais une adresse lue dans le corps */
+    catch (e) { console.error('[vignettes] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
     return json(r.ok ? 200 : (r.code || 500), r);
   }
   if (path === '/studio/essai-montage' || path.startsWith('/studio/essai-montage/')) {
