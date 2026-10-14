@@ -2391,9 +2391,24 @@ const klingEditionMod = require('./kling_edition');
 const klingEdition = klingEditionMod.cree({
   dossier: require('path').join(cfg.DATA_DIR, 'kling_edition'), kling,
   urlPublique: (nom) => MOI_URL + klingEditionMod.VIDEO_PREFIXE + nom,
-  imageDefaut: SITE_URL + require('./studio_comprend').REFERENCE_CHEMIN,
+  /* corps (image_1) et visage (image_2), 14/10/2026 */
+  imagesDefaut: [SITE_URL + klingEditionMod.REFERENCE_EDITION, SITE_URL + klingEditionMod.REFERENCE_VISAGE],
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
 });
+/* Une video ENTIERE editee par morceaux (kling_entier.js, 14/10/2026) : coupee
+   en morceaux de 3 a 10 s, chacun edite par Kling O1 avec les memes references,
+   recollee, son d'origine remis. Prix au pire montre et confirme avant tout
+   envoi ; plafond 20 $ par passe (KLING_ENTIER_PLAFOND_USD ne peut que
+   l'abaisser) ; KLING_ENTIER_PARALLELE morceaux a la fois (2). */
+const klingEntierMod = require('./kling_entier');
+const klingEntier = klingEntierMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'kling_entier'), kling,
+  urlPublique: (nom) => MOI_URL + klingEntierMod.VIDEO_PREFIXE + nom,
+  /* corps (image_1) et visage (image_2), 14/10/2026 */
+  imagesDefaut: [SITE_URL + klingEditionMod.REFERENCE_EDITION, SITE_URL + klingEditionMod.REFERENCE_VISAGE],
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
+klingEntier.demarre();
 /* Le second moteur de l'essai d'edition : Wan 2.2 Animate Replace chez fal
    (wan_remplace.js, 14/10/2026), sur le meme clip, pour comparer. FAL_KEY. */
 const wanMod = require('./wan_remplace');
@@ -6698,6 +6713,14 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(req.method === 'HEAD' ? undefined : f.octets);
   }
+  /* Un morceau d'une video entiere EN COURS chez Kling : public par son nom
+     (48 hexa), Kling doit le lire ; efface des que Kling a rendu le sien. */
+  if (path.startsWith(klingEntierMod.VIDEO_PREFIXE)) {
+    const f = (req.method === 'GET' || req.method === 'HEAD') ? klingEntier.fichier(path.slice(klingEntierMod.VIDEO_PREFIXE.length)) : null;
+    if (!f) { res.writeHead(404, { 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); return res.end(); }
+    res.writeHead(200, { 'content-type': f.type, 'content-length': f.octets.length, 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(req.method === 'HEAD' ? undefined : f.octets);
+  }
   /* Les entrees d'un remplacement Wan EN COURS (clip 16 i/s, image fournie) :
      publiques par leur nom (48 hexa), fal doit les lire ; effacees a la fin. */
   if (path.startsWith(wanMod.VIDEO_PREFIXE)) {
@@ -6740,7 +6763,50 @@ const server = http.createServer(async (req, res) => {
       let essais = [];
       try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
       return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat(),
-                         edition: klingEdition.vue(addr), wan: wan.vue(addr) });
+                         edition: klingEdition.vue(addr), wan: wan.vue(addr), entier: klingEntier.vue(addr) });
+    }
+    /* Une video entiere (kling_entier.js). POST /studio/kling/entier : le corps
+       BRUT (video/mp4, 100 Mo au plus), lu seulement ici, apres AI_OWNER ; la
+       reponse vient tout de suite, le decoupage tourne en fond. Puis
+       GET /studio/kling/entier/<id> (l'etat ; avance le suivi d'un pas),
+       POST …/<id>/lance { images[], prompt, resolution, confirmeUsd },
+       POST …/<id>/reessaie/<n>, POST …/<id>/recolle, POST …/<id>/abandonne,
+       GET …/<id>/video (le resultat, avec la session). Tout n'agit que pour
+       l'adresse de la session. */
+    if (path === '/studio/kling/entier') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let r;
+      try { r = await klingEntier.cree(addr, req, req.headers['content-length']); }
+      catch (e) { console.error('[kling-entier] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
+    const em = /^\/studio\/kling\/entier\/([0-9a-f]{24})(?:\/(lance|reessaie|recolle|abandonne|video)(?:\/(\d{1,3}))?)?$/.exec(path);
+    if (em) {
+      const [, eid, geste, num] = em;
+      if (!geste && req.method === 'GET') { klingEntier.tour().catch(() => {}); const r = klingEntier.etat(eid, addr); return json(r.ok ? 200 : r.code, r); }
+      if (geste === 'video' && req.method === 'GET') {
+        const f = klingEntier.resultat(eid, addr);
+        if (!f) return json(404, { ok: false, raison: 'no result for this edit' });
+        res.writeHead(200, Object.assign({ 'content-type': 'video/mp4', 'content-length': f.taille, 'cache-control': 'no-store',
+          'content-disposition': 'inline; filename="' + f.nom + '"' }, cors));
+        return require('fs').createReadStream(f.chemin).pipe(res);
+      }
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let r;
+      try {
+        if (geste === 'lance') {
+          let q;
+          try { q = JSON.parse((await corps(req, klingEditionMod.CORPS_MAX)).toString('utf8') || '{}'); }
+          catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (4 pictures of 6 MB at most)' }); }
+          if (!q || typeof q !== 'object') q = {};
+          r = await klingEntier.lance(eid, addr, { images: q.images, prompt: q.prompt, resolution: q.resolution, confirmeUsd: q.confirmeUsd });
+        } else if (geste === 'reessaie' && num != null) r = await klingEntier.relance(eid, addr, num);
+        else if (geste === 'recolle') r = await klingEntier.recolle(eid, addr);
+        else if (geste === 'abandonne') r = klingEntier.abandonne(eid, addr);
+        else r = { ok: false, code: 404, raison: 'unknown' };
+      } catch (e) { console.error('[kling-entier] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      return json(r.ok ? 200 : (r.code || 500), r);
     }
     /* Wan 2.2 Animate Replace (fal) : { video, image?, resolution, audio }. Le
        resultat final (son remis) ne sort que pour l'adresse qui l'a lance. */

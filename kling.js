@@ -61,6 +61,11 @@
  *           Input » : 0,9 unite (0,126 $) /s en 720p, 1,2 unite (0,168 $) /s en
  *           1080p. La page ne dit pas si la seconde entamee compte : on estime
  *           sur la seconde entamee (plafond), donc au pire.
+ *   plusieurs  (relu le 14/10/2026 pour kling_entier.js) jusqu'a 4 refer_image
+ *           (image_1..image_4) avec une video ; `external_task_id` relu par
+ *           GET /tasks?external_task_ids= ; erreurs (error-codes.md) : 1302
+ *           trop de requetes, 1303 concurrence du pack depassee (HTTP 429),
+ *           a reessayer plus tard — rendus a l'appelant (`klingCode`, `http`).
  * ======================================================================== */
 const crypto = require('crypto');
 
@@ -80,6 +85,9 @@ const EDITION_DUREE = { min: 3, max: 10 };
 const EDITION_COTE = { min: 700, max: 2160 };
 const REF_IMAGE_COTE_MIN = 300;
 const REF_IMAGE_RAPPORT_MAX = 2.5;
+/* « With a reference video + multi-image elements: the total number of reference
+   images and multi-image elements must not exceed 4 » (video-omni.md, lu le 14/10/2026). */
+const EDITION_IMAGES_MAX = 4;
 
 /** Le prix estime d'une edition : la seconde entamee compte (le pire cas), ou null. */
 function prixEdition(resolution, dureeS) {
@@ -116,6 +124,29 @@ function dimensionsImage(buf) {
     }
   }
   return null;
+}
+
+/**
+ * Une image de reference d'edition O1 verifiee AVANT tout envoi (doc O1 :
+ * jpg/jpeg/png, <= 50 Mo, >= 300 px de cote, rapport 1:2,5 a 2,5:1) :
+ * { ok, image (URL https telle quelle, ou base64 SANS prefixe), source: 'url'|'png'|'jpeg' }
+ * ou { ok:false, raison }.
+ */
+function referenceEdition(brute) {
+  brute = brute == null ? '' : String(brute);
+  if (!brute) return { ok: false, raison: 'a reference picture is needed' };
+  if (/^https:\/\//i.test(brute)) return { ok: true, image: brute, source: 'url' };
+  const m = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(brute);
+  const nu = m ? brute.slice(m[0].length) : brute;
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(nu)) return { ok: false, raison: 'the reference must be a PNG or JPEG picture' };
+  const octets = Buffer.from(nu, 'base64');
+  if (octets.length > IMAGE_MAX_OCTETS) return { ok: false, raison: 'picture too large (50 MB at most)' };
+  const dim = dimensionsImage(octets);
+  if (!dim) return { ok: false, raison: 'the reference must be a PNG or JPEG picture (Kling takes no WebP here)' };
+  const petit = Math.min(dim.largeur, dim.hauteur), grand = Math.max(dim.largeur, dim.hauteur);
+  if (petit < REF_IMAGE_COTE_MIN) return { ok: false, raison: 'the reference is ' + dim.largeur + '×' + dim.hauteur + ' px — ' + REF_IMAGE_COTE_MIN + ' px at least on each side' };
+  if (grand / petit > REF_IMAGE_RAPPORT_MAX) return { ok: false, raison: 'the reference is too narrow (between 1:2.5 and 2.5:1)' };
+  return { ok: true, image: octets.toString('base64'), source: dim.format, largeur: dim.largeur, hauteur: dim.hauteur };
 }
 
 /** Le prix en dollars d'une video, ou null si la combinaison n'existe pas. */
@@ -185,6 +216,16 @@ function cree(deps) {
     } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message }; }
   }
 
+  /** Une tache lue dans la reponse de /tasks : { ok, statut, url?, duree?, message?, facturation }. */
+  function litTache(t) {
+    const v = (t.outputs || []).find((x) => x && x.type === 'video');
+    /* `billing[]` (doc O1) : ce que Kling a reellement deduit — garde, borne, pour la mesure. */
+    const facturation = Array.isArray(t.billing) ? t.billing.slice(0, 4).map((b) => ({ type: String(b && b.charge_type || '').slice(0, 16),
+      montant: String(b && b.amount || '').slice(0, 24), devise: String(b && (b.currency || b.package_type) || '').slice(0, 16) })) : null;
+    return { ok: true, id: String(t.id), statut: t.status, message: t.message || null,
+             url: v && /^https:\/\//.test(String(v.url)) ? v.url : null, duree: v && v.duration ? Number(v.duration) : null, facturation };
+  }
+
   /** L'etat d'une tache : { ok, statut, url?, duree?, message? }. */
   async function etat(id) {
     if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
@@ -193,22 +234,38 @@ function cree(deps) {
       const d = await appel('/tasks?task_ids=' + encodeURIComponent(id), { method: 'GET' });
       const t = Array.isArray(d) ? d[0] : null;
       if (!t) return { ok: false, code: 404, raison: 'unknown task' };
-      const v = (t.outputs || []).find((x) => x && x.type === 'video');
-      /* `billing[]` (doc O1) : ce que Kling a reellement deduit — garde, borne, pour la mesure. */
-      const facturation = Array.isArray(t.billing) ? t.billing.slice(0, 4).map((b) => ({ type: String(b && b.charge_type || '').slice(0, 16),
-        montant: String(b && b.amount || '').slice(0, 24), devise: String(b && (b.currency || b.package_type) || '').slice(0, 16) })) : null;
-      return { ok: true, id: String(t.id), statut: t.status, message: t.message || null,
-               url: v && /^https:\/\//.test(String(v.url)) ? v.url : null, duree: v && v.duration ? Number(v.duration) : null, facturation };
+      return litTache(t);
     } catch (e) { return { ok: false, code: 502, raison: 'Kling: ' + e.message }; }
   }
 
   /**
+   * L'etat d'une tache par NOTRE identifiant externe (doc O1, 14/10/2026 :
+   * `GET /tasks?external_task_ids=`). Sert apres un redemarrage survenu entre
+   * l'envoi et l'ecriture de l'id Kling : savoir si la tache existe (donc est
+   * facturee) avant de la relancer. Une liste vide rend 404 : rien n'a ete cree.
+   */
+  async function etatExterne(externe) {
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    if (!/^[0-9a-f]{24}$/.test(String(externe || ''))) return { ok: false, code: 400, raison: 'unknown task' };
+    try {
+      const d = await appel('/tasks?external_task_ids=' + externe, { method: 'GET' });
+      const t = Array.isArray(d) ? d[0] : null;
+      if (!t) return { ok: false, code: 404, raison: 'unknown task' };
+      return litTache(t);
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling: ' + e.message, klingCode: e.code, http: e.statut }; }
+  }
+
+  /**
    * L'EDITION O1 : un clip existant (base_video, par URL publique SEULEMENT —
-   * la doc n'accepte pas de base64 pour une video) refait d'apres une image de
-   * reference (refer_image : URL https, data-URL PNG/JPEG ou base64 nu).
-   * q : { videoUrl, image, prompt, resolution, audio, dureeS }. `dureeS` (lue
-   * dans l'en-tete du MP4 par l'appelant) sert a l'estimation et au refus des
-   * clips hors 3-10 s. Tout refus est rendu AVANT le moindre envoi.
+   * la doc n'accepte pas de base64 pour une video) refait d'apres une a quatre
+   * images de reference (refer_image image_1..image_n : URL https, data-URL
+   * PNG/JPEG ou base64 nu ; doc O1 : « avec une video, images + elements <= 4 »).
+   * q : { videoUrl, image | images[], prompt, resolution, audio, dureeS, externe? }.
+   * `dureeS` (lue par l'appelant) sert a l'estimation et au refus des clips hors
+   * 3-10 s. `externe` (24 hexa) : notre identifiant, ecrit par l'appelant AVANT
+   * l'envoi pour retrouver la tache apres un redemarrage. Tout refus est rendu
+   * AVANT le moindre envoi ; un refus de Kling rend son code (`klingCode`,
+   * `http`) pour distinguer une limite de concurrence (1302, 1303) d'un vrai refus.
    */
   async function lanceEdition(q) {
     q = q || {};
@@ -223,31 +280,23 @@ function cree(deps) {
     const dureeS = Number(q.dureeS);
     const estimationUsd = prixEdition(resolution, dureeS);
     if (estimationUsd === null) return { ok: false, code: 400, raison: 'the clip must last ' + EDITION_DUREE.min + ' to ' + EDITION_DUREE.max + ' s (Kling limit)' };
-    let image = null, imageSource = null;
-    const brute = q.image == null ? '' : String(q.image);
-    if (!brute) return { ok: false, code: 400, raison: 'a reference picture is needed' };
-    if (/^https:\/\//i.test(brute)) { image = brute; imageSource = 'url'; }
-    else {
-      const m = /^data:image\/[a-z0-9.+-]+;base64,/i.exec(brute);
-      const nu = m ? brute.slice(m[0].length) : brute;
-      if (!/^[A-Za-z0-9+/=\s]+$/.test(nu)) return { ok: false, code: 400, raison: 'the reference must be a PNG or JPEG picture' };
-      const octets = Buffer.from(nu, 'base64');
-      if (octets.length > IMAGE_MAX_OCTETS) return { ok: false, code: 400, raison: 'picture too large (50 MB at most)' };
-      const dim = dimensionsImage(octets);
-      if (!dim) return { ok: false, code: 400, raison: 'the reference must be a PNG or JPEG picture (Kling takes no WebP here)' };
-      const petit = Math.min(dim.largeur, dim.hauteur), grand = Math.max(dim.largeur, dim.hauteur);
-      if (petit < REF_IMAGE_COTE_MIN) return { ok: false, code: 400, raison: 'the reference is ' + dim.largeur + '×' + dim.hauteur + ' px — ' + REF_IMAGE_COTE_MIN + ' px at least on each side' };
-      if (grand / petit > REF_IMAGE_RAPPORT_MAX) return { ok: false, code: 400, raison: 'the reference is too narrow (between 1:2.5 and 2.5:1)' };
-      image = octets.toString('base64'); imageSource = dim.format;
+    const brutes = Array.isArray(q.images) ? q.images : [q.image];
+    if (!brutes.length || brutes.length > EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: '1 to ' + EDITION_IMAGES_MAX + ' reference pictures (Kling limit with a video)' };
+    const refs = [];
+    for (let i = 0; i < brutes.length; i++) {
+      const r = referenceEdition(brutes[i]);
+      if (!r.ok) return { ok: false, code: 400, raison: (brutes.length > 1 ? 'picture ' + (i + 1) + ': ' : '') + r.raison };
+      refs.push(r);
     }
-    const contents = [{ type: 'prompt', text: texte }, { type: 'refer_image', url: image, id: 'image_1' }, { type: 'base_video', url: videoUrl, id: 'video_1' }];
-    const externe = crypto.randomBytes(12).toString('hex');
+    const externe = /^[0-9a-f]{24}$/.test(String(q.externe || '')) ? String(q.externe) : crypto.randomBytes(12).toString('hex');
+    const contents = [{ type: 'prompt', text: texte }].concat(refs.map((r, i) => ({ type: 'refer_image', url: r.image, id: 'image_' + (i + 1) })),
+      [{ type: 'base_video', url: videoUrl, id: 'video_1' }]);
     try {
       const d = await appel('/omni-video/' + EDITION_MODELE, { method: 'POST', body: JSON.stringify({ contents, settings: { resolution, audio }, options: { external_task_id: externe } }) });
       if (!d || !d.id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
       return { ok: true, id: String(d.id), externe, statut: d.status || 'submitted', modele: EDITION_MODELE, edition: true,
-               resolution, audio, dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, image: imageSource };
-    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message }; }
+               resolution, audio, dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, image: refs[0].source, images: refs.map((r) => r.source) };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code, http: e.statut || null }; }
   }
 
   /* ---- L'IMAGE ----
@@ -328,12 +377,12 @@ function cree(deps) {
     }
   }
 
-  return { actif, lance, etat, lanceEdition, lanceImage, etatImage, image, video };
+  return { actif, lance, etat, etatExterne, lanceEdition, lanceImage, etatImage, image, video };
 }
 
 const IMAGE_MODELES = ['kling-v3', 'kling-v2-1'];
 const IMAGE_FORMATS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9'];
 const IMAGE_PRIX_USD = 0.028;
 
-module.exports = { cree, prixUsd, prixEdition, dimensionsImage, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
+module.exports = { cree, prixUsd, prixEdition, dimensionsImage, referenceEdition, EDITION_IMAGES_MAX, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
   EDITION_MODELE, EDITION_PRIX, EDITION_DUREE, EDITION_COTE };

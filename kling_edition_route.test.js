@@ -9,7 +9,7 @@
  *      AVANT Kling, et rien n'est ecrit ;
  *   3. le proprietaire envoie un clip de 5 s sans image : Kling recoit
  *      base_video = l'URL PUBLIQUE du clip (qui sert exactement les octets
- *      envoyes, sans session), refer_image = la reference SWOGE du site, son
+ *      envoyes, sans session), refer_image = le corps (image_1) et le visage (image_2), son
  *      d'origine ; l'envoi est journalise avec son estimation ;
  *   4. le suivi (GET /studio/kling/<id>) rend la video ; a la fin, le clip est
  *      efface (404, plus de fichier) et la fin journalisee une seule fois ;
@@ -147,7 +147,9 @@ async function connecte(port, w) {
   const bv = b.contents.find((c) => c.type === 'base_video'), ri = b.contents.find((c) => c.type === 'refer_image');
   ok(new RegExp('^' + B.replace(/\./g, '\\.') + '/studio/kling-clip/[0-9a-f]{48}\\.mp4$').test(bv.url) && bv.id === 'video_1', 'base_video : l URL publique du clip [' + bv.url + ']');
   ok(luParKling && luParKling.statut === 200 && luParKling.octets.equals(bon), 'cette URL sert exactement le clip envoye, sans session');
-  ok(ri.url === 'https://site.example/img/site/swoge_reference.jpg' && ri.id === 'image_1', 'refer_image : la reference SWOGE du site');
+  const ris = b.contents.filter((c) => c.type === 'refer_image');
+  ok(ris.length === 2 && ri.url === 'https://site.example/img/site/swoge_swole_ref.jpg' && ri.id === 'image_1' && ris[1].url === 'https://site.example/img/site/swoge_face_ref.jpg' && ris[1].id === 'image_2',
+     'refer_image : le corps (Swole Doge, image_1) puis le visage officiel (image_2), par leurs URL');
   ok(b.settings.audio === 'original' && b.settings.resolution === '720p' && b.contents[0].text === prompt, 'son d origine, 720p, le texte tel quel');
   ok((await appel('/studio/kling/edition', moi.H, { video: dataUrl(bon), prompt })).statut === 429, 'une seconde edition pendant la premiere : 429');
   const j1 = journal();

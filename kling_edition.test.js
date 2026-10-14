@@ -98,6 +98,33 @@ const clip = (s, l, h, octets) => Buffer.concat([boite('ftyp', Buffer.from('isom
        'le suivi rend la video et la facturation lue (billing)');
   }
 
+  console.log('\n-- 2b. plusieurs references, le code d un refus, l id externe (14/10/2026) --');
+  {
+    const vus = [];
+    let reponse = { code: 0, data: { id: 'M1', status: 'submitted' } }, statut = 200;
+    const k = K.cree({ cle: () => 'cle-secrete-kling', fetch: async (u, o) => { vus.push({ u, o }); return rep(statut, reponse); } });
+    const url = 'https://srv.example/studio/kling-entier-clip/' + 'c'.repeat(48) + '.mp4';
+    const pattes = png(800, 800);
+    const r = await k.lanceEdition({ videoUrl: url, images: ['https://site.example/img/site/swoge_swole_ref.jpg', du(pattes)], prompt: '@image_1 with the paws of @image_2 in @video_1', dureeS: 9.4, externe: 'f'.repeat(24) });
+    const b = JSON.parse(vus[0].o.body);
+    ok(r.ok && b.contents.length === 4 && b.contents[1].id === 'image_1' && b.contents[1].url === 'https://site.example/img/site/swoge_swole_ref.jpg'
+       && b.contents[2].type === 'refer_image' && b.contents[2].id === 'image_2' && b.contents[2].url === pattes.toString('base64') && b.contents[3].id === 'video_1',
+       'deux references : image_1 (URL) puis image_2 (base64 nu), puis video_1');
+    ok(b.options.external_task_id === 'f'.repeat(24) && r.externe === 'f'.repeat(24) && JSON.stringify(r.images) === '["url","png"]' && r.estimationUsd === 1.26, 'l id externe donne par l appelant part tel quel ; 9,4 s → 10 s entamees');
+    const n0 = vus.length;
+    ok((await k.lanceEdition({ videoUrl: url, images: [1, 2, 3, 4, 5].map(() => du(pattes)), prompt: 'a', dureeS: 5 })).code === 400 && vus.length === n0, '5 references : 400 (4 au plus avec une video), rien envoye');
+    const mauvaise = await k.lanceEdition({ videoUrl: url, images: [du(pattes), du(png(200, 800))], prompt: 'a', dureeS: 5 });
+    ok(mauvaise.code === 400 && /^picture 2:/.test(mauvaise.raison) && vus.length === n0, 'la 2e reference trop petite : 400 nommee, rien envoye');
+    reponse = { code: 1303, message: 'parallel task over resource pack limit' }; statut = 429;
+    const lim = await k.lanceEdition({ videoUrl: url, image: du(pattes), prompt: 'a', dureeS: 5 });
+    ok(!lim.ok && lim.klingCode === 1303 && lim.http === 429 && /parallel task/.test(lim.raison), 'un refus 1303 rend son code et son statut HTTP');
+    reponse = { code: 0, data: [{ id: 'M1', status: 'processing' }] }; statut = 200;
+    const ex = await k.etatExterne('f'.repeat(24));
+    ok(ex.ok && ex.id === 'M1' && /\/tasks\?external_task_ids=f{24}$/.test(vus[vus.length - 1].u), 'etatExterne : GET /tasks?external_task_ids=');
+    reponse = { code: 0, data: [] };
+    ok((await k.etatExterne('f'.repeat(24))).code === 404 && (await k.etatExterne('../x')).code === 400, 'une liste vide : 404 ; un id malforme : 400 sans appel');
+  }
+
   console.log('\n-- 3. dimensions --');
   {
     const d = K.dimensionsImage(jpeg(1024, 1536)), p = K.dimensionsImage(png(640, 480));
@@ -120,7 +147,8 @@ const clip = (s, l, h, octets) => Buffer.concat([boite('ftyp', Buffer.from('isom
         return { ok: true, id: 'T' + envois.length, modele: 'kling-o1', resolution: '720p', audio: 'original', dureeS: q.dureeS, estimationUsd: 0.63, image: 'png' }; },
       etat: async (id) => etats[id] || { ok: true, id, statut: 'processing' } };
     const lignes = [];
-    const M = E.cree({ dossier, kling, urlPublique: (nom) => 'https://srv.example' + E.VIDEO_PREFIXE + nom, imageDefaut: 'https://site.example/img/site/swoge_reference.jpg',
+    const DEFAUT = ['https://site.example/img/site/swoge_swole_ref.jpg', 'https://site.example/img/site/swoge_face_ref.jpg'];
+    const M = E.cree({ dossier, kling, urlPublique: (nom) => 'https://srv.example' + E.VIDEO_PREFIXE + nom, imagesDefaut: DEFAUT,
                        journal: (o) => lignes.push(o), maintenant: () => t, pollMs: 1e9, maxMs: 60000 });
     ok(!fs.existsSync(path.join(dossier, 'c'.repeat(48) + '.mp4')) && fs.existsSync(path.join(dossier, 'autre.txt')), 'au demarrage : le clip reste est efface, rien d autre');
     const A = '0xabc';
@@ -134,7 +162,8 @@ const clip = (s, l, h, octets) => Buffer.concat([boite('ftyp', Buffer.from('isom
     ok(envois.length === 0 && fs.readdirSync(dossier).length === 1, 'aucun de ces refus n a ecrit ni envoye');
     const c = clip(5, 720, 1280);
     const r = await M.lance({ addr: A, octets: c, prompt: 'p', resolution: '720p', audio: 'original' });
-    ok(r.ok && r.id === 'T1' && r.reference === 'swoge' && envois[0].image === 'https://site.example/img/site/swoge_reference.jpg' && envois[0].dureeS === 5, 'sans image : la reference SWOGE du site, duree lue dans le MP4');
+    ok(r.ok && r.id === 'T1' && r.reference === 'swoge' && JSON.stringify(envois[0].images) === JSON.stringify(DEFAUT) && !('image' in envois[0]) && envois[0].dureeS === 5,
+       'sans image : les deux references par defaut, corps (image_1) puis visage (image_2), duree lue dans le MP4');
     const nom = envois[0].videoUrl.split('/').pop();
     ok(new RegExp('^https://srv\\.example/studio/kling-clip/[0-9a-f]{48}\\.mp4$').test(envois[0].videoUrl), 'l URL publique, nom de 48 hexa en .mp4');
     const f = M.fichier(nom);
@@ -149,7 +178,7 @@ const clip = (s, l, h, octets) => Buffer.concat([boite('ftyp', Buffer.from('isom
     ok(M.conclut('T1', etats.T1) === false && lignes.length === 2, 'une seconde fin ne reecrit rien');
     /* une image fournie, puis le delai */
     const r2 = await M.lance({ addr: A, octets: clip(4), image: du(png(600, 600)) });
-    ok(r2.ok && r2.reference === 'upload' && envois[1].image.startsWith('data:image/png'), 'une image fournie part a la place de SWOGE');
+    ok(r2.ok && r2.reference === 'upload' && envois[1].image.startsWith('data:image/png') && !('images' in envois[1]), 'une image fournie part seule, a la place des deux references');
     const nom2 = envois[1].videoUrl.split('/').pop();
     t += 61000; await M.avance(M.EN_COURS.get(nom2));
     ok(!fs.existsSync(path.join(dossier, nom2)) && lignes[lignes.length - 1].statut === 'timeout', 'au dela du delai : clip efface, « timeout » journalise');

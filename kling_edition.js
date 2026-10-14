@@ -33,6 +33,19 @@ const IMAGE_OCTETS_MAX = 6 * 1024 * 1024;
 const CORPS_MAX = 36 * 1024 * 1024;
 const NOM = /^[0-9a-f]{48}\.mp4$/;
 const VIDEO_PREFIXE = '/studio/kling-clip/';
+/* La reference par defaut des editions Kling (clip et video entiere) : le
+   « Swole Doge » choisi par le proprietaire le 14/10/2026 (shiba creme-beige,
+   torse nu, muscles de culturiste ; pattes velues, griffes noires), JPEG
+   832×1248, rapport 1:1,5, dans les bornes O1 (>= 300 px, 1:2,5 a 2,5:1).
+   L'ancienne (img/site/swoge_reference.jpg, costume rouge) reste celle des
+   autres usages (studio, Telegram). */
+const REFERENCE_EDITION = '/img/site/swoge_swole_ref.jpg';
+/* Et le VISAGE, en seconde reference (image_2) : le premier vrai resultat du
+   proprietaire (14/10/2026) avait la mauvaise tete — un shiba orange realiste,
+   gueule grande ouverte, pas le visage de SWOGE. Le visage officiel
+   (img/site/ia/swoge_face.webp, 256 px) agrandi a 768×768 (lanczos, JPEG q 2) :
+   >= 300 px, rapport 1:1, dans les bornes O1. */
+const REFERENCE_VISAGE = '/img/site/swoge_face_ref.jpg';
 
 /**
  * Largeur et hauteur de la premiere piste video d'un MP4 (moov > trak > tkhd),
@@ -55,7 +68,9 @@ function dimensionsMp4(buf) {
   return null;
 }
 
-function cree({ dossier, kling, urlPublique, journal, imageDefaut, maintenant, pollMs, maxMs }) {
+function cree({ dossier, kling, urlPublique, journal, imageDefaut, imagesDefaut, maintenant, pollMs, maxMs }) {
+  /* sans image fournie : les references par defaut, dans l'ordre (corps = image_1, visage = image_2) */
+  const DEFAUT = Array.isArray(imagesDefaut) && imagesDefaut.length ? imagesDefaut.slice(0, K.EDITION_IMAGES_MAX) : [imageDefaut];
   const temps = () => (maintenant ? maintenant() : Date.now());
   const POLL = pollMs != null ? Math.max(1, Number(pollMs)) : 10000;
   /* 20 min : une edition O1 de 10 s n'a pas encore de mesure d'attente ; le
@@ -130,7 +145,7 @@ function cree({ dossier, kling, urlPublique, journal, imageDefaut, maintenant, p
     const parDefaut = image == null || image === '';
     let r;
     try {
-      r = await kling.lanceEdition({ videoUrl: urlPublique(nom), image: parDefaut ? imageDefaut : image, prompt, resolution, audio, dureeS: d });
+      r = await kling.lanceEdition(Object.assign({ videoUrl: urlPublique(nom), prompt, resolution, audio, dureeS: d }, parDefaut ? { images: DEFAUT } : { image }));
     } catch (e) { r = { ok: false, code: 502, raison: 'Kling refused: ' + (e && e.message) }; }
     if (!r || !r.ok) { efface(job); return r || { ok: false, code: 502, raison: 'Kling refused' }; }
     job.rid = r.id;
@@ -157,4 +172,4 @@ function cree({ dossier, kling, urlPublique, journal, imageDefaut, maintenant, p
   return { lance, conclut, connue: (id) => CONCLUES.has(String(id)) || !!parTache(id), fichier, vue, avance, EN_COURS };
 }
 
-module.exports = { cree, dimensionsMp4, OCTETS_MAX, IMAGE_OCTETS_MAX, CORPS_MAX, NOM, VIDEO_PREFIXE };
+module.exports = { cree, dimensionsMp4, OCTETS_MAX, IMAGE_OCTETS_MAX, CORPS_MAX, NOM, VIDEO_PREFIXE, REFERENCE_EDITION, REFERENCE_VISAGE };
