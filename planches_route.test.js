@@ -18,11 +18,22 @@
  *   5. journal : « envoi » (reserve) avant l'appel, « sent » (request_id), puis
  *      le cout reel (ticks) ; la finition tourne et rend une planche que le
  *      proprietaire — et lui seul — telecharge ;
- *   6. une video sur un hote qui n'est pas x.ai n'est pas telechargee ;
- *   7. aucun $SWOGE debite ; la cle xAI n'apparait dans aucune reponse ;
+ *   6. une video sur un hote qui n'est pas x.ai n'est pas telechargee, meme au
+ *      bout d'une redirection depuis x.ai ;
+ *   7. aucun $SWOGE debite ; la cle xAI n'apparait dans aucune reponse ; deux
+ *      « Run » simultanes : un seul lot part, l'autre recoit 429 sans appel ;
  *   8. (module) reprise apres redemarrage : un clip « sent » est suivi jusqu'a
  *      son cout ; un « envoi » sans reponse garde sa reserve ; un cout au-dela
- *      de sa reserve ARRETE tout.
+ *      de sa reserve ARRETE tout ; un redemarrage pendant la finition la refait ;
+ *   9. (module) l'argent quand ca casse : pas de reponse d'xAI = reserve comptee
+ *      et ARRET (un 4xx seul vaut 0 $) ; journal inecrivable = aucun appel ; une
+ *      depense qui monte entre le controle du lot et l'appel = refus « cap » ; un
+ *      clip deja fini quand le suivant est refuse = le lot se termine quand meme ;
+ *      PLANCHES_PLAFOND_USD ne peut que baisser le plafond.
+ *
+ * Le pire cas est le TARIF OFFICIEL DE LA RESOLUTION ENVOYEE, plus 0,01 $ par
+ * image d'entree, x 1,25 (fiches des modeles xAI relues le 13/10/2026 : 1.5 =
+ * 0,14 $/s en 720p, 0,08 en 480p ; lite = 0,03 en 720p ; image 0,01 $).
  * ==========================================================================*/
 const http = require('http');
 const net = require('net');
@@ -38,6 +49,12 @@ const ok = (c, m) => { n++; if (c) console.log('  ok   ' + m); else { rates++; c
 const eq = (a, b, m) => ok(a === b, m + ' [' + a + ' vs ' + b + ']');
 
 process.env.DATA_DIR = fs.mkdtempSync('/tmp/planches-route-');
+const AEFFACER = [process.env.DATA_DIR];
+/* le tarif officiel (fiches des modeles, 13/10/2026), ecrit ICI a la main : un retour au prix sans resolution se verrait */
+const TARIF = { 'grok-imagine-video-1.5': { '480p': 0.08, '720p': 0.14 }, 'grok-imagine-video-1.5-lite': { '480p': 0.02, '720p': 0.03 } };
+const IMAGES = { 'grok-imagine-video-1.5': 2, 'grok-imagine-video-1.5-lite': 1 };       /* image, + last_frame en 1.5 */
+const reel = (m, d, res) => Math.round((TARIF[m][res || '720p'] * d + 0.01 * IMAGES[m]) * 1e6) / 1e6;
+const pireDe = (m, d, res) => Math.round(reel(m, d, res) * 1.25 * 1e4) / 1e4;
 process.env.RPC_URL = ''; process.env.ADMIN_KEY = 'k';
 process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_JOURNAL = '0';
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
@@ -67,7 +84,13 @@ async function connecte(port, w) {
 (async () => {
   /* ---- les faux clips (le mannequin) et la pose, comme le site les publierait ---- */
   const { fabrique } = require('./outils/planches/fabrique_essai');
-  const fx = await fabrique({ dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'planches-clips-')), actions: ['idle', 'walk'] });
+  const dClips = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-clips-')); AEFFACER.push(dClips);
+  const fx = await fabrique({ dossier: dClips, actions: ['idle', 'walk'] });
+  /* l'ancienne planche du jeu (img/nexus/monstres/mannequin.webp) : la reference du halo */
+  const G = require('./outils/planches/guide'), M = require('./outils/planches/media');
+  const fAncienne = path.join(dClips, 'ancienne.webp');
+  await M.ecrisWebp({ w: 1024, h: 1024, data: G.toilePoses(1024, 1024).data }, fAncienne, 90);
+  const ancienne = fs.readFileSync(fAncienne);
   const pose = fs.readFileSync(fx.pose), sha = crypto.createHash('sha256').update(pose).digest('hex');
   const mp4 = { idle: fs.readFileSync(fx.clips[0].fichier), walk: fs.readFileSync(fx.clips[1].fichier) };
   const D = (action, duree, extra) => Object.assign({ monstre: 'mannequin', action, mode: 'bande', modele: 'grok-imagine-video-1.5', duree, sha256: sha }, extra || {});
@@ -77,7 +100,11 @@ async function connecte(port, w) {
     faux_sha: [D('idle', 2, { sha256: 'f'.repeat(64) })],
     hors_liste: [D('idle', 2, { prompt: 'anything I want' })],
     ailleurs: [D('idle', 1, { modele: 'grok-imagine-video-1.5-lite' })],
+    redirige: [D('idle', 2, { modele: 'grok-imagine-video-1.5-lite' })],
+    bas: [D('idle', 2, { resolution: '480p' })],
+    haut: [D('idle', 2, { resolution: '1080p' })],
   } };
+  let lenteurSite = 0;
 
   /* ---- le faux xAI ---- */
   const vus = [];
@@ -90,14 +117,14 @@ async function connecte(port, w) {
       r.writeHead(200, { 'content-type': 'application/json' });
       if (q.method === 'POST' && q.url === '/v1/videos/generations') {
         const id = 'vid-' + (++nGen);
-        actionDe[id] = { action: /walk in place/.test(corps.prompt) ? 'walk' : 'idle', duree: corps.duration, modele: corps.model };
+        actionDe[id] = { action: /walk in place/.test(corps.prompt) ? 'walk' : 'idle', duree: corps.duration, modele: corps.model, resolution: corps.resolution };
         return r.end(JSON.stringify({ request_id: id }));
       }
       const m = /^\/v1\/videos\/(vid-\d+)$/.exec(q.url);
       if (m) {
-        const a = actionDe[m[1]], prix = a.modele === 'grok-imagine-video-1.5' ? 0.08 : 0.02;
-        const url = a.modele === 'grok-imagine-video-1.5-lite' ? 'https://evil.example/' + m[1] + '.mp4' : 'https://vidgen.x.ai/' + a.action + '.mp4';
-        return r.end(JSON.stringify({ status: 'done', video: { url, duration: a.duree }, usage: { cost_in_usd_ticks: Math.round(prix * a.duree * 1e10) } }));
+        const a = actionDe[m[1]];
+        const url = a.modele === 'grok-imagine-video-1.5-lite' ? (a.duree === 2 ? 'https://vidgen.x.ai/redirige.mp4' : 'https://evil.example/' + m[1] + '.mp4') : 'https://vidgen.x.ai/' + a.action + '.mp4';
+        return r.end(JSON.stringify({ status: 'done', video: { url, duration: a.duree }, usage: { cost_in_usd_ticks: Math.round(reel(a.modele, a.duree, a.resolution) * 1e10) } }));
       }
       r.end('{}');
     });
@@ -111,12 +138,14 @@ async function connecte(port, w) {
   const rep = (b, type) => new Response(b, { status: 200, headers: { 'content-type': type } });
   globalThis.fetch = async (u, o) => {
     const url = String(u);
-    if (url === 'https://site.example/img/nexus/monstres/iso/poses/demandes.json') return rep(JSON.stringify(demandes), 'application/json');
+    if (url === 'https://site.example/img/nexus/monstres/iso/poses/demandes.json') { if (lenteurSite) await dort(lenteurSite); return rep(JSON.stringify(demandes), 'application/json'); }
     if (url === 'https://site.example/img/nexus/monstres/iso/poses/mannequin.png') return rep(pose, 'image/png');
+    if (url === 'https://site.example/img/nexus/monstres/mannequin.webp') return rep(ancienne, 'image/webp');
     if (url.startsWith('https://site.example/')) return new Response('', { status: 404 });
     const v = /^https:\/\/vidgen\.x\.ai\/(idle|walk)\.mp4$/.exec(url);
     if (v) { telecharges.push(url); return rep(mp4[v[1]], 'video/mp4'); }
-    if (url.startsWith('https://evil.example/')) { telecharges.push(url); return rep(Buffer.from('nope'), 'video/mp4'); }
+    if (url === 'https://vidgen.x.ai/redirige.mp4') { telecharges.push(url); return new Response(null, { status: 302, headers: { location: 'http://evil.example/interne' } }); }
+    if (url.startsWith('https://evil.example/') || url.startsWith('http://evil.example/')) { telecharges.push(url); return rep(Buffer.from('nope'), 'video/mp4'); }
     return vraiFetch(u, o);
   };
 
@@ -161,12 +190,16 @@ async function connecte(port, w) {
   const v0 = await api('/studio/planches', proprio.H);
   ok(v0.http === 200 && v0.proprietaire === true && v0.actif === true && v0.plafondUsd === 7.5 && v0.depenseUsd === 0, 'proprietaire, xAI branche, plafond 7,50 $, rien depense');
   const lp = (v0.demandes.lots || []).find((l) => l.nom === 'pilote'), lg = (v0.demandes.lots || []).find((l) => l.nom === 'gros');
-  ok(lp && lp.reserveUsd === 0.5 && lp.secondes === 5 && lg && lg.reserveUsd === 9.6, 'pire cas lu dans demandes.json : pilote 0,50 $ (2 s + 3 s a 0,08 $ x 1,25), gros 9,60 $');
-  ok((v0.demandes.lots.find((l) => l.nom === 'hors_liste') || {}).invalide === 'unknown field prompt', 'une demande hors liste est marquee invalide');
+  const pPilote = Math.round((pireDe('grok-imagine-video-1.5', 2) + pireDe('grok-imagine-video-1.5', 3)) * 1e4) / 1e4, pGros = Math.round(24 * pireDe('grok-imagine-video-1.5', 4) * 1e4) / 1e4;
+  ok(lp && Math.abs(lp.reserveUsd - pPilote) < 1e-9 && lp.secondes === 5 && lg && Math.abs(lg.reserveUsd - pGros) < 1e-9,
+     'le pire cas est le tarif officiel de la resolution envoyee (720p) + les images d entree : pilote ' + (lp && lp.reserveUsd) + ' $ (attendu ' + pPilote + '), gros ' + (lg && lg.reserveUsd) + ' $');
+  const lb = (v0.demandes.lots || []).find((l) => l.nom === 'bas');
+  ok(lb && Math.abs(lb.reserveUsd - pireDe('grok-imagine-video-1.5', 2, '480p')) < 1e-9 && lb.detail[0].resolution === '480p', 'une demande en 480p est comptee au tarif 480p (' + (lb && lb.reserveUsd) + ' $)');
+  ok((v0.demandes.lots.find((l) => l.nom === 'hors_liste') || {}).invalide === 'unknown field prompt' && (v0.demandes.lots.find((l) => l.nom === 'haut') || {}).invalide === 'resolution', 'une demande hors liste (un texte libre, du 1080p) est marquee invalide');
 
   console.log('\n-- 3. refus SANS appel --');
   const rg = await api('/studio/planches', proprio.H, 'POST', { lot: 'gros' });
-  ok(rg.http === 402 && /could cost up to 9\.60 \$/.test(rg.raison) && xaiPosts() === 0, 'lot de 9,60 $ au pire contre 7,50 $ de plafond : 402, xAI n a rien recu');
+  ok(rg.http === 402 && rg.raison.includes('could cost up to ' + pGros.toFixed(2) + ' $') && xaiPosts() === 0, 'lot de ' + pGros.toFixed(2) + ' $ au pire contre 7,50 $ de plafond : 402, xAI n a rien recu');
   const rs = await api('/studio/planches', proprio.H, 'POST', { lot: 'faux_sha' });
   ok(rs.http === 409 && xaiPosts() === 0, 'pose dont le sha256 ne correspond pas : 409, rien envoye');
   const rh = await api('/studio/planches', proprio.H, 'POST', { lot: 'hors_liste' });
@@ -190,18 +223,24 @@ async function connecte(port, w) {
 
   console.log('\n-- 5. journal, finition, fichiers --');
   let lot = null;
-  for (let i = 0; i < 300; i++) { lot = await api('/studio/planches/lot/' + r.id, proprio.H); if (lot.statut === 'fini') break; await dort(200); }
+  /* la finition (planche du jeu ET HD) tourne dans un processus a part : jusqu'a 3 min ici */
+  for (let i = 0; i < 900; i++) { lot = await api('/studio/planches/lot/' + r.id, proprio.H); if (lot.statut === 'fini') break; await dort(200); }
   ok(lot.statut === 'fini' && lot.clips.every((c) => c.statut === 'done' && /^[0-9a-f]{48}\.mp4$/.test(c.fichier)), 'les 2 clips sont arrives et telecharges depuis x.ai');
   const J = fs.readFileSync(path.join(process.env.DATA_DIR, 'planches_essais.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((l) => l.lot === r.id && l.idx === 0);
-  ok(J.length === 3 && J[0].statut === 'envoi' && J[0].reserve === 0.2 && J[1].statut === 'sent' && J[1].rid === 'vid-1' && J[2].statut === 'done' && J[2].coutUsd === 0.16,
-     'journal du clip 1 : envoi (reserve 0,20 $) AVANT, sent (vid-1), puis 0,16 $ lus dans les ticks');
+  ok(J.length === 3 && J[0].statut === 'envoi' && J[0].reserve === pireDe('grok-imagine-video-1.5', 2) && J[0].resolution === '720p' && J[1].statut === 'sent' && J[1].rid === 'vid-1' && J[2].statut === 'done' && J[2].coutUsd === reel('grok-imagine-video-1.5', 2),
+     'journal du clip 1 : envoi (reserve ' + (J[0] && J[0].reserve) + ' $, 720p) AVANT, sent (vid-1), puis ' + (J[2] && J[2].coutUsd) + ' $ lus dans les ticks');
+  ok(!fs.existsSync(path.join(process.env.DATA_DIR, 'planches', 'ARRET')), 'le cout reel au tarif 720p tient dans sa reserve : aucun ARRET');
   const pl = lot.planches && lot.planches[0];
-  ok(pl && pl.monstre === 'mannequin' && pl.verdict === 'ok' && pl.fichiers.includes('mannequin.json') && pl.fichiers.includes('mannequin/walk.webp'), 'la finition a rendu une planche qui passe ses controles (' + (pl && (pl.verdict + ' ' + (pl.echecs || []).join(' '))) + ')');
+  ok(pl && pl.monstre === 'mannequin' && pl.verdict === 'ok' && pl.fichiers.includes('mannequin.json') && pl.fichiers.includes('mannequin/walk.webp') && pl.fichiers.includes('mannequin/walk_hd.webp'), 'la finition a rendu une planche qui passe ses controles, et sa HD (' + (pl && (pl.verdict + ' ' + (pl.echecs || []).join(' '))) + ')');
   const fiche = await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json', { headers: proprio.H });
   const fj = await fiche.json().catch(() => ({}));
-  ok(fiche.status === 200 && fj.format === 'swoge-planche-iso/1' && fj.actions.walk && fj.cout_usd === 0.4, 'le proprietaire lit la fiche (cout reel 0,40 $ dedans)');
+  const coutPilote = Math.round((reel('grok-imagine-video-1.5', 2) + reel('grok-imagine-video-1.5', 3)) * 1e4) / 1e4;
+  ok(fiche.status === 200 && fj.format === 'swoge-planche-iso/1' && fj.actions.walk && fj.cout_usd === coutPilote, 'le proprietaire lit la fiche (cout reel ' + fj.cout_usd + ' $ dedans)');
+  ok(fj.sources && /\.webp$/.test(fj.sources.ancienne || '') && Number.isFinite(fj.sources.halo_ancienne), 'la finition a recu l ancienne planche du jeu (reference du halo : ' + (fj.sources && fj.sources.halo_ancienne) + ')');
   const img = await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin/walk.webp', { headers: proprio.H });
   ok(img.status === 200 && img.headers.get('content-type') === 'image/webp' && (await img.arrayBuffer()).byteLength > 1000, 'et la planche de marche (image/webp)');
+  const ihd = await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin/walk_hd.webp', { headers: proprio.H });
+  ok(ihd.status === 200 && (await ihd.arrayBuffer()).byteLength > 1000 && fj.actions.walk.hd && fj.actions.walk.hd.case === 512, 'et sa HD (cases de 512, ' + (fj.actions.walk.hd && fj.actions.walk.hd.n) + ' images)');
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json', { headers: proprio2.H })).status, 404, 'un autre proprietaire : 404');
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json', { headers: bob.H })).status, 403, 'un non-proprietaire : 403');
   eq((await vraiFetch(base + '/studio/planches/fichier/' + r.id + '/mannequin.json')).status, 401, 'sans session : 401');
@@ -212,13 +251,28 @@ async function connecte(port, w) {
   let la = null;
   for (let i = 0; i < 100; i++) { la = await api('/studio/planches/lot/' + ra.id, proprio.H); if (la.statut === 'fini') break; await dort(100); }
   ok(la.clips[0].statut === 'failed' && /refused host evil\.example/.test(la.clips[0].erreur) && !telecharges.some((u) => u.includes('evil')), 'video sur evil.example : refusee, jamais telechargee');
-  ok(la.clips[0].coutUsd === 0.02 && vus.filter((v) => v.methode === 'POST').pop().corps.last_frame === undefined, 'son cout est quand meme compte (0,02 $), et lite part sans last_frame (1.5 seul l accepte)');
+  ok(la.clips[0].coutUsd === reel('grok-imagine-video-1.5-lite', 1) && vus.filter((v) => v.methode === 'POST').pop().corps.last_frame === undefined, 'son cout est quand meme compte (' + la.clips[0].coutUsd + ' $), et lite part sans last_frame (1.5 seul l accepte)');
+  const rr = await api('/studio/planches', proprio.H, 'POST', { lot: 'redirige' });
+  let lr = null;
+  for (let i = 0; i < 100; i++) { lr = await api('/studio/planches/lot/' + rr.id, proprio.H); if (lr.statut === 'fini') break; await dort(100); }
+  ok(lr.clips[0].statut === 'failed' && /refused host evil\.example/.test(lr.clips[0].erreur || '') && !telecharges.some((u) => u.startsWith('http://evil')),
+     'video sur vidgen.x.ai redirigee (302) vers http://evil.example : la redirection n est PAS suivie (' + lr.clips[0].erreur + ')');
 
   console.log('\n-- 7. argent et cle --');
   const v1 = await api('/studio/planches', proprio.H);
-  ok(Math.abs(v1.depenseUsd - 0.42) < 1e-9 && Math.abs(v1.resteUsd - 7.08) < 1e-9, 'depense = la somme des ticks : 0,42 $, reste 7,08 $');
+  const depAttendue = Math.round((coutPilote + reel('grok-imagine-video-1.5-lite', 1) + reel('grok-imagine-video-1.5-lite', 2)) * 1e4) / 1e4;
+  ok(Math.abs(v1.depenseUsd - depAttendue) < 1e-9 && Math.abs(v1.resteUsd - (7.5 - depAttendue)) < 1e-9, 'depense = la somme des ticks : ' + v1.depenseUsd + ' $, reste ' + v1.resteUsd + ' $');
   ok(!moteur || moteur.balanceStr(proprio.adr) === solde0, 'aucun $SWOGE debite');
   ok(!textes.some((t) => t.includes('xai-test-local')), 'la cle xAI n apparait dans aucune reponse');
+  /* deux « Run » au meme moment (le site repond en 150 ms) : un seul lot */
+  lenteurSite = 150;
+  const postsAvant = xaiPosts();
+  const [ca, cb] = await Promise.all([api('/studio/planches', proprio.H, 'POST', { lot: 'ailleurs' }), api('/studio/planches', proprio.H, 'POST', { lot: 'ailleurs' })]);
+  lenteurSite = 0;
+  const codes = [ca.http, cb.http].sort().join(',');
+  ok(codes === '200,429' && xaiPosts() - postsAvant === 1, 'deux Run simultanes : ' + codes + ', ' + (xaiPosts() - postsAvant) + ' appel chez xAI (le second n en fait aucun)');
+  const gagnant = ca.http === 200 ? ca : cb;
+  for (let i = 0; i < 100; i++) { const x = await api('/studio/planches/lot/' + gagnant.id, proprio.H); if (x.statut === 'fini') break; await dort(100); }
   proprio.s.close(); proprio2.s.close(); bob.s.close();
 
   console.log('\n-- 8. le module : redemarrage et ARRET --');
@@ -244,7 +298,99 @@ async function connecte(port, w) {
   const ar = await mod.lance({ addr: '0xabc', lot: 'pilote' });
   ok(!ar.ok && ar.code === 423 && !lus.includes('lance'), 'apres ARRET, un nouveau lot est refuse (423) sans appel');
 
+  /* un redemarrage PENDANT la finition : le lot ne reste pas « finition » pour toujours */
+  const dosF = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-reprise-')); AEFFACER.push(dosF);
+  const idf = 'b'.repeat(24), jrF = path.join(dosF, 'j.jsonl');
+  fs.writeFileSync(path.join(dosF, idf + '.json'), JSON.stringify({ id: idf, t: Date.now(), addr: '0xabc', lot: 'x', statut: 'finition', poses: {},
+    clips: [{ monstre: 'm', action: 'idle', mode: 'bande', modele: 'grok-imagine-video-1.5', duree: 2, reserve: 0.375, statut: 'done', coutUsd: 0.3, fichier: 'c'.repeat(48) + '.mp4' }] }));
+  fs.writeFileSync(jrF, [{ type: 'clip', lot: idf, idx: 0, statut: 'envoi', reserve: 0.375 }, { type: 'clip', lot: idf, idx: 0, statut: 'sent', rid: 'r0' },
+                         { type: 'clip', lot: idf, idx: 0, statut: 'done', coutUsd: 0.3, fichier: 'c'.repeat(48) + '.mp4' }].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  let finitionsF = 0;
+  const modF = P.cree({ dossier: dosF, journal: jrF, fournisseur: fourn, site: 'https://site.example', pollMs: 20, plafondUsd: 7.5,
+                        finition: async () => { finitionsF++; return { qc: { verdict: 'ok', echecs: [] }, actions: {} }; } });
+  for (let i = 0; i < 50 && modF.etat(idf, '0xabc').statut !== 'fini'; i++) await dort(20);
+  const eF = modF.etat(idf, '0xabc');
+  ok(eF.statut === 'fini' && finitionsF === 1 && eF.planches.length === 1 && modF.enCours() === null, 'redemarrage pendant la finition : elle est refaite (' + eF.statut + ', ' + finitionsF + ' finition)');
+
+  console.log('\n-- 9. le module : l argent quand ca casse --');
+  const Dm = (action, duree) => ({ monstre: 'mannequin', action, mode: 'bande', modele: 'grok-imagine-video-1.5', duree, sha256: sha });
+  const demM = { lots: { deux: [Dm('idle', 2), Dm('walk', 2)], un: [Dm('idle', 2)] } };
+  const repM = (b) => ({ ok: true, status: 200, arrayBuffer: async () => b });
+  const chargeM = async (u) => (/demandes\.json$/.test(u) ? repM(Buffer.from(JSON.stringify(demM))) : /\.png$/.test(u) ? repM(pose) : { ok: false, status: 404 });
+  const neuf = (opts) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-reprise-')); AEFFACER.push(d);
+    return Object.assign({ d }, P.cree(Object.assign({ dossier: d, journal: path.join(d, 'j.jsonl'), site: 'https://site.example', pollMs: 10, plafondUsd: 7.5, charge: chargeM,
+      finition: async () => ({ qc: { verdict: 'ok', echecs: [] }, actions: {} }) }, opts))); };
+  const r1clip = pireDe('grok-imagine-video-1.5', 2);
+  const derniere = (d) => fs.readFileSync(path.join(d, 'j.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l)).pop();
+
+  /* a. pas de reponse : xAI a peut-etre recu la demande et lance le travail */
+  let appA = 0;
+  const xa = neuf({ fournisseur: { actif: () => true, lanceVideo: async () => { appA++; throw new TypeError('fetch failed'); }, litVideo: async () => ({}) } });
+  const ra9 = await xa.lance({ addr: '0xp', lot: 'deux' });
+  const la9 = derniere(xa.d);
+  ok(!ra9.ok && appA === 1 && la9.statut === 'inconnu' && la9.coutUsd === r1clip && xa.depense() === r1clip && fs.existsSync(path.join(xa.d, 'ARRET')),
+     'coupure pendant l appel : statut inconnu, la reserve (' + r1clip + ' $) reste comptee, ARRET, le clip suivant ne part pas [' + la9.statut + ' ' + la9.coutUsd + ']');
+  ok((await xa.lance({ addr: '0xp', lot: 'un' })).code === 423 && appA === 1, 'et le lot suivant est refuse (423) sans appel');
+  const x5 = neuf({ fournisseur: { actif: () => true, lanceVideo: async () => { const e = new Error('xAI 503 - busy'); e.statut = 503; throw e; }, litVideo: async () => ({}) } });
+  await x5.lance({ addr: '0xp', lot: 'un' });
+  ok(x5.depense() === r1clip && fs.existsSync(path.join(x5.d, 'ARRET')), 'un 503 : pareil, la reserve reste comptee et ARRET');
+  /* le vrai client studio_xai.js contre un faux xAI qui coupe la connexion apres avoir tout lu */
+  let recusCoupe = 0;
+  const coupe = http.createServer((q2) => { q2.on('data', () => {}); q2.on('end', () => { recusCoupe++; q2.socket.destroy(); }); });
+  const pC = await libre(); await new Promise((r9) => coupe.listen(pC, '127.0.0.1', r9));
+  const baseAvant = process.env.XAI_BASE_URL; process.env.XAI_BASE_URL = 'http://127.0.0.1:' + pC;
+  const xs = neuf({ fournisseur: require('./studio_xai') });
+  await xs.lance({ addr: '0xp', lot: 'un' });
+  process.env.XAI_BASE_URL = baseAvant; coupe.close();
+  ok(recusCoupe === 1 && xs.depense() === r1clip && fs.existsSync(path.join(xs.d, 'ARRET')), 'studio_xai contre une connexion coupee apres reception : reserve comptee, ARRET (' + xs.depense() + ' $)');
+  const x4 = neuf({ fournisseur: { actif: () => true, lanceVideo: async () => { const e = new Error('xAI 400 - moderation'); e.statut = 400; throw e; }, litVideo: async () => ({}) } });
+  const r4 = await x4.lance({ addr: '0xp', lot: 'un' });
+  ok(!r4.ok && x4.depense() === 0 && !fs.existsSync(path.join(x4.d, 'ARRET')) && /moderation/.test(r4.raison), 'un 400 recu : 0 $, pas d ARRET (' + r4.raison + ')');
+
+  /* b. journal inecrivable : l appel ne part pas */
+  let appB = 0;
+  const xb = neuf({ fournisseur: { actif: () => true, lanceVideo: async () => { appB++; return 'r'; }, litVideo: async () => ({ status: 'pending' }) } });
+  fs.mkdirSync(path.join(xb.d, 'j.jsonl'));     /* le journal est un dossier : EISDIR */
+  const rb9 = await xb.lance({ addr: '0xp', lot: 'un' });
+  ok(!rb9.ok && appB === 0 && /journal/.test(rb9.raison || ''), 'journal inecrivable : AUCUN appel (' + rb9.raison + ')');
+
+  /* c. la depense monte entre le controle du lot et l appel (un autre processus a ecrit une reserve) */
+  let appC = 0, xc = null;
+  xc = neuf({ plafondUsd: 1.0, fournisseur: { actif: () => true, litVideo: async () => ({ status: 'pending' }),
+    lanceVideo: async () => { appC++; fs.appendFileSync(path.join(xc.d, 'j.jsonl'), JSON.stringify({ type: 'clip', lot: 'f'.repeat(24), idx: 0, statut: 'envoi', reserve: 0.5 }) + '\n'); return 'rc' + appC; } } });
+  const rc9 = await xc.lance({ addr: '0xp', lot: 'deux' });
+  ok(rc9.ok && rc9.lances === 1 && appC === 1 && rc9.raison === 'stopped before the cap', 'la depense monte pendant le lot : le clip suivant est refuse au plafond AVANT l appel (' + rc9.lances + ' lance, ' + rc9.raison + ')');
+
+  /* d. le clip 0 finit pendant l appel du clip 1, que xAI refuse : le lot se termine */
+  let appD = 0, finD = 0;
+  const xd = neuf({ fournisseur: { actif: () => true,
+    lanceVideo: async () => { appD++; if (appD === 2) { await dort(120); const e = new Error('xAI 400 moderation'); e.statut = 400; throw e; } return 'rd' + appD; },
+    litVideo: async () => ({ status: 'failed', erreur: 'failed early', usage: { cost_in_usd_ticks: 0 } }) },
+    finition: async () => { finD++; return { qc: { verdict: 'ok', echecs: [] }, actions: {} }; } });
+  const rd9 = await xd.lance({ addr: '0xp', lot: 'deux' });
+  for (let i = 0; i < 50 && xd.enCours(); i++) await dort(20);
+  const ed = xd.etat(rd9.id, '0xp');
+  ok(ed.statut === 'fini' && xd.enCours() === null && /moderation/.test(rd9.raison || ''), 'clip 0 fini pendant l appel du clip 1, refuse : lot ' + ed.statut + ', plus en cours, raison du BON clip (' + rd9.raison + ')');
+  ok((await xd.lance({ addr: '0xp', lot: 'un' })).code !== 429, 'et le lot suivant n est pas bloque en 429');
+
+  /* e. deux « Run » simultanes sur le module : un 429, zero appel de sa part */
+  let appE = 0;
+  const xe = neuf({ charge: async (u) => { await dort(50); return chargeM(u); }, fournisseur: { actif: () => true, lanceVideo: async () => { appE++; return 're' + appE; }, litVideo: async () => ({ status: 'pending' }) } });
+  const [e1, e2] = await Promise.all([xe.lance({ addr: '0xp', lot: 'deux' }), xe.lance({ addr: '0xp', lot: 'deux' })]);
+  ok([e1.code || 200, e2.code || 200].sort().join(',') === '200,429' && appE === 2, 'module : deux lance() simultanes, ' + [e1.code || 200, e2.code || 200].join(' et ') + ', ' + appE + ' appels (un seul lot)');
+
+  /* f. le plafond ne peut que baisser */
+  const dPf = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-reprise-')); AEFFACER.push(dPf);
+  process.env.PLANCHES_PLAFOND_USD = '1000';
+  ok(P.cree({ dossier: dPf, journal: path.join(dPf, 'j.jsonl'), fournisseur: fourn, site: 'https://s' }).PLAFOND === 7.5, 'PLANCHES_PLAFOND_USD=1000 : le plafond reste 7,50 $');
+  process.env.PLANCHES_PLAFOND_USD = '2';
+  ok(P.cree({ dossier: dPf, journal: path.join(dPf, 'j.jsonl'), fournisseur: fourn, site: 'https://s' }).PLAFOND === 2, 'PLANCHES_PLAFOND_USD=2 : il baisse a 2 $');
+  delete process.env.PLANCHES_PLAFOND_USD;
+
   fauxXai.close();
+  /* rien ne reste dans /tmp (63 dossiers et 29 Mo apres une vingtaine d'executions, revue du 13/10/2026) */
+  AEFFACER.push(dos);
+  for (const d of AEFFACER) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* rien */ } }
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('ESSAI CASSE :', e); process.exit(1); });

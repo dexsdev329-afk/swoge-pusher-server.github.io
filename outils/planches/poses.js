@@ -27,12 +27,20 @@
  *      cout > reserve : ARRET ; plus de 12 000 jetons par image d'entree au
  *      premier appel (calibrage) : ARRET ; un fichier ARRET bloque tout appel ;
  *   5. un journal absent alors que le dossier des poses contient des images :
- *      refus (on aurait perdu la trace de ce qui a ete paye).
+ *      refus (on aurait perdu la trace de ce qui a ete paye) ;
+ *   6. pas de reponse (coupure, delai de 300 s), ou une reponse 5xx : OpenAI a
+ *      peut-etre genere ET facture l'image — statut « inconnu », cout = reserve,
+ *      et ARRET (revue du 13/10/2026 : la coupure etait journalisee a 0 $ et
+ *      l'appel suivant permis). Seul un 4xx recu vaut 0 $ (sauf usage contraire).
+ * Le journal et l'ARRET de la ligne de commande sont a un chemin FIXE
+ * (~/.swoge-planches/), quel que soit --dossier ou --site : un --dossier neuf
+ * repartait a 0 $ depense (revue du 13/10/2026, 2,45 $ dans A, 0 dans B).
  * La cle n'est lue que de l'environnement, jamais ecrite ni affichee.
  *
  *   node outils/planches/poses.js <monstre> [--n 2] [--site /home/user/SWOGE.github.io] [--dossier _planches]
  * ======================================================================== */
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const G = require('./guide');
@@ -64,11 +72,17 @@ function propre(m) {
   return s.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[key]').replace(/[\u0000-\u001f]/g, ' ').slice(0, 240);
 }
 
-function cree({ dossier, base, maintenant, plafond }) {
+/* le journal de la ligne de commande : un seul, ou que soient les images */
+const DOSSIER_ARGENT = () => path.join(os.homedir(), '.swoge-planches');
+
+function cree({ dossier, base, maintenant, plafond, argent }) {
   const temps = () => (maintenant ? maintenant() : Date.now());
-  const JOURNAL = path.join(dossier, 'journal_openai.jsonl'), ARRET = path.join(dossier, 'ARRET'), POSES = path.join(dossier, 'poses');
+  /* `argent` : le dossier du journal et de l'ARRET (par defaut celui des poses, pour les essais) */
+  const A = argent || dossier;
+  const JOURNAL = path.join(A, 'journal_openai.jsonl'), ARRET = path.join(A, 'ARRET'), POSES = path.join(dossier, 'poses');
   const BASE = () => String(base || process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/$/, '');
-  const PLAF = plafond != null ? plafond : PLAFOND;
+  /* un plafond passe (essais) ne peut que BAISSER les 2,50 $ */
+  const PLAF = plafond != null ? Math.min(Number(plafond) || 0, PLAFOND) : PLAFOND;
 
   function etat() {
     const L = jsonl(JOURNAL);
@@ -83,8 +97,12 @@ function cree({ dossier, base, maintenant, plafond }) {
     return { journal: L, depense: Math.round(depense * 1e4) / 1e4, maxMesure, appels: vus.length };
   }
   const reserve = (n, e) => (e.maxMesure[n] ? Math.round(1.5 * e.maxMesure[n] * 1e4) / 1e4 : reserveDepart(n));
-  const arrete = (raison) => { fs.mkdirSync(dossier, { recursive: true }); fs.writeFileSync(ARRET, new Date(temps()).toISOString() + ' ' + raison + '\n'); };
-  const ecrit = (l) => { fs.mkdirSync(dossier, { recursive: true }); fs.appendFileSync(JOURNAL, JSON.stringify(l) + '\n'); };
+  const arrete = (raison) => { fs.mkdirSync(A, { recursive: true }); fs.writeFileSync(ARRET, new Date(temps()).toISOString() + ' ' + raison + '\n'); };
+  const ecrit = (l) => {
+    fs.mkdirSync(A, { recursive: true });
+    const fd = fs.openSync(JOURNAL, 'a');
+    try { fs.writeSync(fd, JSON.stringify(l) + '\n'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  };
 
   /** Le cout d'une reponse, d'apres son usage ; null si l'usage manque. */
   function cout(u) {
@@ -129,9 +147,18 @@ function cree({ dossier, base, maintenant, plafond }) {
     } catch (e) { erreur = 'network: ' + (e && e.message); }
     const usage = j && j.usage || null;
     let c = cout(usage);
+    if (erreur && !(statut >= 400 && statut < 500)) {
+      /* pas de reponse, ou un 5xx : l'image a peut-etre ete generee et facturee. Cout
+         inconnu = cout plein (la reserve), et ARRET : on relit la facturation OpenAI. */
+      const fin = { id, t: temps(), statut: 'inconnu', nom, n, ms: temps() - t, usage, http: statut, coutUsd: c == null ? p.reserve : Math.max(c, p.reserve), sansUsage: c == null, erreur: propre(erreur) };
+      const raison = 'no usable answer from OpenAI (' + fin.erreur.slice(0, 80) + '): it may have been billed, ' + fin.coutUsd + ' $ counted; check the OpenAI usage page, then delete this file';
+      fin.arret = raison;
+      ecrit(fin); arrete(raison);
+      return { ok: false, raison: fin.erreur, coutUsd: fin.coutUsd, arret: raison };
+    }
     const fin = { id, t: temps(), statut: erreur ? 'erreur' : 'fini', nom, n, ms: temps() - t, usage, http: statut };
     if (erreur) {
-      /* une erreur HTTP : rien n'est facture si aucune image n'est rendue — sauf si l'usage dit le contraire */
+      /* une reponse 4xx : rien n'est facture si aucune image n'est rendue — sauf si l'usage dit le contraire */
       fin.coutUsd = c == null ? 0 : c; fin.erreur = propre(erreur);
       ecrit(fin);
       return { ok: false, raison: fin.erreur, coutUsd: fin.coutUsd };
@@ -156,15 +183,18 @@ function cree({ dossier, base, maintenant, plafond }) {
     return { ok: true, fichiers, coutUsd: c, usage, arret: arrets.length ? arrets.join('; ') : null };
   }
 
-  return { appelle, peut, etat, cout, reserve: (n) => reserve(n, etat()), JOURNAL, ARRET, POSES };
+  return { appelle, peut, etat, cout, reserve: (n) => reserve(n, etat()), JOURNAL, ARRET, POSES, PLAFOND: PLAF };
 }
+
+/** Ce que construit la ligne de commande : les images dans `dossier`, l'argent a un chemin fixe. */
+function creeCommande({ dossier, base }) { return cree({ dossier, base, argent: DOSSIER_ARGENT() }); }
 
 if (require.main === module) {
   const a = process.argv.slice(2), nom = a[0];
   const opt = (k, d) => { const i = a.indexOf('--' + k); return i >= 0 ? a[i + 1] : d; };
   const site = opt('site', '/home/user/SWOGE.github.io'), dossier = path.resolve(opt('dossier', path.join(site, '_planches')));
   (async () => {
-    const P = cree({ dossier });
+    const P = creeCommande({ dossier });
     const n = Number(opt('n', 1)) === 2 ? 2 : 1;
     const t = G.toilePoses(2048, 1024);
     const ancienne = await M.lisImage(path.join(site, 'img/nexus/monstres', nom + '.webp'));
@@ -174,4 +204,4 @@ if (require.main === module) {
   })().catch((e) => { console.error(propre(e && e.message)); process.exit(1); });
 }
 
-module.exports = { cree, PLAFOND, MODELE, PRIX, CONSIGNE, reserveDepart, JETONS_IMAGE_MAX };
+module.exports = { cree, creeCommande, DOSSIER_ARGENT, PLAFOND, MODELE, PRIX, CONSIGNE, reserveDepart, JETONS_IMAGE_MAX };

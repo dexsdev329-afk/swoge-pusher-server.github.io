@@ -18,12 +18,13 @@ const DUREES = { idle: 2, walk: 3, run: 3, attack: 2, jump: 2 };
 
 /* 960 x 384 : une bande 5:2 aux multiples de 16 (H.264) ; un emplacement fait
    240 x 384 et le corps ~154 px — au-dessus des 128 px de la case finale. */
-async function fabrique({ dossier, actions, defauts, w, h, fps, pose }) {
+async function fabrique({ dossier, actions, defauts, w, h, fps, pose, palette }) {
   w = w || 960; h = h || 384; fps = fps || 24; actions = actions || G.ACTIONS;
   const out = { pose: path.join(dossier, 'pose.png'), clips: [] };
-  if (pose !== false) M.ecrisPng(G.bandePose(2000, 800), out.pose);
+  /* palette : 'perso' (droite et gauche de couleurs differentes) ou 'sym' (un vrai monstre) */
+  if (pose !== false) M.ecrisPng(G.bandePose(2000, 800, null, null, palette), out.pose);
   for (const action of actions) {
-    const F = G.clipFaux({ action, w, h, fps, duree: DUREES[action], defauts: (defauts || {})[action] || {} });
+    const F = G.clipFaux({ action, w, h, fps, duree: DUREES[action], defauts: Object.assign({ palette }, (defauts || {})[action] || {}) });
     const f = path.join(dossier, action + '.mp4');
     await M.ecrisMp4(F, w, h, fps, f);
     out.clips.push({ action, fichier: f, mode: 'bande' });

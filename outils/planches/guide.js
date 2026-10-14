@@ -140,8 +140,9 @@ function bras3(ep, f, r, elevDeg, ecart, coudeDeg) {
   return { coude, main, d2 };
 }
 
-/** Les segments 3D d'une pose, face a f2 (x, z) tourne de lacet degres. */
-function squelette(p, f2, lacet, arme) {
+/** Les segments 3D d'une pose, face a f2 (x, z) tourne de lacet degres. lame : {long, large} de l'arme. */
+function squelette(p, f2, lacet, arme, lame) {
+  const LL = lame && lame.long || 0.24, LW = lame && lame.large || 0.04;
   let f = unit([f2[0], 0, f2[1]]);
   if (lacet) { const c = Math.cos(lacet * Math.PI / 180), s = Math.sin(lacet * Math.PI / 180); f = [f[0] * c - f[2] * s, 0, f[0] * s + f[2] * c]; }
   const r = [-f[2], 0, f[0]], up = [0, 1, 0];
@@ -163,7 +164,9 @@ function squelette(p, f2, lacet, arme) {
     const B = bras3(ep, fb, rr, e, ec, c);
     seg.push([ep, B.coude, 0.075, 'bras', cote], [B.coude, B.main, 0.065, 'bras', cote]);
     J['main' + cote] = B.main;
-    if (cote === 'D' && arme !== false) { const pointe = add(B.main, mul(B.d2, 0.24)); seg.push([B.main, pointe, 0.04, 'arme', 'D']); J.pointe = pointe; }
+    if (cote === 'D' && arme !== false && arme !== 'G') { const pointe = add(B.main, mul(B.d2, LL)); seg.push([B.main, pointe, LW, 'arme', 'D']); J.pointe = pointe; }
+    /* defaut d'essai : l'arme passe dans la main GAUCHE (meme geste, l'autre main) */
+    if (cote === 'G' && arme === 'G') { const pointe = add(B.main, mul(B.d2, LL)); seg.push([B.main, pointe, LW, 'arme', 'D']); J.pointe = pointe; }
   }
   return { seg, tronc: [hD, hG, eG, eD], J };
 }
@@ -234,17 +237,27 @@ const PALETTES = {
            bras: { D: [224, 224, 224], G: [150, 150, 150] }, arme: { D: [215, 96, 32] }, tronc: [170, 170, 170], tete: [180, 180, 180] },
   perso: { jambe: { D: [40, 100, 250], G: [10, 70, 200] }, pied: { D: [120, 90, 50], G: [80, 70, 20] },
            bras: { D: [235, 60, 50], G: [200, 20, 10] }, arme: { D: [215, 96, 32] }, tronc: [200, 50, 40], tete: [230, 180, 140] },
+  /* un personnage SYMETRIQUE, comme un vrai monstre : meme couleur a droite et a gauche,
+     l'arme seule dit le cote (revue du 13/10/2026 : pirate, piratesse, lieutenant). Deux
+     armes : le baton fin du mannequin, de la couleur du torse a 23 niveaux pres (le cas
+     le plus dur), et un SABRE (lame claire, plus longue et plus large), l'arme des trois
+     monstres du pilote (actuel_pirate.png : une lame grise courbe, hors du corps). */
+  sym: { jambe: { D: [40, 100, 250], G: [40, 100, 250] }, pied: { D: [120, 90, 50], G: [120, 90, 50] },
+         bras: { D: [235, 60, 50], G: [235, 60, 50] }, arme: { D: [215, 96, 32] }, tronc: [200, 50, 40], tete: [230, 180, 140] },
+  sabre: { jambe: { D: [40, 100, 250], G: [40, 100, 250] }, pied: { D: [120, 90, 50], G: [120, 90, 50] },
+           bras: { D: [235, 60, 50], G: [235, 60, 50] }, arme: { D: [196, 200, 210] }, tronc: [200, 50, 40], tete: [230, 180, 140],
+           lame: { long: 0.28, large: 0.06 } },
 };
 
 function dessine(d, w, h, pose, dir, ox, oy, s, opts) {
   opts = opts || {};
   const pal = PALETTES[opts.palette || 'guide'];
-  const { seg, tronc, J } = squelette(pose, DIRS[dir], opts.lacet || 0, opts.arme);
+  const { seg, tronc, J } = squelette(pose, DIRS[dir], opts.lacet || 0, opts.arme, pal.lame);
   const items = seg.map((q) => [prof(mul(add(q[0], q[1]), 0.5)), 'seg', q]);
   items.push([prof(mul(tronc.reduce((a, b) => add(a, b), [0, 0, 0]), 0.25)) - 0.02, 'tronc', tronc]);
   items.push([prof(J.tete) + 0.01, 'tete', J.tete]);
   items.sort((a, b) => a[0] - b[0]);
-  if (opts.ombre) ellipse(d, w, h, ox, oy + 0.01 * s, 0.34 * s, 0.11 * s, [60, 40, 25, 255]);
+  if (opts.ombre) ellipse(d, w, h, ox, oy + 0.01 * s, 0.34 * s, 0.11 * s, opts.couleurOmbre || [60, 40, 25, 255]);
   for (const [, k, v] of items) {
     if (k === 'seg') {
       const col = pal[v[3]][v[4]] || pal[v[3]].D;
@@ -275,39 +288,71 @@ function emplacements(w, h, dirs) {
 function fond(w, h, c) { const d = new Uint8ClampedArray(w * h * 4); for (let i = 0; i < w * h; i++) { d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255; } return d; }
 
 /** La pose de repos dans la disposition de la chaine (ce qu'on enverrait a xAI). */
-function bandePose(w, h, dirs, cle) {
+function bandePose(w, h, dirs, cle, palette) {
   dirs = dirs || Object.keys(DIRS);
   const d = fond(w, h, cle || [255, 0, 255]);
-  for (const e of emplacements(w, h, dirs)) dessine(d, w, h, REPOS, e.dir, e.ox, e.oy, e.s, { palette: 'perso' });
+  for (const e of emplacements(w, h, dirs)) dessine(d, w, h, REPOS, e.dir, e.ox, e.oy, e.s, { palette: palette || 'perso' });
   return { w, h, data: d };
 }
+
+/* Le partenaire miroir d'une direction : SW retourne ressemble a SE, NW a NE. */
+const MIROIR_DE = { se: 'sw', sw: 'se', ne: 'nw', nw: 'ne' };
 
 /**
  * Un faux clip : images RGBA (opaques, fond cle) d'une action pour 4 figures.
  * defauts (un essai par controle) :
- *   miroir: true      -> SW est le MIROIR de SE, decale en phase (piege F6)
- *   echelle: {nw:1.3} -> une direction plus grande que sa pose (taille entre directions)
+ *   miroir: true|'sw'|'nw' -> SW (ou NW) est le MIROIR de SE (ou NE), decale en phase (piege F6)
+ *   echelle: {nw:1.3} -> une direction plus grande que sa pose (taille entre directions, zoom)
  *   jambesFigees      -> les pieds ne bougent pas pendant la marche (jambes)
+ *   jambesSansAlterner-> la jambe droite toujours devant, des ciseaux sur place (foulee)
  *   ombre             -> une ombre opaque collee sous les pieds (sol)
  *   derive            -> foulee et direction qui derivent : aucune boucle (boucle)
  *   glisse            -> la figure traverse son emplacement (glisse)
+ *   palette: 'sym'    -> un personnage symetrique (l'arme seule dit le cote)
+ *   armeGauche: {se:true} -> l'arme passe dans la main gauche une demi-seconde sur deux
+ *   tourne: {ne:'se'} -> la figure se tourne vers une autre direction au milieu du clip
+ *   dy: {ne:-0.12}    -> la figure flotte (fraction du corps ; negatif = au-dessus du sol)
+ *   tache: {se:true}  -> une trainee grise OPAQUE accrochee derriere la tete, 15 % du cycle
+ *   ombreClignote: {se:[r,g,b]} -> une ombre collee de cette couleur, 3/8 du cycle
+ * Revue du 13/10/2026 : chacun de ces defauts sortait vert ; ils sont ici pour que
+ * l'essai les fabrique et exige que leur controle tombe.
  */
 function clipFaux({ action, w, h, fps, duree, dirs, cle, defauts }) {
   dirs = dirs || Object.keys(DIRS); defauts = defauts || {};
   const n = Math.round(duree * fps), E = emplacements(w, h, dirs), F = [];
+  const pal = defauts.palette || 'perso';
+  const copie = defauts.miroir === true ? 'sw' : defauts.miroir || null;
+  const pour = (k, dir) => (defauts[k] && defauts[k][dir] != null ? defauts[k][dir] : null);
+  const milieu = (t) => t > 0.35 && t < duree - 0.35;
   for (let i = 0; i < n; i++) {
     const t = i / fps, d = fond(w, h, cle || [255, 0, 255]);
     for (const e of E) {
       let te = t, dirDessin = e.dir, mir = false;
-      if (defauts.miroir && e.dir === 'sw') { dirDessin = 'se'; mir = true; te = t + 5 / fps; }
-      const pose = poseAu(action, Math.min(te, duree), duree, { derive: !!defauts.derive, jambesFigees: !!defauts.jambesFigees });
-      const k = defauts.echelle && defauts.echelle[e.dir] ? defauts.echelle[e.dir] : 1;
+      if (copie && e.dir === copie) { dirDessin = MIROIR_DE[copie]; mir = true; te = t + 5 / fps; }
+      if (pour('tourne', e.dir) && milieu(t)) dirDessin = pour('tourne', e.dir);
+      let pose = poseAu(action, Math.min(te, duree), duree, { derive: !!defauts.derive, jambesFigees: !!defauts.jambesFigees });
+      if (defauts.jambesSansAlterner) {
+        const av = Math.abs(pose.pieds.D[0] - 0.03), y = Math.max(pose.pieds.D[2], pose.pieds.G[2]);
+        pose = Object.assign({}, pose, { pieds: { D: [0.03 + av, 0.075, y], G: [-0.03 - av, -0.075, y] } });
+      }
+      const k = pour('echelle', e.dir) || 1;
       const dx = defauts.glisse ? (t / duree - 0.5) * 0.45 * e.w : 0;
+      const oy = e.oy + (pour('dy', e.dir) || 0) * e.s * HAUT_CORPS;
       const lacet = defauts.derive ? 40 * t / duree : 0;
-      if (!mir) { dessine(d, w, h, pose, dirDessin, e.ox + dx, e.oy, e.s * k, { ombre: !!defauts.ombre, lacet, palette: 'perso' }); continue; }
-      /* le miroir : la figure SE dessinee a part, retournee dans l'emplacement SW */
+      const arme = pour('armeGauche', e.dir) && (t % 1) > 0.5 ? 'G' : undefined;
+      const oc = pour('ombreClignote', e.dir), ombre = !!defauts.ombre || !!(oc && (t % 1) >= 0.5 && (t % 1) < 0.875);
+      if (!mir) {
+        if (pour('tache', e.dir) && (t % 1) >= 0.5 && (t % 1) < 0.65) {
+          /* derriere la figure (dessinee AVANT elle), accrochee a la tete */
+          const tp = proj(squelette(pose, DIRS[dirDessin], lacet, arme, PALETTES[pal].lame).J.tete, e.ox + dx, oy, e.s * k);
+          ellipse(d, w, h, tp[0] - 0.11 * e.s, tp[1] + 0.05 * e.s, 0.09 * e.s, 0.045 * e.s, [190, 190, 190]);
+        }
+        dessine(d, w, h, pose, dirDessin, e.ox + dx, oy, e.s * k, { ombre, couleurOmbre: oc ? oc.concat([255]) : null, lacet, palette: pal, arme });
+        continue;
+      }
+      /* le miroir : la figure voisine dessinee a part, retournee dans cet emplacement */
       const tmp = fond(Math.ceil(e.w), h, [0, 0, 0]); for (let q = 3; q < tmp.length; q += 4) tmp[q] = 0;
-      dessine(tmp, Math.ceil(e.w), h, pose, dirDessin, e.w / 2, e.oy, e.s * k, { lacet, palette: 'perso' });
+      dessine(tmp, Math.ceil(e.w), h, pose, dirDessin, e.w / 2, oy, e.s * k, { lacet, palette: pal });
       const lw = Math.ceil(e.w);
       for (let y = 0; y < h; y++) for (let x = 0; x < lw; x++) {
         const s = (y * lw + (lw - 1 - x)) * 4, a = tmp[s + 3] / 255, X = Math.floor(e.x) + x;
@@ -321,14 +366,32 @@ function clipFaux({ action, w, h, fps, duree, dirs, cle, defauts }) {
   return F;
 }
 
+/** Une toile de poses (comme celle d'OpenAI) dont une vue est le MIROIR de sa voisine :
+    le piege P6, avant tout clip paye. copie = 'sw' (SW = SE retourne) ou 'nw'. */
+function toileMiroir(w, h, copie, palette) {
+  w = w || 2048; h = h || 1024;
+  const d = new Uint8ClampedArray(w * h * 4), dirs = Object.keys(DIRS), lw = w / dirs.length, s = 0.42 * h / HAUT_CORPS;
+  dirs.forEach((dir, i) => {
+    if (dir !== copie) { dessine(d, w, h, REPOS, dir, (i + 0.5) * lw, 0.85 * h, s, { palette }); return; }
+    const L = Math.ceil(lw), tmp = new Uint8ClampedArray(L * h * 4);
+    dessine(tmp, L, h, REPOS, MIROIR_DE[dir], L / 2, 0.85 * h, s, { palette });
+    for (let y = 0; y < h; y++) for (let x = 0; x < L; x++) {
+      const X = Math.floor(i * lw) + x; if (X >= w) continue;
+      const a = (y * L + (L - 1 - x)) * 4, o = (y * w + X) * 4;
+      for (let c = 0; c < 4; c++) d[o + c] = tmp[a + c];
+    }
+  });
+  return { w, h, data: d };
+}
+
 /** Les 4 vues de repos, transparentes, pour l'appel d'images (2048 x 1024 par defaut). */
-function toilePoses(w, h) {
+function toilePoses(w, h, palette) {
   w = w || 2048; h = h || 1024;
   const d = new Uint8ClampedArray(w * h * 4), dirs = Object.keys(DIRS), points = {};
   /* corps a 0,42 de la hauteur : au repos l'arme s'ecarte de 0,45 u du torse ; a 0,55
      (premier essai) la pointe de SW entrait dans le quart de SE (vu a l'image, 12/10) */
   const lw = w / dirs.length, s = 0.42 * h / HAUT_CORPS;
-  dirs.forEach((dir, i) => { points[dir] = dessine(d, w, h, REPOS, dir, (i + 0.5) * lw, 0.85 * h, s); });
+  dirs.forEach((dir, i) => { points[dir] = dessine(d, w, h, REPOS, dir, (i + 0.5) * lw, 0.85 * h, s, { palette }); });
   return { w, h, data: d, points, echelle: s };
 }
 
@@ -342,4 +405,4 @@ function reference() {
            pas_cycle_sur_corps: { walk: Math.round(2 * 0.30 * diag / HAUT_CORPS * 1000) / 1000, run: Math.round(2 * 0.45 * diag / HAUT_CORPS * 1000) / 1000 } };
 }
 
-module.exports = { PALETTES, ELEV, DIRS, ACTIONS, REPOS, HAUT_CORPS, DISPO, poseAu, squelette, dessine, emplacements, bandePose, clipFaux, toilePoses, reference, fond };
+module.exports = { PALETTES, ELEV, DIRS, ACTIONS, REPOS, HAUT_CORPS, DISPO, MIROIR_DE, poseAu, squelette, dessine, emplacements, bandePose, clipFaux, toilePoses, toileMiroir, reference, fond };

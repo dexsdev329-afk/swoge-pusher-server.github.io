@@ -15,7 +15,7 @@ const CLES = { magenta: [255, 0, 255], vert: [0, 255, 0], bleu: [0, 0, 255] };
 const ALPHA = 128;
 
 /** Alpha selon la distance a la couleur cle ; les bords semi-transparents sont demelanges. */
-function detoure(src, w, h, cle, t0, t1) {
+function detoure(src, w, h, cle, t0, t1, opts) {
   t0 = t0 == null ? 60 : t0; t1 = t1 == null ? 140 : t1;
   const [kr, kg, kb] = cle, out = new Uint8ClampedArray(w * h * 4);
   for (let i = 0, n = w * h; i < n; i++) {
@@ -45,6 +45,45 @@ function detoure(src, w, h, cle, t0, t1) {
     const p = (r - gm) * ux + (g - gm) * uy + (b - gm) * uz;
     if (p > 0) { out[o] = r - p * ux; out[o + 1] = g - p * uy; out[o + 2] = b - p * uz; }
   }
+  if (opts && opts.chroma === false) return out;
+  /* La chrominance du bord, reprise de l'INTERIEUR. En 4:2:0 la couleur n'existe qu'un
+     pixel sur deux : au bord, elle melange la figure et la cle, et le demelange en fait
+     une fausse couleur (liseré orange autour du rouge, cyan autour du bleu). Revue du
+     13/10/2026 : 44 % des pixels opaques du bord a plus de 40 de toute couleur du
+     mannequin, contre 2,8 % sans video. La LUMINANCE (pleine resolution en 4:2:0) reste
+     celle du pixel ; Cb et Cr deviennent la moyenne de l'interieur voisin (pixels opaques
+     a plus de 2 px du transparent, fenetre de 7 x 7). Une partie trop fine pour avoir un
+     interieur (moins de 5 px) garde sa couleur. */
+  const loin = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (out[(y * w + x) * 4 + 3] < 128) continue;
+    let ok = true;
+    for (let dy = -2; dy <= 2 && ok; dy++) for (let dx = -2; dx <= 2 && ok; dx++) ok = !transp(x + dx, y + dy);
+    if (ok) loin[y * w + x] = 1;
+  }
+  const Y = (r, g, b) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const maj = [];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = y * w + x, o = i * 4;
+    if (out[o + 3] === 0 || loin[i]) continue;
+    let cb = 0, cr = 0, yi = 0, k = 0;
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h || !loin[yy * w + xx]) continue;
+      const q = (yy * w + xx) * 4, yq = Y(out[q], out[q + 1], out[q + 2]);
+      cb += out[q + 2] - yq; cr += out[q] - yq; yi += yq; k++;
+    }
+    if (!k) continue;
+    cb /= k; cr /= k; yi /= k;
+    /* un pixel du liseré semi-transparent (alpha < 230) n'a qu'une couleur ESTIMEE (le
+       demelange part d'un alpha lu sur une couleur deja melangee) : il prend aussi la
+       luminance de l'interieur. Un pixel opaque garde la sienne (un contour dessine reste). */
+    const y0 = out[o + 3] < 230 ? yi : Y(out[o], out[o + 1], out[o + 2]);
+    /* R = Y + Cr', B = Y + Cb', G tire de Y = 0,299 R + 0,587 G + 0,114 B */
+    const R = y0 + cr, B = y0 + cb, G = (y0 - 0.299 * R - 0.114 * B) / 0.587;
+    maj.push([o, R, G, B]);
+  }
+  for (const [o, R, G, B] of maj) { out[o] = R; out[o + 1] = G; out[o + 2] = B; }
   return out;
 }
 

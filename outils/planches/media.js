@@ -110,13 +110,17 @@ function png(img) {
 }
 function ecrisPng(img, fichier) { fs.mkdirSync(path.dirname(fichier), { recursive: true }); fs.writeFileSync(fichier, png(img)); return fichier; }
 
-/** WebP avec perte (qualite 90) et alpha sans perte. Rend le chemin ecrit, ou null si l'encodeur manque. */
-async function ecrisWebp(img, fichier, qualite) {
+/** WebP SANS PERTE (VP8L, comme les planches actuelles du jeu). Rend le chemin ecrit, ou
+    null si l'encodeur manque. Revue du 13/10/2026 : en qualite 90 et yuva420p, la planche
+    perdait 29,1 dB de PSNR sur les pixels opaques (ecart max 106) ; le plan prevoyait sans
+    perte. Mesure du 13/10/2026 sur la toile du mannequin 2048 x 1024 : 31 000 o sans perte
+    (ecart 0) contre 40 496 o avec perte (ecart max 144), 0,5 s au lieu de 1,4 s. */
+async function ecrisWebp(img, fichier) {
   fs.mkdirSync(path.dirname(fichier), { recursive: true });
   try {
     await lance(FFMPEG, ['-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', img.w + 'x' + img.h, '-i', 'pipe:0',
-      '-frames:v', '1', '-c:v', 'libwebp', '-lossless', '0', '-quality', String(qualite || 90), '-pix_fmt', 'yuva420p', fichier],
-    Buffer.from(img.data.buffer, img.data.byteOffset, img.data.length));
+      '-frames:v', '1', '-c:v', 'libwebp', '-lossless', '1', '-compression_level', '6', fichier],
+    Buffer.from(img.data.buffer, img.data.byteOffset, img.data.length), 300000);
     return fichier;
   } catch (e) { return null; }
 }

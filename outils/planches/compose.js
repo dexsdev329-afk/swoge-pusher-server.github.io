@@ -29,6 +29,18 @@ const G = require('./guide');
 
 const BANDE = { w: 2000, h: 800 };
 const DIRS = ['se', 'sw', 'nw', 'ne'];
+/* P3 : les 4 vues d'OpenAI AVANT la remise a la meme hauteur (pour information) : 1,15,
+   l'ancien seuil commun des tailles (la bande, elle, les met toutes a 0,40 x 800). */
+const P3_TAILLES = 1.15;
+/* P6 : concordance (forme ET couleur) d'une vue avec le MIROIR de sa voisine, au repos,
+   sans mouvement ni video. Le seuil de 0,6 venait du mannequin dont droite et gauche ont
+   des couleurs differentes ; un monstre symetrique en vraie vue monte plus haut (revue du
+   13/10/2026 : 0,585 et 0,643, ROUGE), une copie retournee touche 0,98. Mesure du
+   13/10/2026 sur la toile du mannequin, 4 habits (gris du guide, « perso », « sym »
+   baton, « sabre ») : vraies vues 0,238-0,643, SW = SE retourne ou NW = NE retourne
+   0,974-0,977 (guide.toilePoses / guide.toileMiroir ; planches_chaine.test.js, section 4).
+   0,8 entre les deux. */
+const P6_MIROIR = 0.8;
 
 /* Retire les taches de moins de 2 % de la figure d'un quart (un bout d'arme de la
    vue voisine qui depasse dans ce quart, une poussiere) ; rend le nombre de pixels retires. */
@@ -75,7 +87,7 @@ async function compose(entree, sortie) {
   }
   controles.push({ id: 'P1_figures', valeur: vues.filter((v) => v.r && v.r.h > 0.2 * img.h).length, seuil: 4, sens: '>=', n: 4 });
   const hs = vues.filter((v) => v.r).map((v) => v.r.h);
-  controles.push({ id: 'P3_tailles', valeur: hs.length ? Math.round(Math.max(...hs) / Math.min(...hs) * 1000) / 1000 : null, seuil: Q.SEUILS.taille_dirs, sens: '<=', n: hs.length });
+  controles.push({ id: 'P3_tailles', valeur: hs.length ? Math.round(Math.max(...hs) / Math.min(...hs) * 1000) / 1000 : null, seuil: P3_TAILLES, sens: '<=', n: hs.length });
   controles.push({ id: 'P7_cle', valeur: Math.round(cle.parts[cle.nom] * 10000) / 10000, seuil: 0.005, sens: '<=', n: 1, cle: cle.nom });
   /* la bande : chaque vue a la meme hauteur de corps, pieds a 85 %, torse centre */
   const B = G.fond(BANDE.w, BANDE.h, cle.cle), lw = BANDE.w / 4, corpsPx = G.DISPO.corps * BANDE.h;
@@ -106,7 +118,7 @@ async function compose(entree, sortie) {
   for (const [a, b] of [['se', 'sw'], ['ne', 'nw']]) {
     if (!cases[a] || !cases[b]) continue;
     const v = Q.concorde(cases[b], T.miroir(cases[a], 128, 128), 128);
-    controles.push({ id: 'P6_miroir', dir: b + '/' + a, valeur: Math.round(v * 1000) / 1000, seuil: Q.SEUILS.miroir, sens: '<=', n: 1 });
+    controles.push({ id: 'P6_miroir', dir: b + '/' + a, valeur: Math.round(v * 1000) / 1000, seuil: P6_MIROIR, sens: '<=', n: 1 });
   }
   for (const c of controles) c.ok = c.valeur != null && (c.sens === '<=' ? c.valeur <= c.seuil : c.valeur >= c.seuil);
   M.ecrisPng({ w: BANDE.w, h: BANDE.h, data: B }, sortie);
@@ -122,4 +134,4 @@ if (require.main === module) {
   compose(e, s).then((f) => { console.log(JSON.stringify(f, null, 1)); process.exit(f.verdict === 'ok' ? 0 : 3); }).catch((x) => { console.error(x.message); process.exit(1); });
 }
 
-module.exports = { compose, BANDE };
+module.exports = { compose, BANDE, P6_MIROIR, P3_TAILLES };

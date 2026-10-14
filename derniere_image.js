@@ -16,12 +16,18 @@
  * comme avant (texte et references) — jamais une erreur pour le joueur.
  *
  * Seules les videos des fournisseurs sont lues (x.ai, klingai.com) : le
- * serveur ne telecharge pas une adresse venue d'un message.
+ * serveur ne telecharge pas une adresse venue d'un message. Revue du
+ * 13/10/2026 : la liste blanche ne valait que pour la PREMIERE adresse (fetch
+ * suivait une redirection vers n'importe quel hote, http compris) et le corps
+ * etait lu en entier avant le controle de taille ; le telechargement passe
+ * desormais par telecharge_sur.js (sauts suivis a la main et revérifies, taille
+ * comptee en flux).
  * ======================================================================== */
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
+const { telechargeSur } = require('./telecharge_sur');
 
 const OCTETS_MAX = 80 * 1024 * 1024;
 const HOTES = [/(^|\.)x\.ai$/i, /(^|\.)klingai\.com$/i];
@@ -30,7 +36,7 @@ function cree(deps) {
   deps = deps || {};
   const ffmpeg = deps.ffmpeg || 'ffmpeg';
   const hoteOk = deps.hoteOk || ((h) => HOTES.some((re) => re.test(h)));
-  const chercher = deps.fetch || ((u) => fetch(u, { signal: AbortSignal.timeout(60000) }));
+  const chercher = deps.fetch || ((u, o) => fetch(u, Object.assign({}, o, { signal: AbortSignal.timeout(60000) })));
   const MESURE = { demandes: 0, rendues: 0, refus: 0, echecs: 0, dernierEchec: null };
 
   const echoue = (m) => { MESURE.echecs++; MESURE.dernierEchec = String(m).slice(0, 120); return null; };
@@ -45,10 +51,10 @@ function cree(deps) {
     const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'derniere-'));
     const video = path.join(dossier, 'v.mp4'), image = path.join(dossier, 'f.jpg');
     try {
-      const r = await chercher(u.toString());
-      if (!r.ok) return echoue('HTTP ' + r.status);
-      const b = Buffer.from(await r.arrayBuffer());
-      if (!b.length || b.length > OCTETS_MAX) return echoue('size ' + b.length);
+      let b;
+      try { b = await telechargeSur(u.toString(), { fetch: chercher, hoteOk, httpPermis: !!deps.httpPermis, max: OCTETS_MAX, delaiMs: 60000 }); }
+      catch (e) { if (/^refused host/.test(e.message)) MESURE.refus++; return echoue(e.message); }
+      if (!b.length) return echoue('size 0');
       fs.writeFileSync(video, b);
       /* -sseof : on se place a 0,1 s de la fin et on garde UNE image. */
       await new Promise((res, rej) => execFile(ffmpeg, ['-v', 'error', '-y', '-sseof', '-0.1', '-i', video, '-frames:v', '1', '-q:v', '3', image],

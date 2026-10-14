@@ -203,12 +203,12 @@ lance comprend "$SRV" node studio_comprend.test.js   # image comprise : referenc
 lance prod    "$SRV" node studio_production.test.js   # series et pubs : memes references dans le meme ordre a chaque scene, images a leur adresse seule
 lance prodrte "$SRV" node studio_production_route.test.js   # series et pubs sur le vrai serveur : faux xAI, memes reference_images/audios, debit exact
 lance imagine "$SRV" node studio_imagine.test.js   # bouton magique SwoleMind : images de reference et brouillon envoyes, cout compte, borne par jour, panne sans cout
-lance derniere "$SRV" node derniere_image.test.js   # la derniere image d une video (ffmpeg) pour enchainer les scenes : la bonne image, fournisseurs seulement, null sans ffmpeg
+lance derniere "$SRV" node derniere_image.test.js   # la derniere image d une video (ffmpeg) pour enchainer les scenes : la bonne image, fournisseurs seulement (CHAQUE saut de redirection), 80 Mo comptes en flux, null sans ffmpeg
 lance essai   "$SRV" node essai_montage.test.js   # essai de montage xAI : longueur lue dans les boites MP4, clip efface apres fini/rate/delai, cout des ticks, plafond du jour
 lance essairte "$SRV" node essai_montage_route.test.js   # essai de montage sur le vrai serveur : proprietaire seul, 403 avant le corps, faux xAI, aucun debit, cle jamais montree
-lance planches "$SRV" node planches_chaine.test.js   # planches iso : faux clips H.264 du mannequin a travers TOUTE la chaine ; le vrai passe, chaque defaut fabrique (miroir decale, taille, jambes, sol, boucle, glisse) fait tomber SON controle (~1 min)
-lance plposes "$SRV" node planches_poses.test.js   # poses OpenAI : plafond 2,50 $ verifie AVANT l appel (reserves en vol comprises), envoye avant / cout apres, ARRET (usage absent, cout > reserve, calibrage), cle jamais ecrite
-lance plroute "$SRV" node planches_route.test.js   # /studio/planches sur le vrai serveur : 403 avant le corps, lot refuse au plafond SANS appel, image = last_frame, 720p 5:2 muet, journal envoi/sent/cout, fichiers au seul proprietaire, reprise et ARRET
+lance planches "$SRV" node planches_chaine.test.js   # planches iso : faux clips H.264 du mannequin a travers TOUTE la chaine (planche du jeu + HD sans perte) ; le vrai passe, un monstre SYMETRIQUE en vraies vues aussi ; 25 defauts fabriques (copie retournee, arme dans l autre main, vue qui se tourne, zoom en attaque, direction qui flotte, ciseaux, trainee grise, ombre qui clignote, taille, jambes, sol, boucle, glissade, franges ; et sur TOUT le clip : le baton qui change de main en marchant, SW = SE et NW = NE retournes pour un monstre symetrique) font tomber CHACUN son controle ; P6 sur une toile retournee (~7 min)
+lance plposes "$SRV" node planches_poses.test.js   # poses OpenAI : plafond 2,50 $ verifie AVANT l appel (reserves en vol comprises), envoye avant / cout apres, ARRET (usage absent, cout > reserve, calibrage, coupure apres reception, 5xx), journal a chemin fixe quel que soit --dossier, cle jamais ecrite
+lance plroute "$SRV" node planches_route.test.js   # /studio/planches sur le vrai serveur : 403 avant le corps, pire cas au tarif 720p (+ images d entree), lot refuse au plafond SANS appel, image = last_frame, 720p 5:2 muet, journal envoi/sent/cout, fichiers (et HD) au seul proprietaire, redirection hors x.ai refusee, deux Run simultanes = 429 sans appel, coupure = reserve + ARRET, journal inecrivable = aucun appel, reprise pendant la finition, plafond qui ne peut que baisser
 lance reprises "$SRV" node reprises.test.js   # une reponse retrouvee apres rechargement : par adresse de session seulement
 lance economie "$SRV" node economie.test.js   # la carte $SWOGE ECONOMY : offre, brule, coffre lus sur la chaine
 lance marches "$SRV" node perp_marches.test.js   # decouverte multi-exchange, forme unique
@@ -335,7 +335,7 @@ lance mondepage "$SITE" env SWOGE_SERVEUR="$SRV" node monde_page.test.js   # le 
 lance paripage "$SITE" node paris_page.test.js   # la page des paris
 lance paridirect "$SITE" node paris_direct.test.js   # le score en direct, du tableau d ESPN jusqu a la ligne de la page ; aucun bouton sur un match commence
 lance pariaccueil "$SITE" node paris_accueil.test.js
-lance spritelab "$SITE" node sprite_lab.test.js   # sprite_lab.html : bouger le monstre (clavier et manette), marche dans la bonne direction iso, repos a l arret, attaque une fois, 320/390/1440 sans defilement
+lance spritelab "$SITE" node sprite_lab.test.js   # sprite_lab.html : bouger le monstre (clavier et VRAI toucher), la ligne DESSINEE suit la direction, il avance le long de son axe iso, repos a l arret, attaque une fois, HD, WASD apres un reglage, manette visible sans defiler, ?server= ne recoit jamais le jeton, 320/390/1440 sans defilement
 lance marqueur "$SITE" node cache_marqueur.test.js
 lance minifie "$SITE" node minifie.test.js
 echo "  $NB suites · $(( $(date +%s) - T0 )) s au total · $([ $RATE -eq 0 ] && echo 'TOUT VERT : on peut commettre' || echo 'ROUGE : on ne commet pas')"

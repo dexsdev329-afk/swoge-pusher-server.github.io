@@ -23,6 +23,17 @@
  * mannequin (toutes les images des 5 actions, 4 directions) — le haut du saut
  * monte a 1,60 hauteur de corps au-dessus des pieds, la pointe de l'arme
  * s'ecarte de 0,75 ; a 0,55 (le plan) le saut touchait le haut de la case.
+ *
+ * DEUX planches par action (revue du 13/10/2026) :
+ *   - celle du JEU, <action>.webp : cases de 256, 8 images — la figure n'y fait que
+ *     128 px (les planches actuelles de pirate, piratesse, lieutenant : 225-229 px ;
+ *     les exemples AutoSprite : 166-191 px dans des cases de 250, 64 images) ;
+ *   - la HD, <action>_hd.webp : cases de 512 (figure de 256 px, ce que donne le clip
+ *     720p : 288 px de corps), 16 images (repos a 8 i/s au lieu de 4, marche a 16).
+ * La memoire decodee de chacune est dans la fiche (mo) : 8 Mo par action pour le jeu,
+ * 64 Mo pour la HD. Laquelle charge le jeu sur telephone se MESURE sur un telephone
+ * avant de trancher ; sprite_lab.html montre les deux. Les controles portent sur les
+ * images du jeu ; les images HD en plus passent les controles image par image.
  * ======================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -32,7 +43,8 @@ const T = require('./traite');
 const { choisis } = require('./choix');
 const Q = require('./controles');
 
-const DEFAUT = { C: 256, n: 8, corps: 0.5, sol: 0.88, dirs: ['se', 'sw', 'nw', 'ne'] };
+const DEFAUT = { C: 256, n: 8, corps: 0.5, sol: 0.88, dirs: ['se', 'sw', 'nw', 'ne'], hd: { C: 512, n: 16 } };
+const mo = (w, h) => Math.round(w * h * 4 / 1e5) / 10;      /* memoire decodee, Mo */
 /* Taille a l'ecran : dans les planches 4x4 actuelles, la figure (arme comprise)
    occupe 0,881 de la case en mediane — mesure du 12/10/2026 sur les 34 especes,
    16 cases chacune (min 0,516, max 0,969 ; pirate, piratesse 0,898, lieutenant,
@@ -46,9 +58,9 @@ const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest
 const opaque = (img) => { for (let i = 3; i < img.data.length; i += 4) if (img.data[i] < 250) return false; return true; };
 
 /** Les reperes de chaque direction sur une image de pose (bande de D emplacements, ou une seule figure). */
-async function reperesPose(fichier, dirs, cle) {
+async function reperesPose(fichier, dirs, cle, opts) {
   const img = await M.lisImage(fichier);
-  const d = opaque(img) ? T.detoure(img.data, img.w, img.h, cle) : img.data;
+  const d = opaque(img) ? T.detoure(img.data, img.w, img.h, cle, null, null, opts) : img.data;
   const lw = img.w / dirs.length, R = {};
   dirs.forEach((dir, i) => {
     const x0 = Math.round(i * lw), w = Math.round((i + 1) * lw) - x0, sub = new Uint8ClampedArray(w * img.h * 4);
@@ -65,11 +77,15 @@ async function reperesPose(fichier, dirs, cle) {
  * Rend la fiche (et l'ecrit). Les clips 'd' portent leur propre pose (une figure).
  */
 async function finis(o) {
-  const p = Object.assign({}, DEFAUT, o);
+  /* une option passee a undefined garde la valeur par defaut (hd en particulier) */
+  const p = Object.assign({}, DEFAUT);
+  for (const [k, v] of Object.entries(o)) if (v !== undefined) p[k] = v;
   const { C, n, corps, sol, dirs } = p;
   const cle = T.CLES[p.cle || 'magenta'] || p.cle;
   const t0 = Date.now();
-  const bande = p.pose ? await reperesPose(p.pose, dirs, cle) : null;
+  const dt = { chroma: p.chroma !== false };     /* p.chroma = false : l'essai qui montre les franges sans la reprise */
+  const HD = p.hd && p.hd.C && p.hd.n ? p.hd : null;
+  const bande = p.pose ? await reperesPose(p.pose, dirs, cle, dt) : null;
   /* l'ancienne planche 4x4 du meme monstre : la reference du halo (controles.js) */
   let haloRef = null;
   if (p.ancienne) {
@@ -90,7 +106,7 @@ async function finis(o) {
   for (const c of p.clips) {
     const s = await M.sonde(c.fichier);
     const parDir = c.mode === 'd' ? [c.dir] : dirs;
-    const ref = c.mode === 'd' ? await reperesPose(c.pose, [c.dir], cle) : bande;
+    const ref = c.mode === 'd' ? await reperesPose(c.pose, [c.dir], cle, dt) : bande;
     if (!ref) throw new Error('pose manquante pour ' + c.action);
     /* la video garde-t-elle le format de la pose ? (une bande letterboxee fausserait tout) */
     const ecartFormat = Math.abs((s.w / s.h) / (ref.w / ref.h) - 1);
@@ -99,21 +115,35 @@ async function finis(o) {
     sources.push({ action: c.action, mode: c.mode || 'bande', dir: c.dir || null, sha256: sha(c.fichier), w: s.w, h: s.h, fps: Math.round(s.fps * 1000) / 1000, images: s.n, dureeS: Math.round(s.n / s.fps * 100) / 100 });
     parDir.forEach((dir, i) => {
       const r = ref.R[dir];
-      if (!poseCase[dir] && c.mode !== 'd') {
+      if (!poseCase[dir] || (c.mode !== 'd' && poseCase[dir].mode === 'd')) {
         const pc = T.place(r.img, r.w, ref.h, corps * C / r.h, r.tx, r.pied, C, sol);
-        poseCase[dir] = pc.data;
+        poseCase[dir] = Object.assign(pc.data, { mode: c.mode || 'bande' });
       }
       clipsLus.push({ c, dir, i, r, sv, s, nDirs: parDir.length });
     });
   }
 
+  /* la palette des poses (residus) et les poses de chaque direction (direction, arme) */
+  const pal = Object.keys(poseCase).length ? Q.palette(Object.values(poseCase), C) : null;
+  const palInt = Object.keys(poseCase).length ? Q.palette(Object.values(poseCase), C, true) : null;
+  const dossier = path.join(p.sortie, p.nom);
+  fs.mkdirSync(dossier, { recursive: true });
+  const webp = await M.webpDispo();
+  /* les planches HD se remplissent ligne par ligne et s'ecrivent des que leur action est
+     complete (64 Mo chacune en memoire : une seule a la fois en mode bande) */
+  const hdPlanche = {}, hdLignes = {}, hdFichiers = {};
+  const ecrisHD = async (action) => {
+    let f = webp ? await M.ecrisWebp(hdPlanche[action], path.join(dossier, action + '_hd.webp')) : null;
+    if (!f) f = M.ecrisPng(hdPlanche[action], path.join(dossier, action + '_hd.png'));
+    hdFichiers[action] = f; delete hdPlanche[action];
+  };
   for (const { c, dir, i, r, sv, s, nDirs } of clipsLus) {
     const lw = s.w / nDirs, x0 = Math.round(i * lw), w = Math.round((i + 1) * lw) - x0;
     const V = await M.images(c.fichier, { x: x0, y: 0, w, h: s.h });
     const k = corps * C / (r.h * sv), ax = r.tx * sv, ay = r.pied * sv;
     const F = [], Fh = [], coupesF = [], sortieF = [];
     for (const f of V.frames) {
-      const d = T.detoure(f, V.w, V.h, cle);
+      const d = T.detoure(f, V.w, V.h, cle, null, null, dt);
       /* la figure touche-t-elle le bord gauche, droit ou haut de son emplacement ? (elle en sort) */
       let touche = false;
       for (let y = 0; y < V.h && !touche; y++) touche = d[(y * V.w) * 4 + 3] > T.ALPHA || d[(y * V.w + V.w - 1) * 4 + 3] > T.ALPHA;
@@ -122,14 +152,29 @@ async function finis(o) {
       F.push(pl.data); Fh.push(T.moitie(pl.data, C, C));
       coupesF.push(pl.coupes); sortieF.push(touche ? 1 : 0);
     }
-    const info = choisis(c.action, F, Fh, C, V.fps, dir, n);
+    const info = choisis(c.action, F, Fh, C, V.fps, dir, n, sol, HD ? HD.n : 0);
     const G = info.idx.map((j) => F[j]);
     /* ce qui compte : les images GARDEES (une figure qui deborde ailleurs dans le clip n'entre pas dans la planche) */
-    const coupes = info.idx.reduce((a, j) => a + coupesF[j], 0), sortie = info.idx.reduce((a, j) => a + sortieF[j], 0);
-    const res = Q.ligne(c.action, dir, G, C, info, poseCase[dir] || null, coupes, sortie, sol, F[0], haloRef);
+    const garde = info.idx.concat(HD ? info.idxHD.filter((j) => !info.idx.includes(j)) : []);
+    const coupes = garde.reduce((a, j) => a + coupesF[j], 0), sortie = garde.reduce((a, j) => a + sortieF[j], 0);
+    /* les images HD en plus de celles du jeu : controlees image par image avec elles */
+    const extra = HD ? info.idxHD.filter((j) => !info.idx.includes(j)).map((j) => F[j]) : [];
+    const res = Q.ligne(c.action, dir, G, C, info, poseCase[dir] || null, coupes, sortie, sol, F[0], haloRef, { poses: poseCase, corps, pal, palInt, extra, clip: F, fps: V.fps });
     controles.push(...res.controles);
+    if (HD) {
+      /* la ligne HD : les memes images du clip, placees a C_hd avec la MEME transformation */
+      const Ch = HD.C, kh = corps * Ch / (r.h * sv);
+      if (!hdPlanche[c.action]) { hdPlanche[c.action] = M.image(HD.n * Ch, dirs.length * Ch); hdLignes[c.action] = new Set(); }
+      info.idxHD.forEach((j, col) => {
+        const pl = T.place(T.detoure(V.frames[j], V.w, V.h, cle, null, null, dt), V.w, V.h, kh, ax, ay, Ch, sol).data;
+        const rr = dirs.indexOf(dir);
+        for (let y = 0; y < Ch; y++) hdPlanche[c.action].data.set(pl.subarray(y * Ch * 4, (y + 1) * Ch * 4), ((rr * Ch + y) * HD.n * Ch + col * Ch) * 4);
+      });
+      hdLignes[c.action].add(dir);
+      if (dirs.every((d) => hdLignes[c.action].has(d))) await ecrisHD(c.action);
+    }
     L[c.action] = L[c.action] || {};
-    L[c.action][dir] = { F: G, Fh, Fg: info.idx.map((j) => Fh[j]), mesures: res.mesures, info };
+    L[c.action][dir] = { F: G, mesures: res.mesures, info };
     if (c.action === 'walk' && info.pasCase) (pasWalk = pasWalk || []).push(info.pasCase);
     if (c.action === 'run' && info.pasCase) (pasRun = pasRun || []).push(info.pasCase);
   }
@@ -137,9 +182,7 @@ async function finis(o) {
 
   /* les planches : une par action, n colonnes x D lignes, dans l'ordre de `dirs` */
   const actions = {};
-  const dossier = path.join(p.sortie, p.nom);
-  fs.mkdirSync(dossier, { recursive: true });
-  const webp = await M.webpDispo();
+  for (const action of Object.keys(hdPlanche)) delete hdPlanche[action];      /* une action incomplete n'a pas de HD */
   for (const action of ORDRE.concat(Object.keys(L).filter((a) => !ORDRE.includes(a)))) {
     if (!L[action]) continue;
     if (dirs.some((d) => !L[action][d])) continue;      /* une action n'existe que complete */
@@ -147,12 +190,17 @@ async function finis(o) {
     dirs.forEach((dir, r) => L[action][dir].F.forEach((d, col) => {
       for (let y = 0; y < C; y++) img.data.set(d.subarray(y * C * 4, (y + 1) * C * 4), ((r * C + y) * n * C + col * C) * 4);
     }));
-    let f = webp ? await M.ecrisWebp(img, path.join(dossier, action + '.webp'), 90) : null;
+    let f = webp ? await M.ecrisWebp(img, path.join(dossier, action + '.webp')) : null;
     if (!f) f = M.ecrisPng(img, path.join(dossier, action + '.png'));
     const infos = dirs.map((d) => L[action][d].info);
     const moy = (k) => { const v = infos.map((x) => x[k]).filter((x) => Number.isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
-    actions[action] = { f: p.nom + '/' + path.basename(f), ips: Math.round(moy('ips') * 10) / 10, boucle: !!infos[0].boucle };
+    actions[action] = { f: p.nom + '/' + path.basename(f), n, case: C, ips: Math.round(moy('ips') * 10) / 10, boucle: !!infos[0].boucle,
+                        mo: mo(n * C, dirs.length * C), ko: Math.round(fs.statSync(f).size / 1024) };
     if (action === 'walk' || action === 'run') actions[action].pas = Math.round(moy('pasCase') * 1000) / 1000;
+    if (HD && hdFichiers[action]) {
+      actions[action].hd = { f: p.nom + '/' + path.basename(hdFichiers[action]), n: HD.n, case: HD.C, ips: Math.round(moy('ipsHD') * 10) / 10,
+                             mo: mo(HD.n * HD.C, dirs.length * HD.C), ko: Math.round(fs.statSync(hdFichiers[action]).size / 1024) };
+    }
   }
   const echecs = controles.filter((c) => !c.ok);
   const fiche = {
