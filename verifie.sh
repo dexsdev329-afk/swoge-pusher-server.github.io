@@ -311,6 +311,7 @@ lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs
 lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
 lance klingpage "$SITE" node kling_edition_page.test.js   # kling_essai.html « Edit a clip » : Kling O1 et Wan sur le meme clip, duree refusee dans la page, resultat Wan lu avec la session, 320 px
 lance klingentpage "$SITE" node kling_entier_page.test.js   # kling_essai.html « Whole video » : video brute, plan et prix au pire avant paiement, plafond ferme le bouton, 4 references, relance d une part, resultat lu avec la session, lien seulement apres
+lance connexionclic "$SITE" node connexion_clic.test.js   # formulaire « Sign in » de stakebubble : le centre de chaque bouton recoit son clic (14/10 : .x::after global couvrait « Connect wallet »)
 lance agentpage "$SITE" node agent_page.test.js   # SwogeAgentic : chaque geste visible, echappe, jeton jamais adresse, reprise par rid
 lance agentqr  "$SITE" node agent_qr.test.js   # le QR de la carte eSIM = le generateur prouve du portefeuille (200 empreintes segno), jamais un faux QR
 lance esimpage "$SITE" node esim_page.test.js   # boutique eSIM : chercher, payer Base (EIP-3009) ou Solana, lien secret, QR, ?order= retrouve, echappe, 320 px
