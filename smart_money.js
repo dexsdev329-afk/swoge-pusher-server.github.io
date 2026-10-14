@@ -40,8 +40,22 @@ const FUSEAU = 'Europe/Paris';
 const CONFIRMATIONS = 20;            // ~2 s sous la pointe (les repliques reculent de 3 blocs au plus, sonde)
 const VEILLE_RATTRAPAGE_MAX = 36000; // ~1 h : au-dela, l'ecart est saute et dit (CHOISI)
 const HEURE_BLOCS = 36000;           // ~1 h : 34 800 a 35 900 blocs par heure (sonde) ; la borne exacte se LIT (dernierBlocAvant)
-const DEBUT_HEURES = [4, 24];        // lecture par acheteur : les 50 premiers cherches dans les 4 h, puis 24 h (CHOISI ; BRODIE : 97 min)
-const RECHERCHE_NAISSANCE = 400000;  // +/- autour de l'estimation par l'heure de la source (ecart mesure : 5 664 blocs pour NILF)
+/* Lecture par acheteur : les 50 premiers DISTINCTS cherches dans les 4 h, puis
+   24 h, 72 h, puis toute la vie, dans la limite du budget (la suite reprend sur
+   le cache). Revue C5 du 13/10 : bornee a 24 h, NOVAAI n'avait que 7 premiers
+   (le 8e au bloc 41 136 454, le 50e 1 077 643 blocs apres le lancement, ~30 h) :
+   son taux de base reposait sur 5 issues. Le nombre lu est montre sous 50. */
+const DEBUT_HEURES = [4, 24, 72, Infinity];
+/* +/- autour de l'estimation, pour le seul Initialize v4 (unique par piscine).
+   En v2/v3 la naissance est le 1er journal de la piscine, cherche depuis le bloc
+   0 : revue INI-02, la fenetre de 400 000 blocs avait retenu pour astro le bloc
+   58 434 470 au lieu de 57 852 996 (tx 0xb31ee728…), 16 h trop tard, et effacait
+   toutes les marques du vrai lancement (13 wallets groupes dans son 1er bloc). */
+const RECHERCHE_NAISSANCE = 400000;
+/* Financement WETH lu sur les 65 536 blocs (~1 h 50) avant le lancement et la
+   1re heure : CHOISI (revue INI-05 : aucune mesure ; 10 lectures reelles, toutes
+   vides). L'ETH natif ne laisse aucun journal : il n'est PAS lu (dit). */
+const FINANCEMENT_AVANT = 65536;
 const LIGNES_TOUT_MAX = 60000;       // au-dela : lecture par acheteur. NILF = 28 387 Transfer = 17,4 Mo (sonde) ; CHOISI
 const NOUVEAU_S = 24 * 3600;         // un « nouveau » jeton : piscine ETH nee depuis moins de 24 h (CHOISI)
 const RETRAIT_RUG = 0.9;             // « liquidite retiree » : >= 90 % de ce qui a ete ajoute (CHOISI)
@@ -51,6 +65,7 @@ const VEILLE_CREUSE = 5;             // recherches de la 1re trace d'un jeton pa
    2 naissances et 4 achats ; 3 fois plus de marge) */
 const VEILLE_APPELS = 60, VEILLE_OCTETS = 30e6;
 const JOURNAL_MAX = 200;
+const PURGE_VEILLE_MS = 24 * 3600e3; // recus et tx de la veille : inutiles apres 24 h (NOUVEAU_S ; revue N8)
 /* Les rampes de lancement lues : l'evenement nomme le createur (topic 2).
    0x1eef… : 38 lancements de 0xa631… (LaunchMetadata, rapport verifie le 13/10). */
 const RAMPES = [{ adresse: '0x1eef016f22a943abc7dd11422edee9d235942104', topic: '0x04c10fe2cc69507cbff4c84fc99414ca507db49d5c39eff84b67ea319f43ccf0' }];
@@ -111,7 +126,9 @@ function cree(deps0) {
   let B = null, R = null, RV = null, S = null;
   let enCours = null;
   const journal = [];
-  const note = (genre, texte) => { journal.push({ t: deps.horloge(), genre, texte: String(texte).slice(0, 300) }); if (journal.length > JOURNAL_MAX) journal.shift(); };
+  /* tout ce qui est journalise ou servi passe par masque() : jamais l'URL du noeud (revue N5) */
+  const masque = (x) => { let t = String(x == null ? '' : x); if (C.rpcUrl) t = t.split(C.rpcUrl).join('<node>'); return t.replace(/URL: \S+/g, 'URL: <node>'); };
+  const note = (genre, texte) => { journal.push({ t: deps.horloge(), genre, texte: masque(texte).slice(0, 300) }); if (journal.length > JOURNAL_MAX) journal.shift(); };
   let instantane = null;
 
   async function allume() {
@@ -122,10 +139,10 @@ function cree(deps0) {
        budget, un SEUL espacement (rythme partage) : la veille ne s'arrete plus
        pendant une passe de 15 a 20 min (GeckoTerminal a 60 s), et le noeud ne
        voit jamais deux appels plus rapproches que la regle. */
-    const SR = require('./smart_rpc'), rythme = { prochain: 0 };
-    const opts = { url: C.rpcUrl || SR.URL_DEFAUT, prendre: deps.prendre, horloge: deps.horloge, dors: deps.dors, dossier: D, rythme };
+    const SR = require('./smart_rpc'), rythme = SR.nouveauRythme();
+    const opts = Object.assign({ url: C.rpcUrl || SR.URL_DEFAUT, prendre: deps.prendre, horloge: deps.horloge, dors: deps.dors, dossier: D, rythme }, deps.rpcOptions || {});
     R = deps.rpc || SR.cree(opts);
-    RV = deps.rpcVeille || deps.rpc || SR.cree(Object.assign({}, opts, { budgetAppels: VEILLE_APPELS, budgetOctets: VEILLE_OCTETS }));
+    RV = deps.rpcVeille || deps.rpc || SR.cree(Object.assign({}, opts, { budgetAppels: VEILLE_APPELS, budgetOctets: VEILLE_OCTETS, prefixeHash: 'V' }));
     S = deps.sources || SRC.cree({ prendre: deps.prendre, horloge: deps.horloge, dors: deps.dors, dossier: D });
     if (!instantane) instantane = construitVue();
   }
@@ -212,7 +229,7 @@ function cree(deps0) {
   async function migrations(P) {
     const { logs } = await R.lisLogs({ address: K.ADR.FABRIQUE_MIGRATIONS, topics: [K.TOPIC.MIGRATOR_CREATED] }, 0, P.pointe, P);
     const ev = logs.map(K.decode).filter(Boolean);
-    const txs = await R.transactions([...new Set(ev.map((e) => e.tx))]);
+    const txs = await R.transactions([...new Set(ev.map((e) => e.tx))], P.sure);
     const m = new Map();
     for (const e of ev) { const t = txs.get(e.tx); m.set(e.nouveau, { ancien: e.ancien, migrateur: e.migrateur, operateur: t ? String(t.from).toLowerCase() : null, bloc: e.bloc, tx: e.tx }); }
     return m;
@@ -231,9 +248,10 @@ function cree(deps0) {
       return init ? K.piscineEth(init, jeton) : null;
     }
     if (!K.estAdresse(paire.pool)) return null;
+    /* v2/v3 : le 1er journal de la piscine, depuis le bloc 0 (jamais dans une
+       fenetre : rien ne prouverait qu'aucun journal n'existe avant) */
     const f = { address: paire.pool };
-    let l = fen ? (await R.lisLogs(f, fen[0], fen[1], Object.assign({}, P, { premier: true }))).logs : [];
-    if (!l.length) l = (await R.lisLogs(f, 0, P.pointe, Object.assign({}, P, { premier: true }))).logs;
+    const l = (await R.lisLogs(f, 0, P.pointe, Object.assign({}, P, { premier: true }))).logs;
     if (!l.length) return null;
     const premier = l[0];
     const [t0, t1] = await R.multicall([{ to: paire.pool, fn: 'token0' }, { to: paire.pool, fn: 'token1' }]);
@@ -246,7 +264,7 @@ function cree(deps0) {
   async function createurDe(jeton, avant, P, M, piscine) {
     let tx = null;
     if (piscine) {
-      const rc = (await R.recus([piscine.tx])).get(piscine.tx);
+      const rc = (await R.recus([piscine.tx], P.sure)).get(piscine.tx);
       if (rc && (String(rc.contractAddress || '').toLowerCase() === jeton || (rc.logs || []).some((l) => String(l.address).toLowerCase() === jeton && String(l.topics[0]).toLowerCase() === K.TOPIC.TRANSFER && K.adrDe(l.topics[1]) === K.ADR.ETH_NATIF))) tx = piscine.tx;
     }
     if (!tx) {
@@ -254,7 +272,7 @@ function cree(deps0) {
       if (!logs.length) return { role: 'inconnu', qui: null, verifie: false };
       tx = String(logs[0].transactionHash).toLowerCase();
     }
-    const [rc, t] = [(await R.recus([tx])).get(tx), (await R.transactions([tx])).get(tx)];
+    const [rc, t] = [(await R.recus([tx], P.sure)).get(tx), (await R.transactions([tx], P.sure)).get(tx)];
     return Object.assign(K.attribueCreateur({ jeton, tx: t, recu: rc, migration: M.get(jeton) }), { jeton });
   }
 
@@ -285,6 +303,9 @@ function cree(deps0) {
     /* les piscines ETH du jeton (DexScreener token-pairs : toutes les paires) */
     const paires = (await S.pairesDs(jeton)) || [];
     const ethP = paires.filter((p) => p.base.adresse === jeton && SOCLE.has(p.quote.adresse) && p.quote.adresse !== K.ADR.USDG || p.quote.adresse === jeton && SOCLE.has(p.base.adresse) && p.base.adresse !== K.ADR.USDG);
+    /* DexScreener ne rend plus la paire (HM le 14/10 : « [] » alors que la piscine
+       v4 0xa8119e5e… vit) : la piscine deja lue, puis celle de la decouverte */
+    if (!ethP.length && row.piscine && (K.estPool4(row.piscine) || K.estAdresse(row.piscine))) ethP.push({ pool: row.piscine, version: row.version || (K.estPool4(row.piscine) ? 4 : null) });
     if (!ethP.length && row.source && K.estPool4(row.source)) ethP.push({ pool: row.source, version: 4 });
     const piscines = [];
     for (const p of ethP.slice(0, 4)) {
@@ -328,7 +349,7 @@ function cree(deps0) {
     let debut = evts;
     if (mode === 'acheteur') {
       for (const h of DEBUT_HEURES) {
-        const haut = Math.min(P.pointe, lance.bloc + h * HEURE_BLOCS);
+        const haut = h === Infinity ? P.pointe : Math.min(P.pointe, lance.bloc + h * HEURE_BLOCS);
         const T = (await R.lisLogs(fT, lance.bloc, haut, P)).logs;
         const Sw = []; for (const f of filtresSwap) Sw.push(...(await R.lisLogs(f, lance.bloc, haut, P)).logs);
         debut = [...T, ...Sw].map(K.decode).filter(Boolean);
@@ -347,6 +368,7 @@ function cree(deps0) {
     const tDe = (b) => blocsT.get(b);
 
     /* les evenements de la vie des 50 */
+    let txLues = null;
     if (mode === 'acheteur') {
       const txs = new Set();
       for (const p of premiers) {
@@ -355,11 +377,20 @@ function cree(deps0) {
           for (const l of logs) txs.add(String(l.transactionHash).toLowerCase());
         }
       }
-      const rcs = await R.recus([...txs]);
+      const rcs = await R.recus([...txs], P.sure);
       evts = [];
       for (const rc of rcs.values()) for (const l of rc.logs || []) { const e = K.decode(l); if (e) evts.push(e); }
+      txLues = new Set([...rcs.keys()].map((h) => String(h).toLowerCase()));
+    } else {
+      /* en lecture « tout », les FRAIS (crochet, routeur) ne sont que dans les
+         recus : on lit ceux des echanges des 50 premiers (revue C1) */
+      const P50 = new Set(premiers.map((p) => p.qui));
+      const leurs = [...new Set(K.echanges({ jeton, piscines, evts, infra }).filter((t) => P50.has(t.qui)).map((t) => t.tx))];
+      const rcs = await R.recus(leurs, P.sure);
+      for (const rc of rcs.values()) for (const l of rc.logs || []) { const e = K.decode(l); if (e && (e.genre === 'frais_crochet' || e.genre === 'frais_routeur')) evts.push(e); }
+      txLues = new Set([...rcs.keys()].map((h) => String(h).toLowerCase()));
     }
-    const trades = K.echanges({ jeton, piscines, evts, infra });
+    const trades = K.echanges({ jeton, piscines, evts, infra, txLues });
     /* le prix : le dernier Swap lu de la piscine principale */
     let dernierSwap = null;
     if (mode === 'tout') {
@@ -386,13 +417,19 @@ function cree(deps0) {
     }
     const soldes = await R.soldes(jeton, premiers.map((p) => p.qui));
 
-    /* les financements lus (WETH du createur vers les 50, avant leur achat) */
+    /* les financements lus (WETH du createur — et, pour une migration, du
+       createur de l'ANCIEN jeton : revue INI-05 — vers les 50, avant leur achat) */
     let financements = [];
-    if (cr.qui && premiers.length) {
-      const { logs } = await R.lisLogs({ address: K.ADR.WETH, topics: [K.TOPIC.TRANSFER, K.pad32(cr.qui), premiers.map((p) => K.pad32(p.qui))] }, Math.max(0, lance.bloc - 65536), lance.bloc + HEURE_BLOCS, P);
+    const financeurs = [...new Set([cr.qui, ancien && ancien.createur].filter((a) => a && K.estAdresse(a)))];
+    if (financeurs.length && premiers.length) {
+      const { logs } = await R.lisLogs({ address: K.ADR.WETH, topics: [K.TOPIC.TRANSFER, financeurs.map(K.pad32), premiers.map((p) => K.pad32(p.qui))] }, Math.max(0, lance.bloc - FINANCEMENT_AVANT), Math.min(P.pointe, lance.bloc + HEURE_BLOCS), P);
       financements = logs.map(K.decode).filter(Boolean);
     }
     const groupes = K.marqueGroupes(achatsHeure);
+    const pairesH = K.marquePaires(achatsHeure.map((a) => ({ qui: a.qui, cle: a.bloc, bloc: a.bloc, eth: a.eth, tx: a.tx, jeton })));
+    /* le drapeau « contrat » (revue INI-14 : 1 contrat sur 291 beneficiaires, NILF
+       #13) : eth_getCode ni '0x' ni 0xef0100… (delegation EIP-7702) */
+    const codesW = premiers.length ? await R.codes(premiers.map((p) => p.qui)) : new Map();
     const parW = new Map();
     for (const e of evts) if (e.genre === 'transfer' && e.jeton === jeton) for (const a of [e.de, e.vers]) { if (!parW.has(a)) parW.set(a, []); parW.get(a).push(e); }
     const exclusSorties = new Set([K.ADR.POOL_MANAGER_V4, ...piscines.map((p) => p.pool).filter(K.estAdresse), ...K.BRULES]);
@@ -406,15 +443,23 @@ function cree(deps0) {
       const g = K.gain({ entre: pos.entre, sorti: pos.sorti, solde: solde == null ? null : BigInt(solde), prix });
       const txEch = new Set(trades.filter((t) => t.qui === p.qui).map((t) => t.tx));
       const sorties = tr.filter((t) => t.de === p.qui && !txEch.has(t.tx) && !exclusSorties.has(t.vers));
+      const relais = K.marqueRelais(pos, sorties);
+      if (relais && pos.premierAchat) {
+        /* le nonce de la tx d'achat (revue INI-11) : montre, pas une condition */
+        const t1 = (await R.transactions([pos.premierAchat.tx], P.sure)).get(pos.premierAchat.tx);
+        if (t1 && t1.nonce != null) relais.nonceAchat = parseInt(t1.nonce, 16);
+      }
       const mq = K.marques({
-        qui: p.qui, groupes,
-        relais: K.marqueRelais(pos, sorties),
-        renvoi: K.marqueRenvoi(p.qui, tr, proches),
+        qui: p.qui, groupes, paires: pairesH,
+        relais,
+        renvoi: K.marqueRenvoi(p.qui, tr, proches, txEch),
         finance: pos.premierAchat ? K.marqueFinance(p.qui, pos.premierAchat.bloc, financements, proches) : null,
       });
       const t = tDe(p.bloc);
+      const code = codesW.get(p.qui);
       lignes.push({ jeton, wallet: p.qui, rang, bloc: p.bloc, t: t == null ? null : t, minutes: K.minutesApres(t, t0), tot: finHeure != null && p.bloc <= finHeure, tx: p.tx,
-        entre: pos.entre, sorti: pos.sorti, solde: solde == null ? null : BigInt(solde), gain: g, issue: K.issue(pos, g), cout_connu: pos.coutConnu, marques: mq });
+        entre: pos.entre, sorti: pos.sorti, solde: solde == null ? null : BigInt(solde), gain: g, issue: K.issue(pos, g), cout_connu: pos.coutConnu, marques: mq,
+        mise: p.eth, frais: pos.frais, frais_lus: pos.fraisLus, contrat: code == null ? null : (code !== '0x' && !/^0xef0100/i.test(code)) });
     }
     /* la recette */
     const achatCreateur = tradesHeure.some((t) => t.sens === 'achat' && proches.has(t.qui));
@@ -423,7 +468,7 @@ function cree(deps0) {
       const { logs } = await R.lisLogs({ address: jeton, topics: [K.TOPIC.TRANSFER, K.pad32(cr.qui)] }, lance.bloc, Math.min(P.pointe, lance.bloc + 24 * HEURE_BLOCS), P);
       bruleParCreateur = logs.map(K.decode).some((e) => e && K.BRULES.has(e.vers));
     }
-    const robots = finMinute == null ? null : new Set(tradesHeure.filter((t) => t.sens === 'achat' && t.bloc <= finMinute).map((t) => t.qui)).size;
+    const robots = finMinute == null ? null : new Set(tradesHeure.filter((t) => t.sens === 'achat' && t.bloc <= finMinute).map((t) => t.qui)).size;   // acheteurs lus ; « robots » : deduit
     const prof = await S.profilDs(jeton);
     const recette = K.recette({ achatCreateur, bruleParCreateur, robots, profilApresS: prof && prof.t && t0 != null ? Math.round(prof.t / 1000 - t0) : null });
 
@@ -441,11 +486,11 @@ function cree(deps0) {
 
     /* le pic : cloture journaliere x totalSupply LU (Not verified : prix exterieur) */
     let pic = row.pic_usd != null ? { usd: row.pic_usd, jour: row.pic_jour, source: row.pic_source } : null;
-    const offreUnites = Number(infos.offre / 10n ** BigInt(Math.max(0, infos.decimales - 6))) / 1e6;
+    const offreUnites = K.unites(infos.offre, infos.decimales);
     const r = await S.pic(lance.pool, jeton);
     if (r && r.pic) pic = { usd: r.pic.prix * offreUnites, jour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), source: 'geckoterminal daily close × totalSupply read on chain', meche: r.meche ? r.meche.prix * offreUnites : null };
 
-    const base = K.tauxBase(lignes.map((l) => ({ tot: l.tot, issue: l.issue })));
+    const base = K.tauxBase(lignes.map((l) => ({ tot: l.tot, issue: l.issue, marques: l.marques })));
     B.transaction(() => {
       B.ecris('DELETE FROM acheteurs WHERE jeton = ?', [jeton]);
       for (const l of lignes) B.pose('acheteurs', l);
@@ -496,25 +541,54 @@ function cree(deps0) {
   }
 
   // ---------------------------------------------------------- 3. recalcul
+  /** Un jeton compte pour le score s'il a passe le seuil : pic ou capitalisation
+   *  actuelle (revue C4 : HM a 587 853 $ et TROLL a 955 578 $ comptaient comme
+   *  projets ; NOVAAI a 434 M$ actuels comptait 0 reussite faute de pic). */
+  const auDessus = (j) => Math.max(j.pic_usd || 0, j.cap_usd || 0) >= K.SEUIL_CAP_USD;
   function recalcule() {
-    const jetons = B.tous("SELECT * FROM jetons WHERE statut = 'lu'");
-    const bases = new Map(jetons.map((j) => [j.adresse, { p: j.base_n ? j.base_gagnants / j.base_n : null, n: j.base_n }]));
-    const parts = new Map();
-    for (const a of B.tous('SELECT * FROM acheteurs')) {
+    const tousLus = B.tous("SELECT * FROM jetons WHERE statut = 'lu'");
+    const jetons = tousLus.filter(auDessus);
+    const retenus = new Set(jetons.map((j) => j.adresse));
+    const lignes = B.tous('SELECT * FROM acheteurs');
+    /* les marques ENTRE jetons (revue INI-01 et INI-04), recalculees a chaque
+       fois sur tous les jetons lus : co-entree, et paires repetees d'un jeton a
+       l'autre (meme bloc, mise du 1er achat a +/- 2 %) */
+    const coentree = K.marqueCoentree(lignes.filter((a) => a.bloc != null).map((a) => ({ wallet: a.wallet, jeton: a.jeton, bloc: a.bloc, tx: a.tx })));
+    const pairesX = K.marquePaires(lignes.filter((a) => a.mise != null && a.bloc != null).map((a) => ({ qui: a.wallet, cle: a.jeton + ':' + a.bloc, bloc: a.bloc, jeton: a.jeton, eth: BigInt(a.mise), tx: a.tx })));
+    const marquesDe = (a) => {
+      const l = jsonOu(a.marques, []).filter((m) => m.type !== 'coentree' && !(m.type === 'paire' && m.preuve && m.preuve.croise));
+      if (coentree.has(a.wallet)) l.push({ type: 'coentree', preuve: coentree.get(a.wallet) });
+      const px = pairesX.get(a.wallet);
+      if (px && new Set(px.blocs.map((b) => b.jeton)).size >= 2 && !l.some((m) => m.type === 'groupe' || m.type === 'paire')) l.push({ type: 'paire', preuve: Object.assign({ croise: true }, px) });
+      return l;
+    };
+    const parts = new Map(), parJeton = new Map();
+    const nouvellesMarques = [];
+    for (const a of lignes) {
+      const mq = marquesDe(a);
+      if (JSON.stringify(mq) !== (a.marques || '[]')) nouvellesMarques.push([mq, a.jeton, a.wallet]);
+      const x = { jeton: a.jeton, tot: !!a.tot, issue: a.issue, gain: big(a.gain), minutes: a.minutes, marques: mq };
+      if (!parJeton.has(a.jeton)) parJeton.set(a.jeton, []);
+      parJeton.get(a.jeton).push(x);
+      if (!retenus.has(a.jeton)) continue;      // sous 1 M$ : montre, jamais compte dans un score
       if (!parts.has(a.wallet)) parts.set(a.wallet, []);
-      parts.get(a.wallet).push({ jeton: a.jeton, tot: !!a.tot, issue: a.issue, gain: big(a.gain), minutes: a.minutes, marques: jsonOu(a.marques, []) });
+      parts.get(a.wallet).push(x);
     }
+    /* le taux de base de chaque jeton : sans les wallets marques (revue C6) */
+    const bases = new Map([...parJeton].map(([j, l]) => [j, K.tauxBase(l)]));
     const t = Math.floor(deps.horloge() / 1000);
     B.transaction(() => {
+      for (const [mq, j, w] of nouvellesMarques) B.ecris('UPDATE acheteurs SET marques = ? WHERE jeton = ? AND wallet = ?', [mq, j, w]);
+      for (const j of tousLus) { const b = bases.get(j.adresse); B.ecris('UPDATE jetons SET base_n = ?, base_gagnants = ? WHERE adresse = ?', [b ? b.n : null, b ? b.gagnants : null, j.adresse]); }
       B.ecris('DELETE FROM wallets');
       for (const [w, l] of parts) {
         const s = K.score(l, bases);
-        B.pose('wallets', { adresse: w, projets: s.projets, connus: s.connus, gagnants: s.gagnants, gain_total: s.gainTotal, delai_moyen: s.delaiMoyen,
+        B.pose('wallets', { adresse: w, projets: s.projets, connus: s.connus, jugeables: s.jugeables, gagnants: s.gagnants, gain_total: s.gainTotal, delai_moyen: s.delaiMoyen,
           attendu: s.attendu, ecart_type: s.ecartType, z: s.z, initie: s.initie, smart: s.smart, verdict: s.verdict, maj_t: t });
       }
       /* les createurs (deployeur ou lanceur) et les operateurs de migration */
       const parC = new Map();
-      for (const j of jetons) {
+      for (const j of tousLus) {
         if (!j.createur) continue;
         const k = j.createur;
         if (!parC.has(k)) parC.set(k, { role: j.role_createur, l: [] });
@@ -526,24 +600,38 @@ function cree(deps0) {
       for (const [c, { role, l }] of parC) {
         const liq = l.map((j) => jsonOu(j.liquidite, {}));
         const g = garde.get(c) || {};
+        const drap = [];
+        for (const j of l) for (const d of jsonOu(j.drapeaux, [])) drap.push(Object.assign({ jeton: j.adresse, symbole: j.symbole, decimales: j.decimales }, d));
+        for (const j of l) { const x = jsonOu(j.liquidite, {}); if (x.retirePct != null && x.retirePct >= RETRAIT_RUG * 100) drap.push({ type: 'retrait', jeton: j.adresse, symbole: j.symbole, pct: x.retirePct, bloc: x.plusGrosRetrait && x.plusGrosRetrait.bloc, tx: x.plusGrosRetrait && x.plusGrosRetrait.tx }); }
         B.pose('createurs', { adresse: c, role, lancements: l.length,
-          reussites: l.filter((j) => j.pic_usd != null && j.pic_usd >= K.SEUIL_CAP_USD).length,
+          reussites: l.filter(auDessus).length,
+          reussites_connues: l.filter((j) => j.pic_usd != null || j.cap_usd != null).length,
           retraits: liq.filter((x) => x.retirePct != null && x.retirePct >= RETRAIT_RUG * 100).length,
           lp_brulees: liq.filter((x) => x.brulePct != null && x.brulePct >= 99).length,
-          drapeaux: l.reduce((n, j) => n + jsonOu(j.drapeaux, []).length, 0),
+          drapeaux: l.reduce((n, j) => n + jsonOu(j.drapeaux, []).length, 0), drapeaux_liste: drap,
           rampes: g.rampes == null ? null : g.rampes, migrations: g.migrations == null ? null : g.migrations,
           jetons: l.map((j) => j.adresse), maj_t: t });
       }
       B.ecris('DELETE FROM liens');
       const premiers = new Map();
-      for (const a of B.tous('SELECT jeton, wallet FROM acheteurs')) { if (!premiers.has(a.jeton)) premiers.set(a.jeton, []); premiers.get(a.jeton).push(a.wallet); }
-      for (const L of K.liens(jetons.map((j) => ({ jeton: j.adresse, createur: j.role_createur === 'deployeur' || j.role_createur === 'lanceur' || j.role_createur === 'migration' ? j.createur : null,
+      for (const a of lignes) { if (!premiers.has(a.jeton)) premiers.set(a.jeton, []); premiers.get(a.jeton).push(a.wallet); }
+      /* le VRAI createur : pour une migration, celui de l'ancien jeton (revue
+         INI-06) ; l'operateur a son propre lien */
+      const vrai = (j) => {
+        if (j.role_createur === 'migration') { const an = (jsonOu(j.details, {}) || {}).ancien; return an && an.createur && (an.role === 'deployeur' || an.role === 'lanceur') ? an.createur : null; }
+        return j.role_createur === 'deployeur' || j.role_createur === 'lanceur' ? j.createur : null;
+      };
+      for (const L of K.liens(tousLus.map((j) => ({ jeton: j.adresse, createur: vrai(j), operateur: j.role_createur === 'migration' ? j.createur : null,
         premiers: premiers.get(j.adresse) || [], recette: jsonOu(j.recette, null), ancien: j.ancien })))) B.pose('liens', L);
     });
   }
   /** Les lancements comptes ailleurs que dans nos jetons : rampes connues et
    *  migrations (une fois par jour et par createur). */
   async function compteLancements(P, M) {
+    /* une fois par jour (revue N1 : relue a chaque passe depuis le bloc 0, la
+       rampe 0x1eef coutait 50,5 Mo et finissait la passe en « abandon ») */
+    const jour = heureLocale(deps.horloge()).jour;
+    if (B.meta('lancements_jour') === jour) return;
     const parOp = new Map();
     for (const m of M.values()) if (m.operateur) parOp.set(m.operateur, (parOp.get(m.operateur) || 0) + 1);
     /* toute la rampe en une lecture (filtre simple : cellules fermees en cache,
@@ -554,6 +642,7 @@ function cree(deps0) {
       const c = K.adrDe(l.topics[2]); parRampe.set(c, (parRampe.get(c) || 0) + 1);
     }
     for (const c of B.tous('SELECT adresse FROM createurs')) B.ecris('UPDATE createurs SET rampes = ?, migrations = ? WHERE adresse = ?', [parRampe.get(c.adresse) || 0, parOp.get(c.adresse) || 0, c.adresse]);
+    B.meta('lancements_jour', jour);
   }
 
   // ---------------------------------------------------------- la passe
@@ -562,6 +651,7 @@ function cree(deps0) {
     enCours = (async () => {
       await allume();
       R.nouvellePasse(); S.nouvellePasse(); S.purge();
+      if (R.purgeVeille) R.purgeVeille(PURGE_VEILLE_MS);
       const debut = Math.floor(deps.horloge() / 1000);
       const bilan = { retenus: 0, pics: 0, lus: 0, statut: 'ok' };
       let P = null;
@@ -578,10 +668,12 @@ function cree(deps0) {
         await compteLancements(P, M);
       } catch (e) {
         bilan.statut = e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur';
-        bilan.erreur = String(e.message || e).slice(0, 200);
+        bilan.erreur = masque(e.message || e).slice(0, 200);
         note('passe', bilan.statut + ' : ' + bilan.erreur);
         try { recalcule(); } catch (x) { /* le recalcul ne masque pas la cause */ }
       }
+      bilan.rpc = R.etat.passe.rpc;            // appels JSON-RPC (un lot de 20 en compte 20 ; revue N9)
+      if (R.etat.cachePlein) { bilan.cachePlein = true; note('cache', 'cache brut plein : les lectures ne sont plus gardees, chaque passe retelecharge'); }
       B.pose('passes', { genre: 'passe', debut, fin: Math.floor(deps.horloge() / 1000), statut: bilan.statut, appels: R.etat.passe.appels, octets: R.etat.passe.octets,
         gt: S.etat.gt.passe, ds: S.etat.ds.passe, jetons: bilan.lus, detail: bilan });
       await rapportSiHeure();
@@ -620,10 +712,11 @@ function cree(deps0) {
         nes.push({ e, jeton });
       }
       const txs = [...new Set(nes.map((n) => n.e.tx))];
-      const rcs = await RV.recus(txs), tts = await RV.transactions(txs);
+      const rcs = await RV.recus(txs, P.sure), tts = await RV.transactions(txs, P.sure);
       const hs = await RV.horodatages([...new Set(nes.map((n) => n.e.bloc))], P.sure);
       const connus = new Map(B.tous("SELECT * FROM createurs WHERE role IN ('deployeur','lanceur')").map((c) => [c.adresse, c]));
       let creusees = 0;
+      const aJuger = [];
       for (const { e, jeton } of nes) {
         const rc = rcs.get(e.tx), tx = tts.get(e.tx);
         let a = K.attribueCreateur({ jeton, tx, recu: rc, migration: null });
@@ -636,14 +729,23 @@ function cree(deps0) {
           const { logs } = await RV.lisLogs({ address: jeton }, Math.max(0, e.bloc - 24 * HEURE_BLOCS), e.bloc, Object.assign({}, PP, { premier: true }));
           if (logs.length) {
             const h = String(logs[0].transactionHash).toLowerCase();
-            const rc2 = (await RV.recus([h])).get(h), tx2 = (await RV.transactions([h])).get(h);
+            const rc2 = (await RV.recus([h], P.sure)).get(h), tx2 = (await RV.transactions([h], P.sure)).get(h);
             const b = K.attribueCreateur({ jeton, tx: tx2, recu: rc2, migration: null });
             if (b.verifie) a = b;
           }
         }
         B.pose('creations', { pool: e.pool, jeton, version: e.version, bloc: e.bloc, t: hs.get(e.bloc) || null, tx: e.tx, createur: a.qui, role: a.role, verifie: a.verifie, via: a.via || null });
         bilan.creations++;
-        const al = K.alerteCreateur(Object.assign({}, a, { jeton }), connus);
+        aJuger.push({ a, jeton });
+      }
+      /* les alertes APRES avoir pose toutes les naissances de la veille : un
+         LANCEUR AUTOMATIQUE (>= LANCEUR_AUTO jetons en 24 h, ceux de cette veille
+         compris ; revue INI-07) n'a pas d'alerte jeton par jeton, un resume dans
+         le rapport */
+      for (const { a, jeton } of aJuger) {
+        const n24 = a.qui ? (B.un('SELECT count(DISTINCT jeton) n FROM creations WHERE createur = ? AND (t >= ? OR t IS NULL)', [a.qui, Math.floor(deps.horloge() / 1000) - NOUVEAU_S]) || {}).n || 0 : 0;
+        const al = K.alerteCreateur(Object.assign({}, a, { jeton }), connus, { lancements24h: n24 });
+        if (!al && K.estLanceurAuto(n24) && connus.has(a.qui)) bilan.autoTaisees = (bilan.autoTaisees || 0) + 1;
         if (al) {
           const c = connus.get(al.createur);
           const palm = { lancements: c.lancements, reussites: c.reussites, retraits: c.retraits, drapeaux: c.drapeaux };
@@ -658,7 +760,7 @@ function cree(deps0) {
         const { logs } = await RV.lisLogs({ topics: [K.TOPIC.TRANSFER, null, smart.map(K.pad32)] }, de, haut, PP);
         const recents = new Map(B.tous('SELECT * FROM creations WHERE t >= ?', [Math.floor(deps.horloge() / 1000) - NOUVEAU_S]).map((c) => [c.jeton, c]));
         const vises = logs.map(K.decode).filter((t) => t && recents.has(t.jeton));
-        const rcs2 = await RV.recus([...new Set(vises.map((t) => t.tx))]);
+        const rcs2 = await RV.recus([...new Set(vises.map((t) => t.tx))], P.sure);
         const h2 = await RV.horodatages([...new Set(vises.map((t) => t.bloc))], P.sure);
         for (const t of vises) {
           const c = recents.get(t.jeton);
@@ -689,9 +791,12 @@ function cree(deps0) {
       instantane = construitVue();
       return bilan;
     } catch (e) {
-      note('veille', (e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur') + ' : ' + String(e.message || e).slice(0, 200));
-      try { B.pose('passes', { genre: 'veille', debut: Math.floor(deps.horloge() / 1000), fin: Math.floor(deps.horloge() / 1000), statut: e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur', detail: { erreur: String(e.message || e).slice(0, 200) } }); B.sauve(); } catch (x) { /* rien */ }
-      return { fait: 'erreur', erreur: String(e.message || e) };
+      const msg = masque(e.message || e).slice(0, 200);
+      note('veille', (e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur') + ' : ' + msg);
+      try { B.pose('passes', { genre: 'veille', debut: Math.floor(deps.horloge() / 1000), fin: Math.floor(deps.horloge() / 1000), statut: e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur', detail: { erreur: msg } }); B.sauve(); } catch (x) { /* rien */ }
+      /* l'instantane est refait aussi en cas d'echec : la page doit voir la veille ratee (revue P4) */
+      try { instantane = construitVue(); } catch (x) { /* rien */ }
+      return { fait: 'erreur', erreur: msg };
     } finally { veilleEnCours = false; }
   }
   const COTE_ETH = (e) => K.COTES_ETH.has(e.c0) || K.COTES_ETH.has(e.c1);
@@ -722,24 +827,49 @@ function cree(deps0) {
     const L = { tx: (h) => `${deps.explorer}/tx/${h}`, a: (x) => `${deps.explorer}/address/${x}` };
     const top = B.tous('SELECT * FROM wallets WHERE smart = 1 ORDER BY gagnants DESC, z DESC LIMIT 20');
     const nouveaux = B.tous('SELECT * FROM jetons WHERE vu_t >= ? ORDER BY COALESCE(pic_usd, cap_usd, 0) DESC LIMIT 10', [t - 24 * 3600]);
-    const groupes = B.tous("SELECT jeton, wallet, marques FROM acheteurs WHERE marques LIKE '%groupe%'");
-    const parBloc = new Map();
-    for (const g of groupes) for (const m of jsonOu(g.marques, [])) if (m.type === 'groupe') { const k = g.jeton + ':' + m.preuve.bloc; if (!parBloc.has(k)) parBloc.set(k, { jeton: g.jeton, bloc: m.preuve.bloc, tx: m.preuve.tx, w: [] }); parBloc.get(k).w.push(g.wallet); }
+    const gl = groupesVus().slice(0, 10);
     const v = [], nv = [];
     v.push(`${top.length} wallet${top.length === 1 ? '' : 's'} pass the owner’s rule (early and up on 3+ tokens over $1M, no insider mark)`);
-    for (const w of top) nv.push(`<a href="${L.a(w.adresse)}">${K.court(w.adresse)}</a> — up on ${w.gagnants} of ${w.projets}, ${K.zTexte(w)} vs the base rate; ${K.esc(K.verdictTexte(w))}`);
+    for (const w of top) nv.push(`<a href="${L.a(w.adresse)}">${K.court(w.adresse)}</a> — up on ${w.gagnants} of ${w.connus} known (${w.projets} early), ${K.zTexte(w)} vs the base rate; ${K.esc(K.verdictTexte(w))}`);
     v.push(`${nouveaux.length} new token${nouveaux.length === 1 ? '' : 's'} over $1M spotted in 24 h`);
     for (const j of nouveaux) nv.push(`${K.esc(j.symbole || K.court(j.adresse))}: ${j.pic_usd != null ? 'peak ' + K.usd(j.pic_usd) : 'now ' + K.usd(j.cap_usd)} (GeckoTerminal/DexScreener) <a href="https://dexscreener.com/robinhood/${j.adresse}">DexScreener</a>`);
-    const gl = [...parBloc.values()].filter((g) => g.w.length >= K.GROUPE_MIN).slice(0, 10);
-    v.push(`${gl.length} insider group${gl.length === 1 ? '' : 's'} (${K.GROUPE_MIN}+ wallets, same block, buys within ±${K.GROUPE_ECART * 100}%)`);
-    for (const g of gl) v.push(`${g.w.length} wallets in block ${K.milliers(g.bloc)} on ${K.court(g.jeton)} (<a href="${L.tx(g.tx)}">tx ${K.court(g.tx)}</a>)`);
+    /* le MOTIF est lu sur la chaine ; « initie » est une deduction (revue INI-08) */
+    v.push(`${gl.length} same-block buy group${gl.length === 1 ? '' : 's'} (${K.GROUPE_MIN}+ wallets, same block, buys within ±${K.GROUPE_ECART * 100}%)`);
+    for (const g of gl) v.push(`${g.n} wallets in block ${K.milliers(g.bloc)} on ${K.court(g.jeton)}, ${g.wallets.length} among its first ${K.N_ACHETEURS} (<a href="${L.tx(g.tx)}">tx ${K.court(g.tx)}</a>)`);
+    if (gl.length) nv.push('a same-block buy group is read as an insider pattern: some groups are chance (busy blocks)');
+    const li = B.tous('SELECT * FROM liens').filter((x) => x.type !== 'migration');
+    if (li.length) v.push(`${li.length} link${li.length === 1 ? '' : 's'} between tokens read (same creator, same migration operator, shared first buyers, same recipe) — see the page`);
+    const auto = lanceursAuto();
+    if (auto.length) v.push(`${auto.length} automated launcher${auto.length === 1 ? '' : 's'} (${K.LANCEUR_AUTO}+ launches in 24 h, ${auto.reduce((n, a) => n + a.n, 0)} launches): no alert per token`);
     return `<b>Smart money — daily report</b>\n` + K.sections(v, nv) + `\nAlerts only: nothing is ever bought.`;
+  }
+
+  /** Les groupes d'achat dans le meme bloc : listes des qu'UN des 50 premiers
+   *  en est membre, avec la taille reelle du groupe (revue INI-09 : HM bloc
+   *  49 405 448 = 16 wallets, la page en montrait 9 ; 49 groupes existaient sur
+   *  6 jetons, 13 etaient montres). */
+  function groupesVus() {
+    const parBloc = new Map();
+    for (const g of B.tous("SELECT jeton, wallet, marques FROM acheteurs WHERE marques LIKE '%groupe%'")) for (const m of jsonOu(g.marques, [])) if (m.type === 'groupe' && m.preuve) {
+      const k = g.jeton + ':' + m.preuve.bloc;
+      if (!parBloc.has(k)) parBloc.set(k, { jeton: g.jeton, bloc: m.preuve.bloc, tx: m.preuve.tx, n: m.preuve.n || 0, acheteursBloc: m.preuve.acheteursBloc || null, charge: (m.preuve.acheteursBloc || 0) > K.BLOC_CHARGE, wallets: [] });
+      const x = parBloc.get(k); x.wallets.push(g.wallet); x.n = Math.max(x.n, m.preuve.n || 0);
+    }
+    const l = [...parBloc.values()];
+    for (const g of l) g.n = Math.max(g.n, g.wallets.length);
+    l.sort((a, b) => b.n - a.n || b.wallets.length - a.wallets.length);
+    return l;
+  }
+  /** Les wallets qui ont lance au moins LANCEUR_AUTO jetons en 24 h (veille). */
+  function lanceursAuto() {
+    const t = Math.floor(deps.horloge() / 1000);
+    return B.tous('SELECT createur, count(DISTINCT jeton) n FROM creations WHERE t >= ? AND createur IS NOT NULL GROUP BY createur HAVING n >= ? ORDER BY n DESC', [t - NOUVEAU_S, K.LANCEUR_AUTO]).map((x) => ({ adresse: x.createur, n: x.n }));
   }
 
   // ---------------------------------------------------------- la vue (routes)
   const s = (x) => (x == null ? null : String(x));
   function vueWallet(w) {
-    return { adresse: w.adresse, projets: w.projets, connus: w.connus, gagnants: w.gagnants, gain_total_wei: s(w.gain_total), delai_moyen_min: w.delai_moyen,
+    return { adresse: w.adresse, projets: w.projets, connus: w.connus, jugeables: w.jugeables, gagnants: w.gagnants, gain_total_wei: s(w.gain_total), delai_moyen_min: w.delai_moyen,
       attendu: w.attendu, z: w.z, smart: !!w.smart, initie: !!w.initie, verdict: w.verdict };
   }
   function vueJeton(j) {
@@ -747,36 +877,41 @@ function cree(deps0) {
       lancement: j.lancement_bloc != null ? { bloc: j.lancement_bloc, t: j.lancement_t, tx: j.lancement_tx, piscine: j.piscine, version: j.version } : null,
       createur: j.createur ? { adresse: j.createur, role: j.role_createur, verifie: !!j.createur_verifie, bloc: j.createur_bloc, tx: j.createur_tx, via: j.via } : null,
       ancien: j.ancien, details: jsonOu(j.details, null),
-      pic: j.pic_usd != null ? { usd: j.pic_usd, jour: j.pic_jour, source: j.pic_source } : null,
-      cap: j.cap_usd != null ? { usd: j.cap_usd, source: j.cap_source } : null,
+      /* la piscine GeckoTerminal de la source (lien de la page, revue P3) */
+      pic: j.pic_usd != null ? { usd: j.pic_usd, jour: j.pic_jour, source: j.pic_source, piscine: j.piscine || j.source || null } : null,
+      cap: j.cap_usd != null ? { usd: j.cap_usd, source: j.cap_source, piscine: j.source || null } : null,
       prix: j.prix_bloc != null ? { bloc: j.prix_bloc } : null,
       base: j.base_n != null ? { n: j.base_n, gagnants: j.base_gagnants } : null,
       recette: jsonOu(j.recette, null), drapeaux: jsonOu(j.drapeaux, []), liquidite: jsonOu(j.liquidite, null), profil_t: j.profil_t };
   }
   function construitVue() {
     if (!B) return { actif: false, pret: false, mode: C.mode };
-    const dern = (g) => { const p = B.un('SELECT * FROM passes WHERE genre = ? ORDER BY id DESC LIMIT 1', [g]); return p ? Object.assign({}, p, { detail: jsonOu(p.detail, null) }) : null; };
+    const dern = (g, ok) => { const p = B.un('SELECT * FROM passes WHERE genre = ?' + (ok ? " AND statut = 'ok'" : '') + ' ORDER BY id DESC LIMIT 1', [g]); return p ? Object.assign({}, p, { detail: jsonOu(p.detail, null) }) : null; };
     const wallets = B.tous('SELECT * FROM wallets ORDER BY smart DESC, gagnants DESC, z DESC LIMIT 40').map(vueWallet);
-    const createurs = B.tous('SELECT * FROM createurs ORDER BY reussites DESC, lancements DESC LIMIT 30').map((c) => Object.assign({}, c, { jetons: jsonOu(c.jetons, []) }));
+    const createurs = B.tous('SELECT * FROM createurs ORDER BY reussites DESC, lancements DESC LIMIT 30').map((c) => Object.assign({}, c, { jetons: jsonOu(c.jetons, []), drapeaux_liste: jsonOu(c.drapeaux_liste, []) }));
     const jetons = B.tous('SELECT * FROM jetons ORDER BY COALESCE(pic_usd, cap_usd, 0) DESC LIMIT 60').map(vueJeton);
-    const t = Math.floor(deps.horloge() / 1000);
-    const nouveaux = B.tous('SELECT * FROM creations WHERE t >= ? ORDER BY bloc DESC LIMIT 30', [t - NOUVEAU_S]);
-    const groupes = [];
-    const parBloc = new Map();
-    for (const g of B.tous("SELECT jeton, wallet, marques FROM acheteurs WHERE marques LIKE '%groupe%'")) for (const m of jsonOu(g.marques, [])) if (m.type === 'groupe') {
-      const k = g.jeton + ':' + m.preuve.bloc; if (!parBloc.has(k)) parBloc.set(k, { jeton: g.jeton, bloc: m.preuve.bloc, tx: m.preuve.tx, wallets: [] }); parBloc.get(k).wallets.push(g.wallet);
-    }
-    for (const g of parBloc.values()) if (g.wallets.length >= K.GROUPE_MIN) groupes.push(g);
-    groupes.sort((a, b) => b.wallets.length - a.wallets.length);
+    const maintenant = Math.floor(deps.horloge() / 1000);
+    const auto = new Map(lanceursAuto().map((a) => [a.adresse, a.n]));
+    const nouveaux = B.tous('SELECT * FROM creations WHERE t >= ? ORDER BY bloc DESC LIMIT 60', [maintenant - NOUVEAU_S]).map((c) => Object.assign({}, c, { auto: auto.has(c.createur) ? auto.get(c.createur) : null }));
+    const sym = new Map(B.tous('SELECT adresse, symbole FROM jetons').map((j) => [j.adresse, j.symbole]));
+    const liens = B.tous("SELECT * FROM liens WHERE type != 'migration' ORDER BY type LIMIT 40").map((l) => Object.assign({}, l, { symA: sym.get(l.a) || null, symB: sym.get(l.b) || null }));
     const n = (sql) => (B.un(sql) || {}).n || 0;
+    const passe = dern('passe'), veille = dern('veille');
+    /* t = l'heure de la DERNIERE LECTURE (fin de la derniere passe ou veille),
+       jamais l'heure de construction (revue P4 : apres un redemarrage, la page
+       annoncait une mise a jour sans aucune lecture) */
+    const t = Math.max(passe ? passe.fin || 0 : 0, veille ? veille.fin || 0 : 0) || null;
     return {
-      actif: true, pret: true, mode: C.mode, t,
+      actif: true, pret: true, mode: C.mode, t, maintenant,
       regles: { acheteurs: K.N_ACHETEURS, mise_min_eth: Number(K.MISE_MIN_WEI) / 1e18, tot_min: K.TOT_S / 60, smart_jetons: K.SMART_JETONS, projets_assez: K.PROJETS_ASSEZ,
-        z_verdict: K.Z_VERDICT, groupe_min: K.GROUPE_MIN, groupe_ecart_pct: K.GROUPE_ECART * 100, relais_pct: K.RELAIS_PART * 100, relais_blocs: K.RELAIS_BLOCS, seuil_usd: K.SEUIL_CAP_USD },
-      passe: dern('passe'), veille: dern('veille'),
+        z_verdict: K.Z_VERDICT, groupe_min: K.GROUPE_MIN, groupe_ecart_pct: K.GROUPE_ECART * 100, bloc_charge: K.BLOC_CHARGE, relais_pct: K.RELAIS_PART * 100, relais_blocs: K.RELAIS_BLOCS, seuil_usd: K.SEUIL_CAP_USD,
+        base_assez: K.BASE_ASSEZ, robots_min: K.ROBOTS_MIN, lanceur_auto: K.LANCEUR_AUTO, actifs_min: SRC.ACTIFS_MIN, pic_candidat_usd: SRC.PIC_CANDIDAT_USD,
+        passe_min: PASSE_MS / 60e3, veille_min: VEILLE_MS / 60e3 },
+      passe, veille, passe_ok: dern('passe', true), veille_ok: dern('veille', true),
+      cache: { plein: !!(R && R.etat.cachePlein) },
       compteurs: { retenus: n('SELECT count(*) n FROM jetons'), lus: n("SELECT count(*) n FROM jetons WHERE statut = 'lu'"), wallets: n('SELECT count(*) n FROM wallets'),
-        smart: n('SELECT count(*) n FROM wallets WHERE smart = 1'), inities: n('SELECT count(*) n FROM wallets WHERE initie = 1'), creations24h: nouveaux.length },
-      wallets, createurs, jetons, nouveaux, groupes: groupes.slice(0, 20),
+        smart: n('SELECT count(*) n FROM wallets WHERE smart = 1'), inities: n('SELECT count(*) n FROM wallets WHERE initie = 1'), creations24h: nouveaux.length, lanceurs_auto: auto.size },
+      wallets, createurs, jetons, nouveaux, groupes: groupesVus().slice(0, 20), liens,
       alertes: B.tous('SELECT id, t, genre, jeton, envoye FROM alertes ORDER BY id DESC LIMIT 10'),
       journal: journal.slice(-20),
     };
@@ -786,7 +921,8 @@ function cree(deps0) {
     const j = B.un('SELECT * FROM jetons WHERE adresse = ?', [a]);
     if (!j) return null;
     const ach = B.tous('SELECT * FROM acheteurs WHERE jeton = ? ORDER BY rang', [a]).map((x) => ({ wallet: x.wallet, rang: x.rang, bloc: x.bloc, t: x.t, minutes: x.minutes, tot: !!x.tot, tx: x.tx,
-      entre_wei: s(x.entre), sorti_wei: s(x.sorti), solde: s(x.solde), gain_wei: s(x.gain), issue: x.issue, cout_connu: !!x.cout_connu, marques: jsonOu(x.marques, []) }));
+      entre_wei: s(x.entre), sorti_wei: s(x.sorti), solde: s(x.solde), gain_wei: s(x.gain), issue: x.issue, cout_connu: !!x.cout_connu, marques: jsonOu(x.marques, []),
+      frais_wei: s(x.frais), frais_lus: x.frais_lus == null ? null : !!x.frais_lus, contrat: x.contrat == null ? null : !!x.contrat }));
     const liensJ = B.tous('SELECT * FROM liens WHERE a = ? OR b = ?', [a, a]);
     return Object.assign(vueJeton(j), { acheteurs: ach, liens: liensJ });
   }
@@ -795,6 +931,7 @@ function cree(deps0) {
     const w = B.un('SELECT * FROM wallets WHERE adresse = ?', [a]);
     const parts = B.tous('SELECT a.*, j.symbole, j.base_n, j.base_gagnants FROM acheteurs a LEFT JOIN jetons j ON j.adresse = a.jeton WHERE a.wallet = ?', [a]).map((x) => ({
       jeton: x.jeton, symbole: x.symbole, rang: x.rang, bloc: x.bloc, minutes: x.minutes, tot: !!x.tot, tx: x.tx, entre_wei: s(x.entre), sorti_wei: s(x.sorti), gain_wei: s(x.gain), issue: x.issue,
+      frais_wei: s(x.frais), frais_lus: x.frais_lus == null ? null : !!x.frais_lus, contrat: x.contrat == null ? null : !!x.contrat,
       marques: jsonOu(x.marques, []), base: x.base_n ? { n: x.base_n, gagnants: x.base_gagnants } : null }));
     if (!w && !parts.length) return null;
     return Object.assign(w ? vueWallet(w) : { adresse: a }, { participations: parts, achats_smart: B.tous('SELECT * FROM achats_smart WHERE wallet = ? ORDER BY bloc DESC LIMIT 20', [a]) });
@@ -822,6 +959,8 @@ function cree(deps0) {
     wallet: (a) => detailWallet(String(a).toLowerCase()),
     createur: (a) => detailCreateur(String(a).toLowerCase()),
     texteRapport: () => texteRapport(),
+    /** Refait scores, createurs et liens depuis la base locale (aucune requete). */
+    recalcule: () => { recalcule(); instantane = construitVue(); },
     base: () => B,
     sauve: () => { if (B) B.sauve(); },
     journal: () => journal.slice(),

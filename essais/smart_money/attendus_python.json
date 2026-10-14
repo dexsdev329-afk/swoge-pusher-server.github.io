@@ -1,0 +1,906 @@
+{
+"NILF": [
+{
+"qui": "0x90924c7d483cb1e1060c8de34acdf72aa54c738b",
+"entre": "299000000000000000",
+"sorti": "335488566606799456",
+"gain": "36488566606799456",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xa723a2421c4a1e11d3e02509815ad375de345869",
+"entre": "99000000000000000",
+"sorti": "94552043367338759",
+"gain": "-4447956632661241",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x27bbe36c44f5125b27f7c6b74d3e5e16087bf59a",
+"entre": "19800000000000000",
+"sorti": "23582481568832115",
+"gain": "3782481568832115",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x57870c8fc11787584fb2676ca5dc021b3fd00012",
+"entre": "49500000000000000",
+"sorti": "47149983573621411",
+"gain": "-2350016426378589",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x25e5e869b214d5510defeee9d6fe546050d53eb1",
+"entre": "150000000000000000",
+"sorti": "180857927748527937",
+"gain": "30857927748527937",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x0808486e032683dc948dcdb1f96c986af57d621f",
+"entre": "150000000000000000",
+"sorti": "154381190485146682",
+"gain": "4381190485146682",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0xdcbeaefdb4f0a06f6f31e00c585f6188a7815df0",
+"entre": "105000000000000000",
+"sorti": "115842471024346322",
+"gain": "10842471024346322",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x420dc8840d4b05f4ad21e92d50d63752b64102f2",
+"entre": "105000000000000000",
+"sorti": "114115442357818477",
+"gain": "9115442357818477",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x6d9b561eb7fec2961b07a50bc864841404bdaac9",
+"entre": "92500000000000000",
+"sorti": "86505999943559060",
+"gain": "-5994000056440940",
+"issue": "perdant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0xc713da39bc5bade9ce47fac6341bebacedad78c5",
+"entre": "92500000000000000",
+"sorti": "84177246440316143",
+"gain": "-8322753559683857",
+"issue": "perdant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0xc36d22d76c2d4108144171c4deacbcc7a46118be",
+"entre": "92500000000000000",
+"sorti": "85193043671368006",
+"gain": "-7306956328631994",
+"issue": "perdant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x28d52ce74cd74fbde12e7f5b529c0657ca1ada3e",
+"entre": "92500000000000000",
+"sorti": "84137857040593020",
+"gain": "-8362142959406980",
+"issue": "perdant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x73b87598806d2e2848af4933274ea2dbc5839a1b",
+"entre": "50000000000000000",
+"sorti": "52496647391960730",
+"gain": "2496647391960730",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 4
+},
+{
+"qui": "0xd548665ebca11fd421d8eeb2799e8a2f5cfec466",
+"entre": "50000000000000000",
+"sorti": "48807187441273238",
+"gain": "-1192812558726762",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x9b22e6bfd2b24139484f58b0b1d828f944e5f266",
+"entre": "50000000000000000",
+"sorti": "49204491297270616",
+"gain": "-795508702729384",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xb7b05d0db435dc8fa5238189d9b07f0ee3dc8317",
+"entre": "50000000000000000",
+"sorti": "48804763565039221",
+"gain": "-1195236434960779",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x876b77c72309bf84e5ae97e2a332f226c6591010",
+"entre": "50000000000000000",
+"sorti": "48409887093168973",
+"gain": "-1590112906831027",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xeb1139c6f287030f6b0f07db099696f4defda090",
+"entre": "100000000000000000",
+"sorti": "106219503736520972",
+"gain": "6219503736520972",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xd0a07ba3a133b0d9611119544da5435bcec454ca",
+"entre": "39600000000000000",
+"sorti": "39252428230155370",
+"gain": "-347571769844630",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x96ebd529ba1481865512844d8f07aeb3678f33cb",
+"entre": "30000000000000000",
+"sorti": "28022313622707813",
+"gain": "-1977686377292187",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x5b5d906893becebc3de71215f8e9b5934f018055",
+"entre": "99000000000000000",
+"sorti": "101997419778041098",
+"gain": "2997419778041098",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xa83b73f5644cde337b61da79589f10ea15548811",
+"entre": "107500000000000000",
+"sorti": "100795054321093245",
+"gain": "-6704945678906755",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xec9d6b52914dd1c4a3af8f8d46edfde7f60ea813",
+"entre": "107500000000000000",
+"sorti": "99690836458219223",
+"gain": "-7809163541780777",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0x85b605b47a5323912615cb8af834bb1c4716b794",
+"entre": "107500000000000000",
+"sorti": "99793426587666371",
+"gain": "-7706573412333629",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xc9ac2f6ff481b40e0ec0697ca59454c7e5723c29",
+"entre": "107500000000000000",
+"sorti": "98415474649657705",
+"gain": "-9084525350342295",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0x387b120d3f987bc952a09554cddc0ca552d48f78",
+"entre": "35000000000000000",
+"sorti": "37400213686933096",
+"gain": "2400213686933096",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xb56a4f21c32cfd03d745f8c594709fc625ffb251",
+"entre": "35000000000000000",
+"sorti": "37404820735681156",
+"gain": "2404820735681156",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x83cf1999592a5e5ad50b9027d87e2a24cfccf3fd",
+"entre": "33333333333333333",
+"sorti": "37222897616107774",
+"gain": "3889564282774441",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xedd08c8daffddeb5e31709eb423c8b9ee9f65baf",
+"entre": "33333333333333333",
+"sorti": "37014508590649711",
+"gain": "3681175257316378",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x5a347e30423400df533ed8359f1d1bff638060fc",
+"entre": "33333333333333333",
+"sorti": "36807864651004176",
+"gain": "3474531317670843",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x2f983b4949338a43670f173a232415da4610e8fb",
+"entre": "199999999999999997",
+"sorti": "195396781229560719",
+"gain": "-4603218770439278",
+"issue": "perdant",
+"achats": 6,
+"ventes": 2
+},
+{
+"qui": "0xa4fe623cbddb92d36b5766ef3ca8780bf23a261c",
+"entre": "199999999999999997",
+"sorti": "191617913199698308",
+"gain": "-8382086800301689",
+"issue": "perdant",
+"achats": 6,
+"ventes": 2
+},
+{
+"qui": "0x8d95f32343924093318d2eee4d90c85d9ee1d1c8",
+"entre": "199999999999999997",
+"sorti": "193996214798349851",
+"gain": "-6003785201650146",
+"issue": "perdant",
+"achats": 6,
+"ventes": 2
+},
+{
+"qui": "0xca1a2fb7f3179d887504966b25d1606978adcd42",
+"entre": "260000000000000000",
+"sorti": "256991220281318928",
+"gain": "-3008779718681072",
+"issue": "perdant",
+"achats": 3,
+"ventes": 3
+},
+{
+"qui": "0xa64c6369c0d4c61aeee1f8997bcfb4022f2c614b",
+"entre": "260000000000000000",
+"sorti": "254684893461029275",
+"gain": "-5315106538970725",
+"issue": "perdant",
+"achats": 3,
+"ventes": 3
+},
+{
+"qui": "0x35278d76e3e02ae3f9f0da671e1260880c53ad9c",
+"entre": "20000000000000000",
+"sorti": "19658816290491859",
+"gain": "-341183709508141",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x1a7974b4e9a24d2e774b2eca2de87f4efc432bcb",
+"entre": "13000000000000000",
+"sorti": "12574144782081393",
+"gain": "-425855217918607",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x6d869122ea929d357b0e4f62520c1b6a88fade57",
+"entre": "47000000000000000",
+"sorti": "45998843546711796",
+"gain": "-1001156453288204",
+"issue": "perdant",
+"achats": 3,
+"ventes": 3
+},
+{
+"qui": "0x2bc8d57e3d3d3e682d099be45fe88044d41f170e",
+"entre": "70000000000000000",
+"sorti": "67987161625649425",
+"gain": "-2012838374350575",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x9c1c230ae13b8ce263a21313a8bfc08bc48c3d44",
+"entre": "49500000000000000",
+"sorti": "49077027434317671",
+"gain": "-422972565682329",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xa5b1ef50fe6d441228bec9519e8b189c17f27da4",
+"entre": "39600000000000000",
+"sorti": "38955585944994031",
+"gain": "-644414055005969",
+"issue": "perdant",
+"achats": 2,
+"ventes": 3
+},
+{
+"qui": "0x5001a5dbdf7c02aabfc022ba279f6725c726ab4d",
+"entre": "19800000000000000",
+"sorti": "19362160560029240",
+"gain": "-437839439970760",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xefce30b1632f678322e183cd791c7094518cb134",
+"entre": "400000000000000000",
+"sorti": "322243252587104538",
+"gain": "-77756747412895462",
+"issue": "perdant",
+"achats": 4,
+"ventes": 1
+},
+{
+"qui": "0x6db1ffebb98e4c5f9d26633730aca1693204e67d",
+"entre": "148500000000000000",
+"sorti": "154968815796916240",
+"gain": "6468815796916240",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xe5eebaf6948b709db246f7989dd2329cd94f380f",
+"entre": "148500000000000000",
+"sorti": "155004057299494683",
+"gain": "6504057299494683",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xfc35b0b76250e93170fe7b6eda4a8da5939d866f",
+"entre": "300000000000000000",
+"sorti": "289955678400996361",
+"gain": "-10044321599003639",
+"issue": "perdant",
+"achats": 2,
+"ventes": 4
+},
+{
+"qui": "0x54e8b3ba0e123afb71a7a92c665f010da8ac0ca6",
+"entre": "495000000000000000",
+"sorti": "469875753268775490",
+"gain": "-25124246731224510",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xe9e94401d5a7a00cbd2558b443b3b3281dc8673b",
+"entre": "69300000000000008",
+"sorti": "62915450612945979",
+"gain": "-6384549387054029",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xcce7222e9b9fec1ebf52d62a9da692b88090f30b",
+"entre": "100000000000000000",
+"sorti": "102351888126859827",
+"gain": "2351888126859827",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x646758e8b061381a59313950a0f51f277d8ceac6",
+"entre": "80000000000000000",
+"sorti": "66123083971071629",
+"gain": "-13876916028928371",
+"issue": "perdant",
+"achats": 3,
+"ventes": 1
+}
+],
+"BRODIE": [
+{
+"qui": "0xbdf7e15d88070b37aca576c229373e27fe63423e",
+"entre": "19800000000000000",
+"sorti": "19019874586329406",
+"gain": "-780125413670594",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xfaa8c28cd7feb57fa0c2cdae00aa982f493b76d9",
+"entre": "24750000000000000",
+"sorti": "23774960595625669",
+"gain": "-975039404374331",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x8cc242e0c5a568b8f7faf192446fcc158bbdb323",
+"entre": "3149276014129032981",
+"sorti": "3799213406261749562",
+"gain": "649937392132716581",
+"issue": "inconnu",
+"achats": 18,
+"ventes": 13
+},
+{
+"qui": "0xc468f37dcdcac5aba07b6676314d726add724181",
+"entre": "163717000000000000",
+"sorti": "210360766271048736",
+"gain": "46643766271048736",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0xfdd67898f52db6a5e4ba3a2eaa146412a55958eb",
+"entre": "990000000000000000",
+"sorti": "1811138027406060257",
+"gain": "821138027406060257",
+"issue": "inconnu",
+"achats": 4,
+"ventes": 5
+},
+{
+"qui": "0xa723a2421c4a1e11d3e02509815ad375de345869",
+"entre": "990000000000000000",
+"sorti": "983684995195713116",
+"gain": "-6315004804286884",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xdc12404543b7c60e71a0eab56b48df3e6563d4ab",
+"entre": "20000000000000000",
+"sorti": "19074339659645983",
+"gain": "-925660340354017",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x7d4fabde338c243d0dc1b7bccf5b93d81666ea63",
+"entre": "20000000000000000",
+"sorti": "19074240632307270",
+"gain": "-925759367692730",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x6ef59f2f9974df8aa4ff6c86c6fc1910b09f3c67",
+"entre": "165000000000000000",
+"sorti": "155286271738218023",
+"gain": "-9713728261781977",
+"issue": "perdant",
+"achats": 4,
+"ventes": 2
+},
+{
+"qui": "0x4209c625915000a1c52aeac6f7bf31c4e67ffb56",
+"entre": "99000000000000000",
+"sorti": "96822409642597222",
+"gain": "-2177590357402778",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x00cbab9ad333c5e4d912703f4d8348f09759f75e",
+"entre": "40000000000000000",
+"sorti": "37781831507142175",
+"gain": "-2218168492857825",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x2365955cc768babccdbddd19349997d3f95f3335",
+"entre": "40000000000000000",
+"sorti": "37696651469247026",
+"gain": "-2303348530752974",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x7cbcb426689ba03f1146a5169f712960340f7c7a",
+"entre": "40000000000000000",
+"sorti": "37611716435544267",
+"gain": "-2388283564455733",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x193a764eb2ef866073374778e504531c1d7c5ca9",
+"entre": "40000000000000000",
+"sorti": "37611128255738510",
+"gain": "-2388871744261490",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x1ab2fa2ec67d18936e2f4e57e0a9c5d8e0049970",
+"entre": "40000000000000000",
+"sorti": "37638675823977451",
+"gain": "-2361324176022549",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x82671b56b06b926427687c97ea08e873f48d7674",
+"entre": "44550000000000000",
+"sorti": "42857943337847218",
+"gain": "-1692056662152782",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x9d6c7668e90cc1cd1a0669f006c7d9bf4a3dea17",
+"entre": "40326893624739909",
+"sorti": "40935659784352140",
+"gain": "608766159612231",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x6cf4f764c56fc001b936b6a94eb8c60fcfcd7d44",
+"entre": "111324070000000000",
+"sorti": "118725167203400015",
+"gain": "7553572756541151",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 3
+},
+{
+"qui": "0xdce9758ebc759cbcee117010dfbb470e9720892f",
+"entre": "49500000000000000",
+"sorti": "28830927131076967",
+"gain": "-20669072868923033",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x27bbe36c44f5125b27f7c6b74d3e5e16087bf59a",
+"entre": "1089000000000000000",
+"sorti": "1056779022446851159",
+"gain": "-32220977553148841",
+"issue": "perdant",
+"achats": 5,
+"ventes": 1
+},
+{
+"qui": "0x0eccdee8ce79a2e2f232d1aded11c7cd6cecd13a",
+"entre": "301950000000000000",
+"sorti": "0",
+"gain": "-301950000000000000",
+"issue": "inconnu",
+"achats": 3,
+"ventes": 0
+},
+{
+"qui": "0xbf530f1bfb23bf332d1f1e41be026a5895fcced4",
+"entre": "460000000000000000",
+"sorti": "422063997231303656",
+"gain": "-37936002768696344",
+"issue": "perdant",
+"achats": 8,
+"ventes": 2
+},
+{
+"qui": "0x4e2683428a263e676268137e58250e028e9cddae",
+"entre": "77623920000000000",
+"sorti": "70810481451686446",
+"gain": "-6813438548313554",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0x4489744c93421bf1b821c4bcc8e13265bdae7fec",
+"entre": "405773617287887772",
+"sorti": "393732392772147446",
+"gain": "-12041224515740326",
+"issue": "perdant",
+"achats": 1,
+"ventes": 2
+},
+{
+"qui": "0x8c120f096e88e1c8fbc10864afc55c9569567849",
+"entre": "40334647200009126",
+"sorti": "57686266077926125",
+"gain": "17351618877916999",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0xfe694cd118713243f2354c7d0b401dce436b9dcb",
+"entre": "107910000000000000",
+"sorti": "7447534192475267",
+"gain": "-90881115558635669",
+"issue": "perdant",
+"achats": 3,
+"ventes": 1
+},
+{
+"qui": "0x1865b0d8bc8ef6cc65cf4c655b139a5174c3dcba",
+"entre": "13464000000000000",
+"sorti": "0",
+"gain": "-10995491700294082",
+"issue": "perdant",
+"achats": 1,
+"ventes": 0
+},
+{
+"qui": "0x9d52ad706198b188c48763319f53405e4453a5e1",
+"entre": "29700000000000000",
+"sorti": "30273649936513437",
+"gain": "573649936513437",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x9f609b63df7b815a0fbcb3477cc54f7a27e04d47",
+"entre": "29700000000000000",
+"sorti": "30238914653623015",
+"gain": "538914653623015",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x502ec285c5beb7e88978406b5e3246daee298d38",
+"entre": "29700000000000000",
+"sorti": "30204239118141592",
+"gain": "504239118141592",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x308c9e386e3c75e516d4f14081a70f51d78ec2aa",
+"entre": "29700000000000000",
+"sorti": "30169623193120719",
+"gain": "469623193120719",
+"issue": "gagnant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x42d7def8e7b54a96a9b3f70b826de14cc4b0cb97",
+"entre": "39600000000000000",
+"sorti": "0",
+"gain": "-32287898617755767",
+"issue": "perdant",
+"achats": 1,
+"ventes": 0
+},
+{
+"qui": "0x95158f8ac082cba832427734ae8cc396362ffbad",
+"entre": "58217702732141111",
+"sorti": "0",
+"gain": "-58217702732141111",
+"issue": "inconnu",
+"achats": 1,
+"ventes": 0
+},
+{
+"qui": "0x272b61c4bcf199c6a8c9c5b985f2462473c4b877",
+"entre": "34254000000000000",
+"sorti": "123943337903970644",
+"gain": "89689337903970644",
+"issue": "inconnu",
+"achats": 4,
+"ventes": 6
+},
+{
+"qui": "0x0a9afb8e3fa91414baff384a0a59b23e7b998774",
+"entre": "36900000000000000",
+"sorti": "6470600272938457",
+"gain": "-30429399727061543",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x0c93dd512ddae5e590d99a519dc24f0167b587a8",
+"entre": "99000000000000000",
+"sorti": "98355834812878994",
+"gain": "-644165187121006",
+"issue": "perdant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x39fa9e499b8824027e3508218875a9772fa573c6",
+"entre": "400000000000000000",
+"sorti": "404505646095110703",
+"gain": "4505646095110703",
+"issue": "gagnant",
+"achats": 2,
+"ventes": 1
+},
+{
+"qui": "0x305dea1cbe950c7029d6462a617bd81c6caed213",
+"entre": "31702223942794516",
+"sorti": "28558696073423091",
+"gain": "-3143527869371425",
+"issue": "inconnu",
+"achats": 1,
+"ventes": 2
+},
+{
+"qui": "0x1ab531712d217e68dba698eb2c7432384c7b1cae",
+"entre": "1020000000000000000",
+"sorti": "1321851010054177740",
+"gain": "301851010054177740",
+"issue": "gagnant",
+"achats": 22,
+"ventes": 1
+},
+{
+"qui": "0x62245f9a6bfee95c4dde8f9790f6122bfe712a25",
+"entre": "3514124648352682654",
+"sorti": "3214221639577079",
+"gain": "-197763100088277230",
+"issue": "inconnu",
+"achats": 9,
+"ventes": 1
+},
+{
+"qui": "0x9303fb3278490aea103b1fdb33201d57e1400122",
+"entre": "100000000000000000",
+"sorti": "93980312152391931",
+"gain": "-6019687847608069",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+},
+{
+"qui": "0x13e250c0b2346222388067d780e38b6391592da9",
+"entre": "39098436978853967",
+"sorti": "35190769915558765",
+"gain": "-3907667063295202",
+"issue": "perdant",
+"achats": 2,
+"ventes": 2
+},
+{
+"qui": "0x7f33a83b3e9c1cfb23f5cc5cbdb523ec335e35ee",
+"entre": "36071646633102584",
+"sorti": "53700815380445358",
+"gain": "17629168747342774",
+"issue": "inconnu",
+"achats": 1,
+"ventes": 2
+},
+{
+"qui": "0xbbd31aea033bb7ec37e9e4f8c0d78a4df992042d",
+"entre": "517495115971122443",
+"sorti": "83175040049921773",
+"gain": "-189609676031161430",
+"issue": "inconnu",
+"achats": 9,
+"ventes": 2
+},
+{
+"qui": "0xa333fbc9ad0b545ff525e47221bc1f9d8f4aca26",
+"entre": "42612477807368150",
+"sorti": "0",
+"gain": "-42612477807368150",
+"issue": "inconnu",
+"achats": 3,
+"ventes": 0
+},
+{
+"qui": "0x79d626b49a69c05b2632f7b19c1e9e1df18b1bda",
+"entre": "2541477352404320376",
+"sorti": "409406672581743600",
+"gain": "-654245458762753178",
+"issue": "inconnu",
+"achats": 37,
+"ventes": 1
+},
+{
+"qui": "0xa24d8925f8a21cada9bb4383039b8a6b77e992f8",
+"entre": "486526721502366922",
+"sorti": "505619026958568064",
+"gain": "19092305456201142",
+"issue": "gagnant",
+"achats": 12,
+"ventes": 3
+},
+{
+"qui": "0x242f51d7a1616dd8438eccd11b8375f369af7362",
+"entre": "198586190462922992",
+"sorti": "0",
+"gain": "-198586190462922992",
+"issue": "inconnu",
+"achats": 5,
+"ventes": 0
+},
+{
+"qui": "0xe6424d903ecb2a0508df6893dbd7c644c0c76b7e",
+"entre": "321070492980951604",
+"sorti": "170668577885056505",
+"gain": "-150401915095895099",
+"issue": "inconnu",
+"achats": 10,
+"ventes": 4
+},
+{
+"qui": "0xf578a0c083e072b8841967d6f748bb57b1c0f6ca",
+"entre": "12742322175000000",
+"sorti": "12257900569797666",
+"gain": "-484421605202334",
+"issue": "perdant",
+"achats": 1,
+"ventes": 1
+}
+]
+}

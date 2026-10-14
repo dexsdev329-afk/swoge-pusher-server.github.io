@@ -87,11 +87,12 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
   /** Un monde + ses faux services + une horloge. */
   function banc(o) {
     const w = MONDE.cree();
-    const etat = { pointe: MONDE.POINTE };
+    const etat = { pointe: MONDE.POINTE, contrats: {} };
     const sym = { [A.J1]: 'ONE', [A.J2]: 'TWO', [A.J3]: 'THREE', [A.J4]: 'FOUR', [A.J6]: 'SIX', [A.J3V]: 'OLD3' };
     const F = fauxNoeud({
       logs: () => w.logs, pointe: () => etat.pointe, recus: w.recus, txs: w.txs, horodatage: MONDE.horodatage,
       contrat: (t, fn, a) => {
+        if (etat.contrats[t + ':' + fn] !== undefined) return etat.contrats[t + ':' + fn];
         if (fn === 'balanceOf') { const s = MONDE.soldes(w.logs.filter((l) => parseInt(l.blockNumber, 16) <= etat.pointe)); return s.get(t + a[0]) || 0n; }
         if (fn === 'totalSupply') return 10n ** 27n;
         if (fn === 'decimals') return 18;
@@ -151,11 +152,14 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
   ok(Math.abs(j3.pic_usd - 1.6e6) < 1, 'J3 : pic 1,6 M$ (cloture), pas 9 M$ (meche)');
   egal(JSON.parse(j1.liquidite).retirePct, 0, 'J1 : liquidite v4 lue (ModifyLiquidity), rien retire');
   const ach = (j, q) => B.un('SELECT * FROM acheteurs WHERE jeton = ? AND wallet = ?', [j, q]);
-  egal(B.tous('SELECT * FROM acheteurs WHERE jeton = ?', [A.J1]).length, 13, 'J1 : 13 acheteurs distincts >= 0,01 ETH (le createur et le passant a 0,001 exclus)');
+  egal(B.tous('SELECT * FROM acheteurs WHERE jeton = ?', [A.J1]).length, 14, 'J1 : 14 acheteurs distincts >= 0,01 ETH (le createur et le passant a 0,001 exclus ; LOIN a ~53 h compris)');
   ok(!ach(A.J1, A.C1), 'le createur n\'est jamais dans les premiers acheteurs');
   egal(ach(A.J1, A.TARD).tot, 0, 'TARD (apres la 1re heure) : dans les premiers, mais pas « tot »');
   egal(ach(A.J1, A.S1).issue, 'gagnant', 'S1 sur J1 : gagnant');
-  egal(BigInt(ach(A.J1, A.S1).gain), MONDE.E / 2n, 'S1 sur J1 : +0,5 ETH exactement (sorti 1 - entre 0,5 + solde 0)');
+  egal(BigInt(ach(A.J1, A.S1).sorti), MONDE.E * 99n / 100n, 'S1 sur J1 : sorti = ce que le WALLET recoit, Swap de 1 ETH moins 1 % retenu par le crochet (revue C1 : lu dans le recu)');
+  egal(BigInt(ach(A.J1, A.S1).gain), MONDE.E * 49n / 100n, 'S1 sur J1 : +0,49 ETH exactement (0,99 - 0,5 + solde 0)');
+  egal(BigInt(ach(A.J1, A.S1).frais), MONDE.E / 100n, 'S1 sur J1 : les frais lus sont gardes (0,01 ETH)');
+  ok(b.F.etat.requetes.some((q) => q.method === 'eth_getTransactionReceipt'), 'lecture « tout » : les recus des echanges des 50 sont lus (les frais n\'y sont que la)');
   egal(ach(A.J1, A.L1).issue, 'perdant', 'L1 qui tient au prix bas : perdant');
   ok(BigInt(ach(A.J1, A.L1).solde) > 0n && BigInt(ach(A.J1, A.L1).gain) > -MONDE.E, 'L1 : le solde au dernier prix compte dans la perte');
   egal(ach(A.J3, A.S3).issue, 'perdant', 'S3 sur J3 : perdant');
@@ -185,7 +189,7 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
   let jsonOk = true; try { JSON.stringify(v); JSON.stringify(I.jeton(A.J1)); JSON.stringify(I.wallet(A.G1)); JSON.stringify(I.createur(A.C1)); } catch (e) { jsonOk = false; }
   ok(jsonOk, 'vue et details : du JSON pur (aucun BigInt)');
   const dj = I.jeton(A.J1);
-  ok(dj.acheteurs.length === 13 && typeof dj.acheteurs[0].entre_wei === 'string', 'detail d\'un jeton : 13 acheteurs, montants en chaines');
+  ok(dj.acheteurs.length === 14 && typeof dj.acheteurs[0].entre_wei === 'string', 'detail d\'un jeton : 14 acheteurs, montants en chaines');
   egal(I.wallet(A.G1).participations.length, 3, 'detail d\'un wallet : ses 3 jetons');
   egal(I.jeton('0x' + '9'.repeat(40)), null, 'jeton inconnu : null');
   ok(b.F.etat.requetes.every((q) => R.METHODES.has(q.method)), 'LECTURE SEULE : chaque requete au noeud est une methode de lecture');
@@ -225,7 +229,8 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     const ts = b.prives.find((t) => /Smart wallets on/.test(t)) || '';
     ok(ts.includes(K.court(A.S1)) && ts.includes(K.court(A.S2)), 'smart : les deux wallets nommes');
     ok(/dexscreener\.com\/robinhood\//.test(ts) && /nothing is bought/.test(ts), 'smart : lien DexScreener, et « nothing is bought »');
-    ok(/no verdict under 10 projects/.test(ts), 'smart : le score dit qu\'il n\'y a pas de verdict sous 10');
+    ok(/no verdict under 10 known outcomes/.test(ts), 'smart : le score dit qu\'il n\'y a pas de verdict sous 10 issues connues');
+    ok(/<b>Smart wallets on [^<]* \(owner’s rule, no verdict yet\)<\/b>/.test(ts), 'smart sans verdict : le TITRE le dit (revue C8)');
     ok(!b.prives.some((t) => /SIX/.test(t) && /Smart wallets/.test(t)), 'J6 : un seul smart -> aucune alerte');
     ok(!b.prives.some((t) => t.includes(A.U.slice(0, 6))), 'J6 : createur inconnu -> aucune alerte');
     egal(I2.base().tous("SELECT * FROM alertes WHERE envoye = 1").length, 2, 'les 2 alertes sont gardees, envoyees');
@@ -243,6 +248,8 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     await I3.allume();
     const v3 = I3.vue();
     ok(v3.pret && v3.compteurs.smart === 2 && v3.compteurs.lus === 3, 'la base rouverte sert le dernier etat');
+    const finMax = Math.max(...I3.base().tous('SELECT fin FROM passes').map((x) => x.fin));
+    egal(v3.t, finMax, '« Updated » = l\'heure de la DERNIERE LECTURE, pas celle du redemarrage (revue P4)');
     ok(v3.veille && v3.veille.statut === 'ok', 'et l\'etat de la derniere veille');
     const avant = b.prives.length;
     await muet(() => I3.veille());
@@ -281,7 +288,8 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     egal(B7.tous('SELECT adresse FROM wallets WHERE smart = 1 ORDER BY adresse').map((x) => x.adresse).join(), [A.S1, A.S2].sort().join(), 'les memes smart : S1, S2');
     const m = (j, q) => JSON.parse(B7.un('SELECT marques FROM acheteurs WHERE jeton = ? AND wallet = ?', [j, q]).marques).map((x) => x.type).join();
     egal(m(A.J1, A.G1) + '|' + m(A.J2, A.R1) + '|' + m(A.J1, A.F1), 'groupe|relais|finance', 'les memes marques');
-    egal(BigInt(B7.un('SELECT gain FROM acheteurs WHERE jeton = ? AND wallet = ?', [A.J1, A.S1]).gain), MONDE.E / 2n, 'le meme gain au wei pres');
+    egal(BigInt(B7.un('SELECT gain FROM acheteurs WHERE jeton = ? AND wallet = ?', [A.J1, A.S1]).gain), MONDE.E * 49n / 100n, 'le meme gain au wei pres (frais du crochet compris)');
+    ok(B7.un('SELECT * FROM acheteurs WHERE jeton = ? AND wallet = ?', [A.J1, A.LOIN]), 'LOIN (~53 h apres le lancement) est parmi les premiers : la recherche ne s\'arrete plus a 24 h (revue C5)');
     const l1 = B7.un('SELECT * FROM acheteurs WHERE jeton = ? AND wallet = ?', [A.J1, A.L1]);
     egal(l1.gain, B.un('SELECT gain FROM acheteurs WHERE jeton = ? AND wallet = ?', [A.J1, A.L1]).gain, 'L1 : meme perte (prix lu par le dernier Swap de la piscine)');
     fs.rmSync(d6, { recursive: true, force: true });
@@ -310,7 +318,8 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     const rap = b.prives.slice(avant).find((t) => /daily report/.test(t));
     ok(rap, 'le rapport part a l\'heure');
     ok(rap && rap.includes(K.court(A.S1)) && rap.includes(K.court(A.S2)), 'top smart : S1 et S2');
-    ok(rap && /insider group/.test(rap) && /3 wallets in block 10,001,200/.test(rap), 'les groupes d\'inities, avec leur bloc');
+    ok(rap && /same-block buy group/.test(rap) && /3 wallets in block 10,001,200 on .*, 3 among its first 50/.test(rap), 'les groupes d\'achat dans le meme bloc, avec leur bloc et leur taille (le MOTIF, sous Verified)');
+    ok(rap && /Not verified[^]*insider pattern/.test(rap) && !/Verified<\/b> \(read on chain\):[^]*insider group/.test(rap), '« initie » est une deduction : sous Not verified (revue INI-08)');
     ok(rap && /<b>Verified<\/b>/.test(rap) && /<b>Not verified<\/b>/.test(rap), 'Verified / Not verified');
     ok(rap && /nothing is ever bought/.test(rap), 'alertes seulement');
     const n1 = b.prives.length;
@@ -360,6 +369,100 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     const cli2 = SRC.cree({ prendre: async () => ({ status: 404, text: async () => 'nope' }), horloge: () => 0, dors: async () => {} });
     egal(await cli2.pairesDs(A.J1), null, 'DexScreener 404 : rien...');
     egal(cli2.etat.ds.refus, 0, '...et ce n\'est pas un refus');
+  }
+
+  // ================================================== 7 bis. revue du 13/10
+  console.log('-- 7 bis. revue du 13/10 : naissance v2 hors fenetre, jeton sous 1 M$, URL secrete, veille ratee, lanceur automatique --');
+  {
+    const d9 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-revue-'));
+    const b9 = banc();
+    const I9 = instance(b9, d9);
+    await muet(() => I9.passe());
+    const B9 = I9.base();
+    /* INI-02 : un jeton v2 dont la paire est nee au bloc 10 100 000, alors que
+       l'heure de la source (DexScreener) la place vers 10 742 000 : le 1er journal
+       de la paire est HORS de la fenetre de +/- 400 000 blocs ; un 2e echange, au
+       bloc 10 650 000, y est (c'est lui que l'ancien code prenait : astro, 16 h trop tard) */
+    const w = b9.w, E = MONDE.E, J7 = '0x' + 'a7'.repeat(20), P7 = '0x' + 'b7'.repeat(20), C7 = '0x' + 'c7'.repeat(20), VRAI = 10100000;
+    const { journal, pad } = require('./essais/smart_money/faux_noeud');
+    let ix = 900000;
+    const h0 = w.nouvelleTx(10090000, C7, null, { contractAddress: J7 });
+    w.transfer(h0, 10090000, J7, K.ADR.ETH_NATIF, C7, 10n ** 27n);
+    const hl = w.nouvelleTx(10095000, C7, J7); w.transfer(hl, 10095000, J7, C7, P7, 10n ** 26n);   // la reserve de la paire (journal du JETON, pas de la paire)
+    const achat7 = (bloc, qui, eth) => {
+      const h = w.nouvelleTx(bloc, qui, A.ROUTEUR);
+      w.ajoute(h, journal(P7, [K.TOPIC.SWAP_V2, pad(A.ROUTEUR), pad(qui)], [eth, 0n, 0n, eth * 1000n], bloc, h, ix++));
+      w.ajoute(h, journal(J7, [K.TOPIC.TRANSFER, pad(P7), pad(qui)], [eth * 1000n], bloc, h, ix++));
+    };
+    achat7(VRAI, A.S1, E / 10n);
+    achat7(10650000, A.S2, E / 10n);
+    b9.etat.contrats[P7 + ':token0'] = K.ADR.WETH; b9.etat.contrats[P7 + ':token1'] = J7;
+    const ds0 = b9.S.reponses.ds;
+    b9.S.reponses.ds = (u) => (u.includes(J7) && /token-pairs/.test(u) ? [{ chainId: 'robinhood', dexId: 'uniswap', pairAddress: P7, labels: ['v2'], baseToken: { address: J7, symbol: 'SEVEN' }, quoteToken: { address: K.ADR.WETH, symbol: 'WETH' },
+      priceUsd: '0.002', fdv: 2e6, pairCreatedAt: MONDE.horodatage(10700000) * 1000 }] : ds0(u));
+    B9.pose('jetons', { adresse: J7, symbole: 'SEVEN', statut: 'a_lire', pic_usd: 2e6, vu_t: 1 });
+    const [bj7] = await muet(() => I9.passe());
+    ok(bj7.statut === 'ok', 'la passe finit : ' + (bj7.erreur || ''));
+    const j7 = B9.un('SELECT * FROM jetons WHERE adresse = ?', [J7]);
+    egal(j7.statut + ':' + j7.lancement_bloc, 'lu:' + VRAI, 'v2 : la naissance est le 1er journal de la paire DEPUIS LE BLOC 0, meme hors de la fenetre de l\'estimation (revue INI-02)');
+    egal(B9.un('SELECT wallet FROM acheteurs WHERE jeton = ? AND rang = 1', [J7]).wallet, A.S1, 'et le 1er acheteur est celui du vrai lancement');
+    /* DexScreener ne rend plus la paire (HM le 14/10) : la piscine deja lue sert */
+    b9.S.reponses.ds = (u) => (u.includes(J7) && /token-pairs/.test(u) ? [] : ds0(u));
+    B9.ecris("UPDATE jetons SET statut = 'a_lire' WHERE adresse = ?", [J7]);
+    const [bj8] = await muet(() => I9.passe());
+    egal(bj8.statut + ':' + B9.un('SELECT statut FROM jetons WHERE adresse = ?', [J7]).statut, 'ok:lu', 'paire absente de DexScreener a la relecture : la piscine deja lue sert (plus de « no ETH pool found »)');
+    /* C4 : un jeton sous 1 M$ (pic et valeur actuelle) ne compte ni en projet ni en reussite */
+    const avant = B9.un('SELECT projets, smart FROM wallets WHERE adresse = ?', [A.S1]);
+    B9.ecris('UPDATE jetons SET cap_usd = 960000, pic_usd = NULL WHERE adresse = ?', [A.J2]);
+    I9.recalcule();
+    const apres = B9.un('SELECT projets, smart FROM wallets WHERE adresse = ?', [A.S1]);
+    egal(avant.projets + '>' + apres.projets, '4>3', 'J2 a 0,96 M$ : S1 perd un projet (J1, J2, J3, SEVEN -> J1, J3, SEVEN) (revue C4 : HM a 588 k$ et TROLL a 956 k$ comptaient)');
+    egal(avant.smart + '>' + apres.smart, '1>0', 'et n\'est plus « smart » : gagnant sur J1 et J3 seulement parmi les jetons de plus de 1 M$');
+    egal(B9.un('SELECT reussites FROM createurs WHERE adresse = ?', [A.C1]).reussites, 1, 'C1 : 1 reussite (J1), plus J2');
+    B9.ecris('UPDATE jetons SET cap_usd = 434000000, pic_usd = NULL WHERE adresse = ?', [A.J2]);
+    I9.recalcule();
+    egal(B9.un('SELECT reussites FROM createurs WHERE adresse = ?', [A.C1]).reussites, 2, 'pic non lu mais valeur actuelle de 434 M$ : reussite (revue C4 : NOVAAI comptait 0/1)');
+    /* INI-06 : l'operateur de migration n'est pas un « createur » dans les liens */
+    ok(!B9.tous("SELECT * FROM liens WHERE type = 'meme_createur'").some((l) => l.detail === A.OP), 'aucun lien « meme createur » vers l\'operateur de migration');
+    /* INI-07 : 8 lancements de C1 (createur connu) dans une veille -> 0 alerte par jeton, un resume */
+    const P0 = MONDE.POINTE;
+    for (let k = 0; k < 8; k++) {
+      const jk = '0x' + 'd' + String(k).padStart(39, '0'), pk = '0x' + 'e' + String(k).padStart(63, '0');
+      const hk = w.nouvelleTx(P0 + 100 + k, A.C1, A.FAB);
+      w.transfer(hk, P0 + 100 + k, jk, K.ADR.ETH_NATIF, MONDE.PM, 10n ** 27n);
+      w.init(hk, P0 + 100 + k, pk, jk);
+    }
+    b9.etat.pointe = P0 + 3000; b9.T.now = MONDE.horodatage(P0 + 3000) * 1000;
+    const I9b = instance(b9, d9, { SMART_MONEY: '1', SMART_MONEY_HEURE: '00:00' });
+    const nPrives = b9.prives.length;
+    const [rv] = await muet(() => I9b.veille());
+    egal(rv.creations, 8, '8 naissances lues');
+    ok(!b9.prives.slice(nPrives).some((t) => /Known creator launched/.test(t)), `${K.LANCEUR_AUTO}+ lancements en 24 h : AUCUNE alerte jeton par jeton (revue INI-07)`);
+    ok(b9.prives.slice(nPrives).some((t) => /daily report/.test(t) && /1 automated launcher \(8\+ launches in 24 h, 8 launches\): no alert per token/.test(t)), 'le rapport en fait un resume');
+    ok(I9b.vue().nouveaux.some((n) => n.auto === 8), 'la vue marque le lanceur automatique');
+    /* P4 : une veille RATEE refait l'instantane ; veille_ok garde la derniere reussie */
+    const okAvant = I9b.vue().veille_ok;
+    const I9c = instance(b9, d9, {}, { rpcVeille: { nouvellePasse() {}, etat: { passe: {} }, pointe: async () => { throw Object.assign(new Error('noeud : timeout'), { abandon: true }); } } });
+    await I9c.allume();
+    await muet(() => I9c.veille());
+    const vv = I9c.vue();
+    egal(vv.veille.statut, 'abandon', 'la vue montre la veille ratee (avant : « Last watch: complete » pendant la panne)');
+    egal(vv.veille_ok && vv.veille_ok.id, okAvant && okAvant.id, 'et la derniere veille REUSSIE a part (la page juge le perime dessus)');
+    fs.rmSync(d9, { recursive: true, force: true });
+  }
+  {
+    /* N5 : un SMART_RPC_URL a cle, un noeud muet : la vue publique ne contient jamais l'URL */
+    const d10 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-secret-'));
+    const b10 = banc();
+    const SECRET = 'https://noeud-prive.example/v2/CLE-SECRETE-123';
+    const muetNoeud = (u, i) => (String(u).startsWith(SECRET) ? new Promise((x, ko) => { i.signal.addEventListener('abort', () => ko(Object.assign(new Error('aborted'), { name: 'AbortError' }))); }) : b10.prendre(u, i));
+    const I10 = M.cree({ env: { SMART_MONEY: 'observe', SMART_RPC_URL: SECRET }, prendre: muetNoeud, horloge: b10.horloge, dors: b10.dors, dossier: d10, tg: b10.tg, actions: b10.S.actions, rpcOptions: { delaiMs: 30, reculs: [1, 1] } });
+    const [rb] = await muet(() => I10.passe());
+    egal(rb.statut, 'abandon', 'noeud muet : la passe est abandonnee');
+    const tout = JSON.stringify(I10.vue()) + JSON.stringify(I10.journal());
+    ok(!/CLE-SECRETE|noeud-prive/.test(tout), 'la vue publique et le journal ne contiennent JAMAIS l\'URL du noeud (revue N5)');
+    ok(/timeout/.test(rb.erreur || ''), 'la cause est dite par un libelle court : ' + rb.erreur);
+    fs.rmSync(d10, { recursive: true, force: true });
   }
 
   fs.rmSync(dossier, { recursive: true, force: true });

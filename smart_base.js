@@ -58,6 +58,17 @@ const MIGRATIONS = [
    CREATE TABLE IF NOT EXISTS alertes (id INTEGER PRIMARY KEY AUTOINCREMENT, t INTEGER, genre TEXT, cle TEXT UNIQUE, jeton TEXT, texte TEXT, envoye INTEGER);
    CREATE TABLE IF NOT EXISTS passes (id INTEGER PRIMARY KEY AUTOINCREMENT, genre TEXT, debut INTEGER, fin INTEGER, statut TEXT,
      appels INTEGER, octets INTEGER, gt INTEGER, ds INTEGER, jetons INTEGER, detail TEXT);`,
+  /* v2 — 13/10/2026, revue du detecteur : la mise du 1er achat (paires
+     repetees entre jetons), les frais lus (C1), le drapeau « contrat »
+     (INI-14), les issues jugeables d'un wallet (C3, C6), les reussites a pic
+     ou capitalisation connus et la liste des drapeaux d'un createur (P5, P9) */
+  `ALTER TABLE acheteurs ADD COLUMN mise TEXT;
+   ALTER TABLE acheteurs ADD COLUMN frais TEXT;
+   ALTER TABLE acheteurs ADD COLUMN frais_lus INTEGER;
+   ALTER TABLE acheteurs ADD COLUMN contrat INTEGER;
+   ALTER TABLE wallets ADD COLUMN jugeables INTEGER;
+   ALTER TABLE createurs ADD COLUMN reussites_connues INTEGER;
+   ALTER TABLE createurs ADD COLUMN drapeaux_liste TEXT;`,
 ];
 
 /** Une valeur JS -> une valeur SQLite : BigInt en TEXT, objets en JSON. */

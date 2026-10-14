@@ -21,7 +21,7 @@ const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const R = require('./smart_rpc');
-const { fauxNoeud, journal, pad } = require('./essais/smart_money/faux_noeud');
+const { fauxNoeud, journal, pad, hex } = require('./essais/smart_money/faux_noeud');
 
 let n = 0, rates = 0;
 const ok = (c, m) => { if (c) n++; else { rates++; console.log('  RATE ' + m); } };
@@ -143,14 +143,32 @@ const cle = (l) => l.transactionHash + ':' + l.logIndex;
        'une cellule finie au-dessus de la pointe sure (bloc 2 097 151 > 2 096 250) n\'est pas mise en cache');
     r.cacheEcrit('essai', { a: 1 });
     ok(!r.cacheEcrit('essai', { a: 2 }) && r.cacheLit('essai').a === 1, 'une cle deja ecrite ne change plus');
-    const recus = {}; for (let k = 1; k <= 45; k++) recus[tx(k)] = { transactionHash: tx(k), logs: [] };
-    const G = fauxNoeud({ logs: [], pointe: 10, recus });
+    /* 45 recus dont 44 sous la pointe sure (bloc 5) et 1 au-dessus (bloc 999 > sure 500) */
+    const recus = {}; for (let k = 1; k <= 45; k++) recus[tx(k)] = { transactionHash: tx(k), blockNumber: hex(k === 45 ? 999 : 5), logs: [] };
+    const G = fauxNoeud({ logs: [], pointe: 1500, recus });
     const r2 = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier });
-    const m = await r2.recus(Object.keys(recus));
+    const m = await r2.recus(Object.keys(recus), 500);
     egal(m.size, 45, '45 recus');
     egal(G.etat.http, 3, 'en lots de 20 : 3 requetes HTTP');
-    await r2.recus(Object.keys(recus));
-    egal(G.etat.http, 3, 'les recus (immuables) viennent du cache ensuite : 0 requete');
+    egal(r2.etat.appels + ':' + r2.etat.rpc, '3:45', 'compte double : 3 requetes HTTP, 45 appels JSON-RPC (revue N9 : le lot compte chaque appel)');
+    await r2.recus(Object.keys(recus), 500);
+    egal(G.etat.http, 4, 'les 44 recus sous la pointe sure viennent du cache ; celui du bloc 999 (au-dessus) est relu : 1 requete');
+    ok(!fs.existsSync(path.join(dossier, 'brut', 'R_' + tx(45) + '.json.gz')), 'un recu au-dessus de la pointe sure n\'est JAMAIS ecrit (revue N7)');
+    const r2b = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier });
+    const avantSans = G.etat.http;
+    await r2b.recus([tx(46)].concat([]), undefined);
+    ok(!fs.existsSync(path.join(dossier, 'brut', 'R_' + tx(46) + '.json.gz')) && G.etat.http === avantSans + 1, 'sans pointe sure donnee : rien n\'est ecrit');
+    /* la veille : prefixe V, purge apres 24 h ; ceux de la passe restent */
+    const rv = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier, prefixeHash: 'V' });
+    await rv.recus([tx(3), tx(4)], 500);
+    const fv = path.join(dossier, 'brut', 'VR_' + tx(3) + '.json.gz');
+    ok(fs.existsSync(fv), 'la veille ecrit sous son propre prefixe (VR_)');
+    egal(rv.purgeVeille(24 * 3600e3), 0, 'purge : rien de plus vieux que 24 h');
+    const vieux = (T.now - 25 * 3600e3) / 1000; fs.utimesSync(fv, vieux, vieux);
+    egal(rv.purgeVeille(24 * 3600e3), 1, 'purge : le recu de veille de plus de 24 h part (revue N8)');
+    ok(!fs.existsSync(fv) && fs.existsSync(path.join(dossier, 'brut', 'R_' + tx(3) + '.json.gz')), 'celui de la passe (R_) reste');
+    const rp = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier, cacheMaxOctets: 1 });
+    ok(!rp.cacheEcrit('plein', { a: 1 }) && rp.etat.cachePlein === true, 'cache plein : rien n\'est ecrit, et etat.cachePlein le DIT');
     fs.rmSync(dossier, { recursive: true, force: true });
   }
   // ================================================== 5. refus, recul, abandon
@@ -236,6 +254,150 @@ const cle = (l) => l.transactionHash + ':' + l.logIndex;
     const inf = await r3.infosJeton(JETON);
     egal(inf.decimales, 9, 'decimals lues (astro en a 9)');
     egal(inf.offre, 10n ** 18n, 'totalSupply en BigInt');
+  }
+
+  // ================================================== 9. reponse trop lourde (revue N1)
+  console.log('-- 9. une reponse de plus de corpsMax : coupee en deux, telechargee UNE fois, jamais un refus --');
+  {
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-lourd-'));
+    /* 400 lignes sur 4 000 blocs ; ~450 octets par ligne ; plafond de corps 20 000 octets : une cellule de plus de ~40 lignes est trop lourde,
+       bien sous le plafond de 10 000 LIGNES du noeud (le cas reel : 16 822 846 octets pour une cellule L22 de la rampe 0x1eef) */
+    const blocs = []; for (let b = 1000; b < 5000; b += 10) blocs.push([b, 1]);
+    const logs = chaine(blocs);
+    const F = fauxNoeud({ logs, pointe: 200000 });
+    const T = temps();
+    const r = R.cree({ prendre: F.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier, corpsMax: 20000 });
+    const o = { pointe: 199990, sure: 198990 };
+    const res = await r.lisLogs({ address: JETON, topics: [TR] }, 0, 100000, o);
+    egal(res.logs.length, 400, 'toutes les lignes sont lues malgre les reponses trop lourdes');
+    ok(res.stats.refusLourds >= 1 && res.stats.coupes >= 1, `les cellules trop lourdes sont COUPEES (${res.stats.refusLourds} reponses trop lourdes)`);
+    const vues = new Map();
+    for (const q of F.etat.requetes.filter((x) => x.method === 'eth_getLogs')) { const k = JSON.stringify(q.params); vues.set(k, (vues.get(k) || 0) + 1); }
+    egal(Math.max(...vues.values()), 1, 'aucune cellule n\'est telechargee deux fois');
+    ok(!T.attentes.some((x) => x >= 15000) && r.etat.reculs === 0 && r.etat.refus === 0, 'ce n\'est PAS un refus : aucun recul de 15 s ni de 60 s');
+    ok(fs.readdirSync(path.join(dossier, 'brut')).some((f) => /_trop\.json\.gz$/.test(f)), 'la cellule fermee trop lourde est memorisee (_trop)');
+    const avant = F.etat.http;
+    const res2 = await r.lisLogs({ address: JETON, topics: [TR] }, 0, 100000, o);
+    egal(res2.logs.length, 400, 'deuxieme passe : memes lignes');
+    egal(F.etat.http - avant, 0, 'deuxieme passe : 0 telechargement (avant : 3 x 16,8 Mo a CHAQUE passe)');
+    /* un seul bloc trop lourd : erreur dite, pas de boucle */
+    const G = fauxNoeud({ logs: chaine([[50, 80]]), pointe: 1000 });
+    const rg = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, corpsMax: 20000 });
+    let e = null; try { await rg.lisLogs({ address: JETON, topics: [TR] }, 0, 900, { pointe: 990, sure: 0 }); } catch (x) { e = x; }
+    ok(e && /un seul bloc/.test(e.message), 'un seul bloc trop lourd : erreur dite, pas de boucle');
+    /* Content-Length annonce trop gros : rien n'est lu */
+    const H = fauxNoeud({ logs: [], pointe: 1000 });
+    const lourdEnTete = async (u, i) => { const x = await H.prendre(u, i); return Object.assign({}, x, { headers: { get: (k) => (k === 'content-length' ? '99999999' : null) } }); };
+    const rh = R.cree({ prendre: lourdEnTete, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, corpsMax: 20000 });
+    let e2 = null; try { await rh.appel('eth_getLogs', [{ fromBlock: '0x0', toBlock: '0x1', address: JETON, topics: [TR] }]); } catch (x) { e2 = x; }
+    ok(e2 instanceof R.TropLourd, 'Content-Length au-dela du plafond : TropLourd, sans rien lire');
+    fs.rmSync(dossier, { recursive: true, force: true });
+  }
+  // ================================================== 10. delai depasse (revue N4)
+  console.log('-- 10. « log query timed out » et delai depasse : la tranche est coupee, finit dans la meme passe --');
+  {
+    const blocs = []; for (let b = 1000; b < 900000; b += 5000) blocs.push([b, 1]);
+    const logs = chaine(blocs);
+    /* le faux noeud expire au-dela de 2^18 blocs (message exact du vrai noeud) */
+    const F = fauxNoeud({ logs, pointe: 1000000, surRequete: (q) => (q.method === 'eth_getLogs' && parseInt(q.params[0].toBlock, 16) - parseInt(q.params[0].fromBlock, 16) + 1 > 2 ** 18 ? { jsonrpc: '2.0', id: q.id, error: { code: -32000, message: 'log query timed out' } } : null) });
+    const T = temps();
+    const r = R.cree({ prendre: F.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0 });
+    const res = await r.lisLogs({ address: JETON, topics: [TR] }, 0, 950000, { pointe: 999990, sure: 998990 });
+    egal(res.logs.length, logs.length, '« log query timed out » : toutes les lignes lues dans la MEME passe');
+    ok(res.stats.refusLourds >= 1, 'la cellule est coupee (avant : la passe finissait en « erreur », la suivante redemandait la meme largeur)');
+    ok(r.etat.reculs === 0, 'aucun recul (ce n\'est pas un refus de politesse)');
+    /* le delai cote client (viem TimeoutError) sur un getLogs : meme chose, jamais rejoue a l'identique */
+    const G = fauxNoeud({ logs, pointe: 1000000 });
+    const lent = (u, i) => {
+      const q = JSON.parse(i.body);
+      if (q.method === 'eth_getLogs' && parseInt(q.params[0].toBlock, 16) - parseInt(q.params[0].fromBlock, 16) + 1 > 2 ** 18) {
+        return new Promise((ok2, ko) => { i.signal.addEventListener('abort', () => ko(Object.assign(new Error('aborted'), { name: 'AbortError' })));   /* comme fetch (undici) : une AbortError */ });
+      }
+      return G.prendre(u, i);
+    };
+    const r2 = R.cree({ prendre: lent, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, delaiMs: 40 });
+    const res2 = await r2.lisLogs({ address: JETON, topics: [TR] }, 0, 950000, { pointe: 999990, sure: 998990 });
+    egal(res2.logs.length, logs.length, 'delai depasse cote client : toutes les lignes lues');
+    ok(r2.etat.reculs === 0 && r2.etat.coupesLourdes >= 1, `coupee, sans recul ni reprise a l'identique (${r2.etat.coupesLourdes} delais)`);
+  }
+  // ================================================== 11. un seul noeud, une requete a la fois (revue N2, N3)
+  console.log('-- 11. deux clients, un rythme : une requete en vol, l\'espacement tenu, le recul partage, la pause --');
+  {
+    const F = fauxNoeud({ logs: chaine([[100, 1]]), pointe: 1000 });
+    const T = temps();
+    let enVol = 0, maxEnVol = 0; const traces = [];
+    const prendre = async (u, i) => {
+      enVol++; maxEnVol = Math.max(maxEnVol, enVol);
+      const debut = T.now;
+      await new Promise((ok2) => setTimeout(ok2, 3));
+      T.now += 200;                                   // 200 ms de reseau
+      enVol--; traces.push([debut, T.now]);
+      return F.prendre(u, i);
+    };
+    const rythme = R.nouveauRythme();
+    const A2 = R.cree({ prendre, horloge: T.horloge, dors: T.dors, rythme });
+    const B2 = R.cree({ prendre, horloge: T.horloge, dors: T.dors, rythme, budgetAppels: 60 });
+    await Promise.all([A2.pointe(), B2.pointe(), A2.pointe(), B2.pointe(), A2.lisLogs({ address: JETON, topics: [TR] }, 0, 900, { pointe: 990, sure: 0 }), B2.pointe()]);
+    egal(maxEnVol, 1, 'une seule requete en vol pour les deux clients (avant : 2, et 222 chevauchements dans la passe reelle)');
+    traces.sort((a, b) => a[0] - b[0]);
+    let mini = Infinity; for (let k = 1; k < traces.length; k++) mini = Math.min(mini, traces[k][0] - traces[k - 1][1]);
+    ok(mini >= R.ESPACE_LEGER_MS, `au moins 1,5 s entre la FIN d'une requete et le DEBUT de la suivante, quel que soit le client (mini ${mini} ms)`);
+    /* N3 : un 429 recu par A fait reculer B aussi */
+    const G = fauxNoeud({ logs: [], pointe: 1000, pannes: [429] });
+    const T3 = temps(); const departs = [];
+    const p3 = async (u, i) => { departs.push(T3.now); return G.prendre(u, i); };
+    const ry = R.nouveauRythme();
+    const A3 = R.cree({ prendre: p3, horloge: T3.horloge, dors: T3.dors, rythme: ry, espaceLegerMs: 0, espaceLourdMs: 0 });
+    const B3 = R.cree({ prendre: p3, horloge: T3.horloge, dors: T3.dors, rythme: ry, espaceLegerMs: 0, espaceLourdMs: 0 });
+    await Promise.all([A3.pointe(), B3.pointe(), B3.pointe()]);
+    ok(departs.length === 4 && departs.slice(1).every((t) => t >= departs[0] + 15000), `apres le 429 recu par A, B n'envoie rien avant la fin du recul de 15 s (departs ${departs.map((t) => t - departs[0]).join(', ')} ms)`);
+    /* la pause apres un abandon, partagee, croissante, remise a zero au premier succes */
+    const H = fauxNoeud({ logs: [], pointe: 1000, pannes: [429, 429, 429] });
+    const T4 = temps(); const ry4 = R.nouveauRythme();
+    const A4 = R.cree({ prendre: H.prendre, horloge: T4.horloge, dors: T4.dors, rythme: ry4, espaceLegerMs: 0, espaceLourdMs: 0 });
+    const B4 = R.cree({ prendre: H.prendre, horloge: T4.horloge, dors: T4.dors, rythme: ry4, espaceLegerMs: 0, espaceLourdMs: 0 });
+    let e = null; try { await A4.pointe(); } catch (x) { e = x; }
+    ok(e instanceof R.AbandonPasse, 'trois refus : abandon');
+    const http = H.etat.http;
+    let e2 = null; try { await B4.pointe(); } catch (x) { e2 = x; }
+    ok(e2 instanceof R.AbandonPasse && H.etat.http === http, 'pendant la pause de 30 min, l\'AUTRE client n\'appelle pas le noeud non plus');
+    T4.now += 30 * 60e3 + 1;
+    egal((await B4.pointe()).pointe, 1000, 'apres 30 min, le noeud est rappele');
+    egal(ry4.abandons, 0, 'et le premier succes remet le compte des abandons a zero');
+    const K2 = fauxNoeud({ logs: [], pointe: 1000, pannes: [429, 429, 429, 429, 429, 429] });
+    const T5 = temps(); const ry5 = R.nouveauRythme();
+    const A5 = R.cree({ prendre: K2.prendre, horloge: T5.horloge, dors: T5.dors, rythme: ry5, espaceLegerMs: 0, espaceLourdMs: 0 });
+    try { await A5.pointe(); } catch (x) { /* abandon 1 */ }
+    T5.now += 30 * 60e3 + 1;
+    try { await A5.pointe(); } catch (x) { /* abandon 2 */ }
+    egal(Math.round((ry5.pause - T5.now) / 60e3), 120, 'deux abandons de suite : la pause passe a 2 h');
+  }
+  // ================================================== 12. plafond du jour (revue N9)
+  console.log('-- 12. plafond quotidien, partage par les clients du meme noeud --');
+  {
+    const F = fauxNoeud({ logs: [], pointe: 1000 });
+    const T = temps(); const ry = R.nouveauRythme();
+    const A2 = R.cree({ prendre: F.prendre, horloge: T.horloge, dors: T.dors, rythme: ry, espaceLegerMs: 0, espaceLourdMs: 0, plafondJourHttp: 3 });
+    const B2 = R.cree({ prendre: F.prendre, horloge: T.horloge, dors: T.dors, rythme: ry, espaceLegerMs: 0, espaceLourdMs: 0, plafondJourHttp: 3 });
+    await A2.pointe(); await B2.pointe(); await A2.pointe();
+    let e = null; try { await B2.pointe(); } catch (x) { e = x; }
+    ok(e instanceof R.BudgetEpuise && /du jour/.test(e.message) && F.etat.http === 3, 'le 4e appel du jour (tous clients confondus) ne part pas');
+    T.now += 24 * 3600e3;
+    egal((await B2.pointe()).pointe, 1000, 'le lendemain, le compte repart');
+    ok(R.PLAFOND_JOUR_HTTP > 0 && R.PLAFOND_JOUR_OCTETS > 0, 'un plafond quotidien par defaut existe');
+  }
+  // ================================================== 13. l'URL du noeud ne sort jamais (revue N5)
+  console.log('-- 13. l\'URL du noeud n\'apparait dans aucun message --');
+  {
+    const SECRET = 'https://noeud-prive.example/v2/CLE-SECRETE-123';
+    const muet = (u, i) => new Promise((ok2, ko) => { i.signal.addEventListener('abort', () => ko(Object.assign(new Error('aborted'), { name: 'AbortError' })));   /* comme fetch (undici) : une AbortError */ });
+    const T = temps();
+    const r = R.cree({ url: SECRET, prendre: muet, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, delaiMs: 20, reculs: [1, 1] });
+    let e = null; try { await r.pointe(); } catch (x) { e = x; }
+    ok(e instanceof R.AbandonPasse, 'noeud muet : abandon');
+    ok(e && !/CLE-SECRETE|noeud-prive/.test(e.message) && /timeout/.test(e.message), 'le message dit « timeout », jamais l\'URL (' + (e && e.message) + ')');
+    egal(R.libelle({ name: 'HttpRequestError', message: 'HTTP request failed. URL: ' + SECRET }), 'network', 'libelle fixe pour une erreur reseau de viem');
+    ok(!/CLE-SECRETE/.test(r.masque('x URL: ' + SECRET + ' y ' + SECRET)), 'masque() retire toute trace de l\'URL');
   }
 
   if (rates) { console.log(`RATES : ${rates}/${n + rates}`); process.exit(1); }

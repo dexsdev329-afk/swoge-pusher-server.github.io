@@ -2,12 +2,15 @@
 /*
  * Les calculs du detecteur smart money (smart_calcul.js, 13/10/2026).
  *
- * GAIN et SCORE D'ABORD, sur des VALEURS REELLES : des journaux bruts de NILF et
- * BRODIE lus sur le noeud public (cache de la sonde du 13/10, vies entieres
- * jusqu'au bloc 83 886 079), figes dans essais/smart_money/. Les nombres
- * attendus ont ete calcules par un script Python INDEPENDANT
- * (smart_build/calibre/gain_independant.py : son propre decodage, sa propre
- * regle du beneficiaire, son propre gain), pas par le code essaye.
+ * GAIN et SCORE D'ABORD, sur des VALEURS REELLES : les 50 premiers de NILF et
+ * BRODIE relus le 14/10 apres la revue (base de controle remesuree), et TOUS les
+ * journaux de leurs tx — Transfer, Swap, retenues du crochet et frais du routeur
+ * lus dans les recus — figes dans essais/smart_money/premiers_reels.json.gz.
+ * Les nombres attendus (attendus_python.json) sont calcules par un script Python
+ * INDEPENDANT (essais/smart_money/gain_independant.py : son propre decodage, sa
+ * propre regle du beneficiaire, ses propres frais), pas par le code essaye ; il
+ * s'accorde avec la base sur les 100 wallets. L'ancien attendu (revue C1) prenait
+ * le montant du Swap pour ce que le wallet recoit : un cas l'interdit.
  * Puis : signes v2/v3/v4 (un recu v3 lu le 13/10), beneficiaire, premiers
  * acheteurs, marques aux deux bords de leur seuil, alertes, createur (recus
  * reels de BRODIE et astro), textes Verified / Not verified.
@@ -21,102 +24,171 @@ const ok = (c, m) => { if (c) n++; else { rates++; console.log('  RATE ' + m); }
 const egal = (a, b, m) => ok(a === b || (typeof a === 'bigint' && typeof b === 'bigint' && a === b) || String(a) === String(b), `${m} (lu ${a}, attendu ${b})`);
 const proche = (a, b, eps, m) => ok(a != null && Math.abs(a - b) <= eps, `${m} (lu ${a}, attendu ${b})`);
 const ESS = path.join(__dirname, 'essais', 'smart_money');
-const EX = JSON.parse(fs.readFileSync(path.join(ESS, 'extraits_reels.json'), 'utf8'));
-const PR = JSON.parse(fs.readFileSync(path.join(ESS, 'premiers_nilf_brodie.json'), 'utf8'));
+const RE = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(ESS, 'premiers_reels.json.gz'))));
+const PY = JSON.parse(fs.readFileSync(path.join(ESS, 'attendus_python.json'), 'utf8'));
 const OB = JSON.parse(fs.readFileSync(path.join(ESS, 'objets_reels.json'), 'utf8'));
+const RF = JSON.parse(fs.readFileSync(path.join(ESS, 'recus_frais_reels.json'), 'utf8'));
 const W = (n) => '0x' + String(n).padStart(40, '0');
 const T = (a) => K.pad32(a);
 const hex = (x) => '0x' + BigInt(x).toString(16);
 const mot = (x) => { let v = BigInt(x); if (v < 0n) v += 2n ** 256n; return v.toString(16).padStart(64, '0'); };
 const E = 10n ** 18n;
 
-/** Les echanges d'un extrait reel. */
+/** Les echanges d'un jeton reel (frais compris, recus lus = frais connus). */
 function echangesDe(e) {
   const evts = e.logs.map(K.decode).filter(Boolean);
-  const piscine = { pool: e.pool, version: 4, ethEst0: true, hook: e.hook };
-  return { evts, trades: K.echanges({ jeton: e.jeton, piscines: [piscine], evts }) };
+  const piscine = { pool: e.pool, version: 4, ethEst0: e.ethEst0, hook: e.hook };
+  return { evts, trades: K.echanges({ jeton: e.jeton, piscines: [piscine], evts, txLues: new Set(e.recusLus) }) };
 }
 
 // ================================================== 1. GAIN, valeurs reelles
-console.log('-- 1. GAIN = sorti - entre + solde x prix (NILF, BRODIE : journaux reels) --');
+console.log('-- 1. GAIN = ETH recu - ETH paye (frais lus) + solde x prix : les 100 premiers reels de NILF et BRODIE --');
 {
-  /* calcul independant (Python) : gain_independant.py, 13/10/2026 */
-  const ATTENDU = {
-    '0x90924c7d483cb1e1060c8de34acdf72aa54c738b': { entre: 297000000000000000n, sorti: 342300343441280946n, valeur: 0n, gain: 45300343441280946n, issue: 'gagnant', achats: 2, ventes: 2 },
-    '0xa723a2421c4a1e11d3e02509815ad375de345869': { entre: 99000000000000000n, sorti: 95507114512463392n, valeur: 0n, gain: -3492885487536608n, issue: 'perdant', achats: 1, ventes: 1 },
-    '0x6d9b561eb7fec2961b07a50bc864841404bdaac9': { entre: 91575000000000000n, sorti: 88262422144229221n, valeur: 0n, gain: -3312577855770779n, issue: 'perdant', achats: 2, ventes: 1 },
-    '0x4e2683428a263e676268137e58250e028e9cddae': { entre: 76847680800000000n, sorti: 72248221050593249n, valeur: 0n, gain: -4599459749406751n, issue: 'perdant', achats: 2, ventes: 2 },
-    '0x1865b0d8bc8ef6cc65cf4c655b139a5174c3dcba': { entre: 13464000000000000n, sorti: 0n, valeur: 2191087531466961n, gain: -11272912468533039n, issue: 'perdant', achats: 1, ventes: 0 },
-    '0x62245f9a6bfee95c4dde8f9790f6122bfe712a25': { entre: 3514124648352682654n, sorti: 3246688524825332n, valeur: 2940802669428169774n, gain: -570075290399687548n, issue: 'inconnu', achats: 9, ventes: 1 },
-  };
-  let vus = 0;
-  for (const [nom, e] of Object.entries(EX)) {
+  for (const [nom, e] of Object.entries(RE)) {
     const { evts, trades } = echangesDe(e);
     const prix = { num: BigInt(e.prix.num), den: BigInt(e.prix.den) };
-    for (const w of e.wallets) {
-      const A = ATTENDU[w.qui]; if (!A) continue; vus++;
+    let pareils = 0;
+    e.wallets.forEach((w, k) => {
+      const A = PY[nom][k];
       const tr = evts.filter((x) => x.genre === 'transfer' && x.jeton === e.jeton && (x.de === w.qui || x.vers === w.qui));
       const pos = K.position(w.qui, trades, tr);
-      const solde = BigInt(w.solde);
-      const g = K.gain({ entre: pos.entre, sorti: pos.sorti, solde, prix });
-      egal(pos.entre, A.entre, `${nom} ${w.qui.slice(0, 8)} : ETH entre`);
-      egal(pos.sorti, A.sorti, `${nom} ${w.qui.slice(0, 8)} : ETH sorti`);
-      egal(K.valeur(solde, prix), A.valeur, `${nom} ${w.qui.slice(0, 8)} : solde x prix`);
-      egal(g, A.gain, `${nom} ${w.qui.slice(0, 8)} : GAIN au wei pres`);
-      egal(K.issue(pos, g), A.issue, `${nom} ${w.qui.slice(0, 8)} : issue`);
-      egal(trades.filter((t) => t.qui === w.qui && t.sens === 'achat').length, A.achats, `${nom} ${w.qui.slice(0, 8)} : nombre d'achats dont il est le beneficiaire`);
-      egal(trades.filter((t) => t.qui === w.qui && t.sens === 'vente').length, A.ventes, `${nom} ${w.qui.slice(0, 8)} : nombre de ventes`);
-    }
+      const g = K.gain({ entre: pos.entre, sorti: pos.sorti, solde: w.solde == null ? null : BigInt(w.solde), prix });
+      if (A.qui === w.qui && String(pos.entre) === A.entre && String(pos.sorti) === A.sorti && String(g) === String(A.gain) && K.issue(pos, g) === A.issue
+        && trades.filter((t) => t.qui === w.qui && t.sens === 'achat').length === A.achats && trades.filter((t) => t.qui === w.qui && t.sens === 'vente').length === A.ventes) pareils++;
+      else ok(false, `${nom} ${w.qui} : lu ${pos.entre}/${pos.sorti}/${g}/${K.issue(pos, g)}, Python ${A.entre}/${A.sorti}/${A.gain}/${A.issue}`);
+    });
+    egal(pareils, 50, `${nom} : les 50 premiers — entre, sorti, gain au wei pres, issue, achats et ventes — egaux au calcul Python independant`);
   }
-  egal(vus, 6, 'les 6 wallets reels sont tous verifies');
-  /* le solde COMPTE : 0x1865b0… tient encore 12 442,9 BRODIE ; sans eux, sa perte serait la mise entiere */
-  const e = EX.BRODIE, prix = { num: BigInt(e.prix.num), den: BigInt(e.prix.den) };
+  /* le cas qui ECHOUE si `sorti` vaut le montant du Swap (revue C1) : NILF 0x90924c…, deux ventes */
+  {
+    const e = RE.NILF, q = '0x90924c7d483cb1e1060c8de34acdf72aa54c738b';
+    const { trades } = echangesDe(e);
+    const ventes = trades.filter((t) => t.qui === q && t.sens === 'vente');
+    const swap = ventes.reduce((s2, t) => s2 + t.ethSwap, 0n);
+    egal(swap, 342300343441280946n, 'NILF 0x90924c… : les deux Swap de vente valent 0,3423 ETH (l\'ancien « sorti »)');
+    const pos = K.position(q, trades, []);
+    egal(pos.sorti, 335488566606799456n, 'mais le wallet n\'a RECU que 0,33549 ETH : 1 % retenu par le crochet et ~0,99 % pris par le routeur sur chaque vente');
+    ok(pos.sorti < swap, 'sorti < somme des Swap : un code qui recopie le Swap echoue ici');
+    egal(pos.entre, 299000000000000000n, 'et il a PAYE 0,299 ETH : 0,297 au Swap plus 1 % au routeur');
+  }
+  /* revue C2, reel : BRODIE #33, 0x95158f8a… achete 54 135 BRODIE puis envoie tout a 0x18c0… */
+  const w33 = RE.BRODIE.wallets.find((w) => w.qui === '0x95158f8ac082cba832427734ae8cc396362ffbad');
+  egal(w33 && w33.rang + ':' + PY.BRODIE[RE.BRODIE.wallets.indexOf(w33)].issue, '33:inconnu', 'BRODIE #33 (tout envoye hors marche) : « inconnu », plus « perdant » a -0,058 ETH');
+  /* le solde COMPTE */
+  const prix = { num: BigInt(RE.BRODIE.prix.num), den: BigInt(RE.BRODIE.prix.den) };
   const g1 = K.gain({ entre: 13464000000000000n, sorti: 0n, solde: 12442887828962965660948n, prix });
-  ok(g1 > -13464000000000000n, 'GAIN : le solde au prix du dernier Swap reduit la perte (-0,0113 ETH, pas -0,0135)');
+  ok(g1 > -13464000000000000n, 'GAIN : le solde au prix du dernier Swap reduit la perte');
   egal(K.gain({ entre: 10n * E, sorti: 3n * E, solde: 0n, prix: null }), -7n * E, 'GAIN : solde nul -> pas besoin de prix');
   egal(K.gain({ entre: 1n, sorti: 0n, solde: 5n, prix: null }), null, 'GAIN : un solde sans prix -> null (jamais devine)');
   egal(K.gain({ entre: 1n, sorti: 0n, solde: null, prix: { num: 1n, den: 1n } }), null, 'GAIN : balanceOf illisible -> null');
   egal(K.gain({ entre: 2n * E, sorti: 1n * E, solde: 4000n * E, prix: { num: 1n, den: 1000n } }), 3n * E, 'GAIN : 1 - 2 + 4 000 x 0,001 = +3 ETH');
   egal(K.issue({ coutConnu: true }, 0n), 'perdant', 'ISSUE : gain nul = perdant (il faut gagner)');
   egal(K.issue({ coutConnu: false }, 5n), 'inconnu', 'ISSUE : sac recu hors marche = cout inconnu, jamais gagnant');
+  /* revue C2 : un achat suivi d'un ENVOI hors marche (relais, envoi a soi-meme, vente par une piscine non lue) -> inconnu, jamais perdant */
+  {
+    const q = W(0x95), dest = W(0x18);
+    const tr = [{ tx: 'a', bloc: 1, i: 0, sens: 'achat', qui: q, eth: 58217702732141111n, jetons: 54135n * E, net: 54135n * E }];
+    const env = [{ tx: 'b', bloc: 9, de: q, vers: dest, valeur: 54135n * E }];
+    const pos = K.position(q, tr, env);
+    egal(pos.envoyeHorsMarche, 54135n * E, 'position : l\'envoi hors marche est lu');
+    egal(pos.coutConnu, false, 'achat puis envoi de tout le sac : cout NON connu');
+    egal(K.issue(pos, K.gain({ entre: pos.entre, sorti: pos.sorti, solde: 0n, prix: null })), 'inconnu', 'issue « inconnu », jamais « perdant » a -100 % (BRODIE #33, 0x9515… : -0,058218 ETH avant)');
+    const pos1 = K.position(q, tr, [{ tx: 'b', bloc: 9, de: q, vers: dest, valeur: 54135n * E / 100n }]);
+    egal(pos1.coutConnu, true, 'un envoi de 1 % du sac : cout encore connu (bord)');
+    const pos2 = K.position(q, tr, [{ tx: 'b', bloc: 9, de: q, vers: dest, valeur: 54135n * E / 100n + 1n }]);
+    egal(pos2.coutConnu, false, 'au-dela de 1 % : inconnu');
+  }
+  /* revue C7 : l'offre en unites, exacte a toutes les decimales */
+  for (const [d, o] of [[0, 1000000n], [2, 100000000n], [6, 10n ** 12n], [9, 10n ** 15n], [18, 10n ** 24n]]) egal(K.unites(o, d), 1e6, `offre de 1 000 000 de jetons a ${d} decimales -> 1e6 unites`);
+}
+
+// ================================================== 1 bis. FRAIS, recus reels (revue C1)
+console.log('-- 1 bis. FRAIS : ce que le wallet recoit, lu dans 4 recus reels (13/10) --');
+{
+  const CROCHET = '0x332f85e7e323214b2d55286414b059ebb1f2a044';
+  const P = {
+    NILF: ['0xdb97b2aefd6816485a757ae49280d598a5c9c848', '0x08eb047c87b25e52936fd60201e74aaf385706bace2ecb2df3d6b9c3f4fff174'],
+    BRODIE: ['0x737054bd706cba68eaf4661411fede5f6c2952e5', '0xb6eae9d1f1838c4302d500e80d7aa854e45a6455f502215c7b970745b62d4b76'],
+    HM: ['0x359645eabf181101ddb9b90787b9e8480c923e55', '0xa8119e5e0ace22bd0c7c25dbf0e2d8100779211437beae894bb7c8cc40939e3a'],
+    TROLL: ['0x2a13008cc2f5a853f6fb21cbd90841806c64b247', '0xe519f39c1f867539983be78a1ed036097a545f4379b08203f6e592e153f52c90'],
+  };
+  const vente = (h, nom) => { const ev = RF[h].logs.map(K.decode).filter(Boolean); return K.echanges({ jeton: P[nom][0], piscines: [{ pool: P[nom][1], version: 4, ethEst0: true, hook: CROCHET }], evts: ev })[0]; };
+  /* NILF, wallet 0x90924c…, tx 0x13fb9218… : Swap 244 824 639 242 251 239 ; crochet 2 448 246 392 422 512 ; routeur
+     2 423 763 928 498 287 ; le routeur REMET au wallet (0x8619026a, mot 1) 239 952 628 921 330 440 = Swap - crochet - routeur */
+  const v1 = vente('0x13fb9218c87bd9d77973bb92a1bd546a625cc9f7e2ddb6096a37a929f0ae2bd5', 'NILF');
+  egal(v1.ethSwap, 244824639242251239n, 'NILF : le Swap vaut 0,24482 ETH');
+  egal(v1.eth, 239952628921330440n, 'NILF : ce que le WALLET recoit = ce que le routeur lui remet, au wei pres (Swap - 1 % crochet - frais routeur)');
+  ok(v1.eth !== v1.ethSwap, 'sorti n\'est JAMAIS le montant du Swap quand des frais sont lus (l\'erreur de la revue C1)');
+  const remis = (h) => { const l = RF[h].logs.find((x) => String(x.topics[0]).startsWith('0x8619026a')); return l ? BigInt('0x' + l.data.slice(66, 130)) : null; };
+  const v2 = vente('0x5c10fd7f56f62aac1a04d72c1c63f578cb52598be60c70d054c6f1a18fb87fed', 'BRODIE');
+  egal(v2.eth, remis('0x5c10fd7f56f62aac1a04d72c1c63f578cb52598be60c70d054c6f1a18fb87fed'), 'BRODIE (0xc468…) : idem, au wei pres');
+  for (const [h, nom] of [['0x34f0ecec3a48eb23b88a40913428fde8f26e004bcddf61cd6720770da5b2fee2', 'TROLL'], ['0xaf63ff14d3c8ec3d01789711e388149632dc2f534ec0cde5b75205b3a929e7d0', 'HM']]) {
+    const v = vente(h, nom);
+    egal(v.frais * 10000n / v.ethSwap, 99n, `${nom} : le crochet retient 0,9999 % de l'ETH de la vente (hors du Swap)`);
+    egal(v.eth, v.ethSwap - v.frais, `${nom} : sorti = Swap - retenue du crochet`);
+  }
+  /* bords : un crochet AUTRE que celui de la piscine ne compte pas ; un routeur inconnu n'est pas decode ; un achat paie les frais du routeur */
+  const ev = RF['0x13fb9218c87bd9d77973bb92a1bd546a625cc9f7e2ddb6096a37a929f0ae2bd5'].logs.map(K.decode).filter(Boolean);
+  const autre = K.echanges({ jeton: P.NILF[0], piscines: [{ pool: P.NILF[1], version: 4, ethEst0: true, hook: W(0x44) }], evts: ev })[0];
+  egal(autre.eth, 244824639242251239n - 2423763928498287n, 'un evenement d\'un crochet qui n\'est pas celui de la piscine : ignore');
+  const faux = Object.assign({}, RF['0x13fb9218c87bd9d77973bb92a1bd546a625cc9f7e2ddb6096a37a929f0ae2bd5'].logs.find((l) => String(l.topics[0]).startsWith('0x205442d6')), { address: W(0x66) });
+  egal(K.decode(faux), null, 'l\'evenement de frais d\'un routeur inconnu n\'est pas cru');
+  const J = W(0xabc), POOL = '0x' + '1'.repeat(64), PM = K.ADR.POOL_MANAGER_V4, A = W(0xa1);
+  const lg = (k, i, adresse, topics, mots) => ({ address: adresse, topics, data: '0x' + mots.map(mot).join(''), blockNumber: '0x64', transactionHash: '0x' + 'f'.repeat(63) + k, logIndex: hex(i) });
+  const achat = K.echanges({ jeton: J, piscines: [{ pool: POOL, version: 4, ethEst0: true, hook: null }], evts: [
+    lg(1, 0, PM, [K.TOPIC.SWAP_V4, POOL, T(W(0x77))], [-792n * 10n ** 14n, 1000n * E, 1n << 96n, 1n, 0n, 0n]),
+    lg(1, 1, J, [K.TOPIC.TRANSFER, T(PM), T(A)], [1000n * E]),
+    lg(1, 2, K.ADR.ROUTEUR_FRAIS, [K.TOPIC.FRAIS_ROUTEUR, T(K.ADR.ETH_NATIF), T(A)], [8n * 10n ** 14n, 0n]),
+  ].map(K.decode) })[0];
+  egal(achat.eth, 8n * 10n ** 16n, 'un achat paie Swap + frais du routeur : 0,0792 + 0,0008 = 0,08 ETH (NOVAAI tx 0xd63628a1… : 80 000 000 000 000 000 payes)');
+  const pos = K.position(A, [achat], []);
+  egal(pos.entre + ':' + pos.frais, 8n * 10n ** 16n + ':' + 8n * 10n ** 14n, 'position : entre = ce que le wallet a paye, frais gardes a part');
+  egal(K.position(A, [Object.assign({}, achat, { fraisLus: false })], []).fraisLus, false, 'un echange dont le recu n\'a pas ete lu : frais NON lus (dit « Not verified »)');
 }
 
 // ================================================== 2. SCORE, valeurs reelles
-console.log('-- 2. SCORE : taux de base et z (50 premiers reels de NILF et BRODIE) --');
+console.log('-- 2. SCORE : taux de base et z (50 premiers reels de NILF et BRODIE, remesures le 14/10) --');
 {
   const bases = new Map(), parts = new Map();
-  for (const [nom, r] of Object.entries(PR)) {
-    const l = r.premiers.map((x) => ({ jeton: r.jeton, qui: x.qui, tot: x.minutes != null && x.minutes <= 60, issue: x.issue, gain: x.gain == null ? null : BigInt(x.gain), minutes: x.minutes, marques: x.groupe ? [{ type: 'groupe' }] : [] }));
+  for (const [nom, e] of Object.entries(RE)) {
+    const l = e.wallets.map((x, k) => ({ jeton: e.jeton, qui: x.qui, tot: x.tot, issue: PY[nom][k].issue, gain: PY[nom][k].gain == null ? null : BigInt(PY[nom][k].gain), minutes: x.minutes, marques: x.marques }));
     const b = K.tauxBase(l);
-    bases.set(r.jeton, b);
+    bases.set(e.jeton, b);
     for (const p of l) { if (!parts.has(p.qui)) parts.set(p.qui, []); parts.get(p.qui).push(p); }
-    if (nom === 'NILF') { egal(b.n, 50, 'NILF : 50 entrants de la 1re heure a issue connue'); egal(b.gagnants, 27, 'NILF : 27 gagnants'); proche(b.p, 0.54, 1e-12, 'NILF : taux de base 54 %'); }
-    else { egal(b.n, 37, 'BRODIE : 37 a issue connue (10 couts inconnus, 3 hors de la 1re heure)'); egal(b.gagnants, 12, 'BRODIE : 12 gagnants'); proche(b.p, 12 / 37, 1e-12, 'BRODIE : taux de base 32,4 %'); }
+    const avec = K.tauxBase(l.map((p) => Object.assign({}, p, { marques: [] })));
+    /* avant la revue : NILF 27/50 (54 %) et BRODIE 12/37 (32 %), frais ignores et marques comptes */
+    if (nom === 'NILF') { egal(avec.gagnants + '/' + avec.n, '17/50', 'NILF, frais lus, marques comprises : 17 gagnants sur 50 (54 % -> 34 %)'); egal(b.gagnants + '/' + b.n, '10/27', 'NILF, sans les 23 wallets marques : 10 sur 27 (37 %)'); }
+    else { egal(avec.gagnants + '/' + avec.n, '10/35', 'BRODIE, frais lus, marques comprises : 10 sur 35 (7 issues inconnues de plus : envois hors marche)'); egal(b.gagnants + '/' + b.n, '10/30', 'BRODIE, sans les 5 wallets marques : 10 sur 30 (33 %)'); }
   }
-  /* les deux wallets presents dans les 50 premiers des deux jetons (calcul Python independant) */
+  /* les deux wallets presents dans les 50 premiers des deux jetons (issues du calcul Python independant) */
   const s1 = K.score(parts.get('0xa723a2421c4a1e11d3e02509815ad375de345869'), bases);
-  egal(s1.projets, 2, 'SCORE 0xa723… : 2 projets (entre dans la 1re heure des deux)');
-  egal(s1.gagnants, 1, 'SCORE 0xa723… : 1 gagnant (BRODIE)');
-  proche(s1.attendu, 0.8643243243243244, 1e-12, 'SCORE 0xa723… : attendu = 0,54 + 0,324');
-  proche(s1.z, 0.19842368428785392, 1e-12, 'SCORE 0xa723… : z = +0,20');
-  egal(s1.gainTotal, 128321780860478n, 'SCORE 0xa723… : gain total au wei pres');
-  proche(s1.delaiMoyen, 11.9, 1e-9, 'SCORE 0xa723… : delai moyen 11,9 min (en-tetes lus)');
-  egal(s1.verdict, 'pas_assez', 'SCORE 0xa723… : aucun verdict sous 10 projets');
-  egal(s1.smart, false, 'SCORE 0xa723… : 1 gagnant sur 2, pas smart');
+  egal(s1.projets + ':' + s1.connus + ':' + s1.jugeables, '2:2:2', 'SCORE 0xa723… : 2 projets, 2 issues connues, 2 jetons a taux jugeable');
+  egal(s1.gagnants, 0, 'SCORE 0xa723… : 0 gagnant (BRODIE bascule : +0,0036 ETH sans les frais, -0,0063 avec)');
+  const att = 10 / 26 + 10 / 29;
+  proche(s1.attendu, att, 1e-12, 'SCORE 0xa723… : attendu = 10/26 + 10/29 (lui-meme retire de chaque base)');
+  proche(s1.z, -att / Math.sqrt(10 / 26 * 16 / 26 + 10 / 29 * 19 / 29), 1e-12, 'SCORE 0xa723… : z = (0 - attendu) / ecart type');
+  egal(s1.gainTotal, -4447956632661241n - 6315004804286884n, 'SCORE 0xa723… : gain total au wei pres');
+  proche(s1.delaiMoyen, (1 / 60 + 23.783333333333335) / 2, 1e-9, 'SCORE 0xa723… : delai moyen 11,9 min (en-tetes lus)');
+  egal(s1.verdict, 'pas_assez', 'SCORE 0xa723… : aucun verdict sous 10 issues connues');
+  egal(s1.smart, false, 'SCORE 0xa723… : pas smart');
   const s2 = K.score(parts.get('0x27bbe36c44f5125b27f7c6b74d3e5e16087bf59a'), bases);
-  egal(s2.gainTotal, -17525753519511846n, 'SCORE 0x27bb… : gain total -0,0175 ETH');
+  egal(s2.gainTotal, 3782481568832115n - 32220977553148841n, 'SCORE 0x27bb… : gain total -0,0284 ETH');
   proche(s2.delaiMoyen, 14.275, 1e-9, 'SCORE 0x27bb… : delai moyen 14,3 min');
-  /* les 17 wallets marques « groupe » de NILF ne sont jamais smart */
-  const marques = PR.NILF.premiers.filter((x) => x.groupe).map((x) => x.qui);
-  egal(marques.length, 17, 'NILF : 17 des 50 premiers achetent en groupe (>= 3 wallets, meme bloc, +/- 2 %)');
-  ok(marques.every((q) => K.score(parts.get(q), bases).initie), 'un wallet marque est « initie »');
+  /* les 17 wallets marques « groupe » de NILF, les 6 « paire » (revue INI-04), ne sont jamais smart */
+  const groupe = RE.NILF.wallets.filter((x) => x.marques.some((m) => m.type === 'groupe')).map((x) => x.qui);
+  egal(groupe.length, 17, 'NILF : 17 des 50 premiers achetent en groupe (>= 3 wallets, meme bloc, +/- 2 %)');
+  const paire = RE.NILF.wallets.filter((x) => x.marques.some((m) => m.type === 'paire')).map((x) => x.qui);
+  egal(paire.length, 6, 'NILF : 6 autres en paires repetees (revue INI-04 : 0x6db1… + 0xe5ee…, 0xdcbe… + 0x420d…)');
+  ok(['0x6db1ffeb', '0xe5eebaf6', '0xdcbeaefd', '0x420dc884'].every((p) => paire.some((q) => q.startsWith(p))), 'dont les deux paires de la revue');
+  ok(groupe.concat(paire).every((q) => K.score(parts.get(q), bases).initie), 'un wallet marque est « initie »');
 
   /* la regle du proprietaire, et le z qui la remet a sa place */
-  const fab = (k, p, g) => { const b = new Map(), l = []; for (let i = 0; i < k; i++) { const j = 'J' + i; b.set(j, { p }); l.push({ jeton: j, tot: true, issue: i < g ? 'gagnant' : 'perdant', gain: i < g ? E : -E, minutes: 5, marques: [] }); } return { l, b }; };
+  /* une base de 1 000 000 d'issues : retirer le wallet juge n'y change rien au millionieme */
+  const fab = (k, p, g) => { const b = new Map(), l = []; for (let i = 0; i < k; i++) { const j = 'J' + i; b.set(j, { n: 1e6, gagnants: Math.round(p * 1e6) }); l.push({ jeton: j, tot: true, issue: i < g ? 'gagnant' : 'perdant', gain: i < g ? E : -E, minutes: 5, marques: [] }); } return { l, b }; };
   let x = fab(12, 0.5, 10);
   let s = K.score(x.l, x.b);
   egal(s.smart, true, 'regle : 10 gagnants sur 12, aucune marque -> smart');
-  proche(s.z, 4 / Math.sqrt(3), 1e-12, 'z = (10 - 6) / racine(3) = 2,31 a un taux de base de 50 %');
+  proche(s.z, 4 / Math.sqrt(3), 1e-5, 'z = (10 - 6) / racine(3) = 2,31 a un taux de base de 50 %');
   egal(s.verdict, 'mieux_que_la_base', 'z >= 2 et >= 10 projets -> « beats the base rate »');
   x = fab(12, 0.9, 10); s = K.score(x.l, x.b);
   egal(s.smart, true, 'regle : toujours smart au sens du proprietaire...');
@@ -135,14 +207,32 @@ console.log('-- 2. SCORE : taux de base et z (50 premiers reels de NILF et BRODI
   egal(s.smart, false, 'gagnant sur 4 mais tot sur 2 seulement : pas smart');
   x = fab(12, 0.5, 10); s = K.score(x.l, new Map());
   egal(s.z, null, 'sans taux de base, pas de z (jamais un z contre 0)');
-  egal(s.verdict, 'comme_la_base', 'et pas de « beats the base rate » sans base');
+  egal(s.verdict, 'pas_assez', 'et aucun verdict sans base jugeable (jamais « beats the base rate »)');
+  /* revue C3 : le seuil compte les issues CONNUES, pas les projets */
+  x = fab(10, 0.1, 9); x.l[9].issue = 'inconnu'; s = K.score(x.l, x.b);
+  egal(s.projets + ':' + s.connus + ':' + s.verdict, '10:9:pas_assez', '10 projets dont 9 issues connues : pas de verdict (avant : z +6 et « beats the base rate » des 10 projets)');
+  ok(/no verdict under 10 known outcomes \(9 so far\)/.test(K.verdictTexte(s)), 'texte : « no verdict under 10 known outcomes (9 so far) »');
+  x = fab(10, 0.1, 9); s = K.score(x.l, x.b);
+  egal(s.connus + ':' + s.verdict, '10:mieux_que_la_base', '10 issues connues : le verdict est rendu');
+  x = fab(10, 0.1, 9); for (let i = 0; i < 8; i++) x.l[i].issue = 'inconnu'; s = K.score(x.l, x.b);
+  egal(s.verdict, 'pas_assez', 'le cas de la revue : 10 projets, 2 issues connues -> aucun verdict');
+  /* revue C6 : le taux de base sans le wallet juge et sans les wallets marques ; aucun z sous BASE_ASSEZ */
+  const parts20 = (g) => Array.from({ length: K.BASE_ASSEZ }, (_, i) => ({ jeton: 'J', tot: true, issue: i < g ? 'gagnant' : 'perdant', marques: [] }));
+  let tb = K.tauxBase(parts20(10).concat([{ jeton: 'J', tot: true, issue: 'gagnant', marques: [{ type: 'groupe' }] }]));
+  egal(tb.n + ':' + tb.gagnants, K.BASE_ASSEZ + ':10', 'tauxBase : un wallet marque ne compte pas dans la reference');
+  const moi = { jeton: 'J', tot: true, issue: 'gagnant', marques: [], minutes: 1, gain: 1n };
+  let sc = K.score([moi], new Map([['J', K.tauxBase(parts20(10).concat([moi]))]]));
+  proche(sc.attendu, 10 / K.BASE_ASSEZ, 1e-12, 'score : le wallet juge est RETIRE de sa propre base (10/20, pas 11/21)');
+  sc = K.score([moi], new Map([['J', K.tauxBase(parts20(10).slice(1).concat([moi]))]]));
+  egal(sc.jugeables + ':' + sc.z, '0:null', `sous ${K.BASE_ASSEZ} issues connues (lui retire), le jeton n'a pas de taux jugeable : aucun z (NOVAAI : p = 3/5)`);
+  egal(sc.connus, 1, 'mais l\'issue reste comptee comme connue');
 }
 
 // ================================================== 3. signes et decodage
 console.log('-- 3. signes des Swap v2 / v3 / v4 --');
 {
   /* v4 reel : le 1er achat de 0x90924c… sur NILF */
-  const e = EX.NILF; const sw = e.logs.map(K.decode).filter((x) => x && x.genre === 'swap');
+  const e = RE.NILF; const sw = e.logs.map(K.decode).filter((x) => x && x.genre === 'swap');
   const a = sw.find((x) => x.u0 < 0n);
   ok(a && a.u1 > 0n, 'v4 reel : achat = ETH (amount0) negatif, jeton positif (cote utilisateur)');
   egal(K.jambe(a, { ethEst0: true }).sens, 'achat', 'v4 reel : la jambe dit « achat »');
@@ -229,7 +319,7 @@ console.log('-- 6. les 4 marques, aux deux bords de leur seuil --');
   G = K.marqueGroupes([a(1, 5, 1000n), a(1, 5, 1000n), a(2, 5, 1000n)]);
   egal(G.size, 0, 'groupe : deux achats du MEME wallet ne font pas deux wallets');
   /* reel : NILF, bloc 49 880 350, 4 wallets a 0,06187 ETH par le meme routeur */
-  const reel = PR.NILF.premiers.filter((x) => x.groupe === 49880350);
+  const reel = RE.NILF.wallets.filter((x) => x.marques.some((m) => m.type === 'groupe' && m.bloc === 49880350));
   egal(reel.length, 4, 'NILF bloc 49 880 350 : 4 des 50 premiers marques « groupe » (meme mise, meme routeur)');
 
   const pos = { premierAchat: { bloc: 100 }, achetes: 10000n };
@@ -245,6 +335,60 @@ console.log('-- 6. les 4 marques, aux deux bords de leur seuil --');
   egal(K.marqueFinance(W(1), 40, f, [W(9)]), null, 'finance APRES son achat : rien');
   const m = K.marques({ qui: W(1), groupes: new Map([[W(1), { bloc: 1 }]]), relais: null, renvoi: { tx: 'z' }, finance: null });
   egal(m.map((x) => x.type).join(','), 'groupe,renvoi', 'les marques sont listees avec leur preuve');
+  /* revue INI-12 : une tx ou le wallet est beneficiaire d'un echange n'est jamais un renvoi */
+  egal(K.marqueRenvoi(W(1), tr, [W(9)], new Set(['z'])), null, 'renvoi : pas dans une tx d\'echange du wallet');
+  /* revue INI-03 et INI-09 : la preuve du groupe dit sa taille reelle et les acheteurs du bloc */
+  G = K.marqueGroupes([a(1, 5, 1000n), a(2, 5, 1010n), a(3, 5, 1020n), a(4, 5, 5000n), a(5, 5, 9000n), a(6, 5, 20000n)]);
+  egal(G.get(W(1)).n + ':' + G.get(W(1)).acheteursBloc, '3:6', 'groupe : n = 3 dans le groupe, 6 acheteurs dans le bloc');
+  ok(G.get(W(1)).acheteursBloc > K.BLOC_CHARGE, `bloc de plus de ${K.BLOC_CHARGE} acheteurs : « same-block pattern »`);
+  /* revue INI-04 : paires repetees, aux deux bords */
+  let Pr = K.marquePaires([a(1, 5, 1000n), a(2, 5, 1010n), a(1, 9, 990n), a(2, 9, 1000n)]);
+  egal(Pr.size, 2, 'paire : meme bloc et meme mise (+/- 2 %), dans 2 blocs -> les deux sont marques');
+  egal(Pr.get(W(1)).avec + ':' + Pr.get(W(1)).blocs.length, W(2) + ':2', 'avec sa preuve : l\'autre wallet et les 2 blocs');
+  Pr = K.marquePaires([a(1, 5, 1000n), a(2, 5, 1010n)]);
+  egal(Pr.size, 0, 'une paire UNIQUE -> rien (peut etre le hasard)');
+  Pr = K.marquePaires([a(1, 5, 1000n), a(2, 5, 1010n), a(1, 9, 1000n), a(2, 9, 1030n)]);
+  egal(Pr.size, 0, 'la 2e fois a +3 % -> rien');
+  Pr = K.marquePaires([{ qui: W(1), cle: 'A:5', bloc: 5, eth: 99n, tx: 'p' }, { qui: W(2), cle: 'A:5', bloc: 5, eth: 99n, tx: 'q' }, { qui: W(1), cle: 'B:7', bloc: 7, eth: 99n, tx: 'r' }, { qui: W(2), cle: 'B:7', bloc: 7, eth: 99n, tx: 's' }]);
+  egal(Pr.size, 2, 'paire repetee d\'un jeton a l\'autre (cle jeton:bloc) -> marquee');
+  /* revue INI-01 : la co-entree, aux deux bords */
+  const pr = (w, jeton, bloc) => ({ wallet: W(w), jeton, bloc, tx: 't' + w + jeton });
+  let Co = K.marqueCoentree([pr(1, 'A', 10), pr(2, 'A', 10), pr(3, 'A', 10), pr(1, 'B', 20), pr(2, 'B', 20), pr(3, 'B', 20)]);
+  egal(Co.size, 3, 'co-entree : 3 wallets dans un meme bloc sur 2 jetons -> marques, quelles que soient les mises');
+  egal(Co.get(W(1)).blocs.length + ':' + Co.get(W(1)).membres.length, '2:3', 'preuve : les 2 blocs et les 3 membres');
+  Co = K.marqueCoentree([pr(1, 'A', 10), pr(2, 'A', 10), pr(3, 'A', 10), pr(1, 'B', 20), pr(2, 'B', 20), pr(3, 'B', 21)]);
+  egal(Co.size, 0, 'deux seulement ensemble sur le 2e jeton -> rien');
+  Co = K.marqueCoentree([pr(1, 'A', 10), pr(2, 'A', 10), pr(3, 'A', 10), pr(1, 'A', 30), pr(2, 'A', 30), pr(3, 'A', 30)]);
+  egal(Co.size, 0, 'deux blocs du MEME jeton -> rien (il faut 2 jetons)');
+}
+
+// ================================================== 6 bis. astro depuis son VRAI lancement (revue INI-02)
+console.log('-- 6 bis. astro relu depuis son vrai lancement (bloc 57 852 996) : les marques du lancement reapparaissent --');
+{
+  const AS = JSON.parse(require('zlib').gunzipSync(fs.readFileSync(path.join(ESS, 'astro_lancement.json.gz'))));
+  const evts = AS.logs.map(K.decode).filter(Boolean);
+  const tr = K.echanges({ jeton: AS.jeton, piscines: [{ pool: AS.pool, version: 2, ethEst0: AS.ethEst0, hook: null }], evts });
+  egal(tr[0] && tr[0].bloc, 57852996, 'le 1er echange lu est au bloc 57 852 996 (tx 0xb31ee728…), pas 58 434 470 (16 h plus tard)');
+  const heure = tr.filter((t) => t.sens === 'achat' && t.eth >= K.MISE_MIN_WEI && t.bloc <= AS.finHeure);
+  const G = K.marqueGroupes(heure);
+  const auLancement = [...G.values()].filter((p) => p.bloc === 57852996).length;
+  ok(auLancement >= 13, `${auLancement} wallets marques « groupe » dans le bloc de lancement (la revue en compte 13 ; lu au mauvais lancement : 0)`);
+  ok([...G.values()].some((p) => p.bloc === 57852996 && p.acheteursBloc > K.BLOC_CHARGE), 'un bloc de lancement charge : la page dit « same-block pattern »');
+}
+
+// ================================================== 6 ter. co-entree, valeurs reelles (revue INI-01)
+console.log('-- 6 ter. co-entree : les 300 premiers des 7 jetons du controle --');
+{
+  const PC = JSON.parse(fs.readFileSync(path.join(ESS, 'premiers_controle.json'), 'utf8'));
+  const lignes = PC.lignes.map(([, wallet, jeton, bloc, tx]) => ({ wallet, jeton, bloc, tx }));
+  egal(lignes.length, 300, '300 premiers (6 jetons x 50 ; CPU sans acheteur)');
+  const Co = K.marqueCoentree(lignes);
+  const CINQ = ['0xb0b72fd48bd4212c77e75756a7ec977165a41657', '0xf9d33b7def5d8d6015ce2784e6fcf82802e247dd', '0x762565c177986a09f091b32ac204aa262b3f200a', '0x873a6043fb89fdfaaa3f116b9526451836cbc892', '0xa580cdba20944a0d58e1198ff7e6e7e517f389dd'];
+  egal([...Co.keys()].sort().join(), CINQ.slice().sort().join(), 'exactement les 5 wallets de la revue, et aucun autre');
+  egal(Co.get(CINQ[0]).blocs.map((b) => b.bloc).join(), '49405103,66204136,74578365', 'leurs blocs communs : HM 49 405 103, PEPONS 66 204 136, TROLL 74 578 365');
+  /* le contrefactuel de la revue : TROLL avec des mises ecartees (aucune marque « groupe ») ; la co-entree les marque quand meme */
+  const sansTroll = K.marqueCoentree(lignes.filter((l) => l.jeton !== '0x2a13008cc2f5a853f6fb21cbd90841806c64b247'));
+  egal(sansTroll.size, 5, 'sans TROLL du tout, HM et PEPONS suffisent : les 5 restent marques');
 }
 
 // ================================================== 7. alertes
@@ -268,6 +412,9 @@ console.log('-- 7. alertes --');
   egal(K.alerteCreateur({ qui: W(5), role: 'migration', verifie: true, jeton: 'J' }, connus), null, 'operateur d\'une migration -> jamais « createur connu »');
   egal(K.alerteCreateur({ qui: W(5), role: 'inconnu', verifie: false, jeton: 'J' }, connus), null, 'role non verifie (1re frappe par un autre, cas PAPER) -> rien');
   egal(K.alerteCreateur({ qui: W(6), role: 'deployeur', verifie: true, jeton: 'J' }, connus), null, 'createur inconnu -> rien');
+  /* revue INI-07 : un lanceur automatique ne declenche pas une alerte par jeton */
+  ok(K.alerteCreateur({ qui: W(5), role: 'lanceur', verifie: true, jeton: 'J', bloc: 1, tx: 't' }, connus, { lancements24h: K.LANCEUR_AUTO - 1 }), `${K.LANCEUR_AUTO - 1} lancements en 24 h : alerte`);
+  egal(K.alerteCreateur({ qui: W(5), role: 'lanceur', verifie: true, jeton: 'J', bloc: 1, tx: 't' }, connus, { lancements24h: K.LANCEUR_AUTO }), null, `${K.LANCEUR_AUTO} lancements en 24 h : lanceur automatique, pas d'alerte par jeton`);
 }
 
 // ================================================== 8. le createur, recus reels
@@ -310,7 +457,10 @@ console.log('-- 9. textes : Verified / Not verified, echappes, aucun achat --');
   ok(!/<b>EVIL<\/b>/.test(t) && /&lt;b&gt;EVIL/.test(t), 'le symbole (choisi par le createur) est echappe');
   ok(t.includes('https://dexscreener.com/robinhood/' + al.jeton), 'lien DexScreener');
   ok(/nothing is bought/.test(t), 'le message dit qu\'aucun achat n\'est fait');
-  ok(/no verdict under 10 projects/.test(t), 'le score dit « no verdict under 10 projects »');
+  ok(/no verdict under 10 known outcomes/.test(t), 'le score dit « no verdict under 10 known outcomes »');
+  ok(/^<b>Smart wallets on &lt;b&gt;EVIL&lt;\/b&gt; \(owner’s rule, no verdict yet\)<\/b>/.test(t), 'sous le seuil, le TITRE dit « owner’s rule, no verdict yet » (revue C8)');
+  const t2 = K.texteAlerteSmart(al, { explorer: 'https://x', scores: new Map([[W(1), { projets: 12, connus: 12, jugeables: 12, gagnants: 10, z: 2.4, verdict: 'mieux_que_la_base' }], [W(2), { projets: 12, connus: 12, jugeables: 12, gagnants: 10, z: 2.4, verdict: 'mieux_que_la_base' }]]), symbole: 'X' });
+  ok(/^<b>Smart wallets on X<\/b>/.test(t2), 'avec un verdict pour chacun : le titre seul');
   const tc = K.texteAlerteCreateur({ createur: W(5), jeton: W(6), bloc: 99, tx: '0x' + 'f'.repeat(64), role: 'deployeur', palmares: { lancements: 4, reussites: 2, retraits: 1, drapeaux: 0 } }, { explorer: 'https://x', symbole: 'NEW' });
   ok(/deployed NEW \(block 99/.test(tc) && /1 of them had 90%\+ of their liquidity removed/.test(tc), 'createur connu : ce qui est lu sur la chaine est « Verified »');
   ok(/Not verified[^]*closed a day above \$1M/.test(tc), 'la capitalisation (prix exterieur) est « Not verified »');
@@ -323,8 +473,8 @@ console.log('-- 10. liens et recette --');
 {
   const p = (k) => Array.from({ length: k }, (_, i) => W(1000 + i));
   const L = K.liens([
-    { jeton: 'A', createur: W(1), premiers: p(5), recette: { signature: 'bots-first-minute' } },
-    { jeton: 'B', createur: W(1), premiers: p(5), recette: { signature: 'bots-first-minute' }, ancien: 'Z' },
+    { jeton: 'A', createur: W(1), premiers: p(5), recette: { signature: 'bots-first-minute+paid-profile-3h' }, financeur: W(9) },
+    { jeton: 'B', createur: W(1), premiers: p(5), recette: { signature: 'bots-first-minute+paid-profile-3h' }, ancien: 'Z', financeur: W(9) },
     { jeton: 'C', createur: W(2), premiers: p(4), recette: { signature: '' } },
   ]);
   ok(L.some((l) => l.type === 'meme_createur' && l.a === 'A' && l.b === 'B'), 'meme createur');
@@ -333,9 +483,17 @@ console.log('-- 10. liens et recette --');
   ok(L.some((l) => l.type === 'meme_recette'), 'meme recette (signature non vide)');
   ok(!L.some((l) => l.type === 'meme_recette' && (l.a === 'C' || l.b === 'C')), 'une recette vide ne relie rien');
   ok(L.some((l) => l.type === 'migration' && l.a === 'B' && l.b === 'Z'), 'ancien jeton -> nouveau jeton');
+  ok(L.every((l) => K.LIENS_TYPES.includes(l.type)) && !L.some((l) => l.type === 'meme_financeur'), 'aucun lien « meme financeur » : rien ne lit de financeur (revue INI-05)');
+  const Lb = K.liens([{ jeton: 'A', recette: { signature: 'bots-first-minute' } }, { jeton: 'B', recette: { signature: 'bots-first-minute' } }]);
+  egal(Lb.length, 0, 'une recette faite des seuls « bots-first-minute » ne relie rien (revue INI-13)');
+  /* revue INI-06 : deux migrations d'un meme OPERATEUR, deux createurs d'origine differents */
+  const Lm = K.liens([{ jeton: 'BRODIE', createur: W(0xeb), operateur: W(0x84) }, { jeton: 'NILF', createur: W(0x79), operateur: W(0x84) }]);
+  ok(!Lm.some((l) => l.type === 'meme_createur'), 'deux migrations d\'un meme operateur : AUCUN lien « meme createur »');
+  ok(Lm.some((l) => l.type === 'meme_operateur_migration' && l.detail === W(0x84)), 'mais un lien distinct « meme operateur de migration »');
   const r = K.recette({ achatCreateur: true, bruleParCreateur: true, robots: 5, profilApresS: 3 * 3600 });
   egal(r.signature, 'creator-buy-then-burn+bots-first-minute+paid-profile-3h', 'recette : les trois ingredients');
   egal(K.recette({ achatCreateur: true, bruleParCreateur: false, robots: 1, profilApresS: 3 * 3600 + 1 }).signature, '', 'achat sans brulure, 1 robot, profil a 3 h 00 min 01 s : rien');
+  egal(K.recette({ robots: K.ROBOTS_MIN - 1 }).signature + '|' + K.recette({ robots: K.ROBOTS_MIN }).signature, '|bots-first-minute', `« robots » : ${K.ROBOTS_MIN} acheteurs dans la 1re minute, sa propre constante`);
 }
 
 if (rates) { console.log(`RATES : ${rates}/${n + rates}`); process.exit(1); }

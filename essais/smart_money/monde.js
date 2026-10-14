@@ -29,7 +29,7 @@ const ADR = {
   POOL1: P('b1'), POOL2: P('b2'), POOL3: P('b3'), POOL4: P('b4'), POOL6: P('b6'),
   C1: A('c1'), C3: A('c3'), OP: A('0e'), U: A('0f'), FAB: A('fa'), LP0: A('fb'), MIG: A('fc'), HOOK: A('44'), ROUTEUR: A('77'),
   S1: A('51'), S2: A('52'), S3: A('53'), G1: A('61'), G2: A('62'), G3: A('63'), R1: A('71'), R1B: A('72'), F1: A('81'),
-  L1: A('91'), L2: A('92'), L3: A('93'), L4: A('94'), TARD: A('99'),
+  L1: A('91'), L2: A('92'), L3: A('93'), L4: A('94'), TARD: A('99'), LOIN: A('98'),
   STOCK: A('5c'), COPIE: '0xa1a' + 'b'.repeat(33) + 'a1a1', EXT: A('ee'),
 };
 const PM = K.ADR.POOL_MANAGER_V4;
@@ -64,9 +64,14 @@ function cree() {
     transfer(h, bloc, ADR[jeton], ADR.ROUTEUR, qui, jet - jet / 100n);
     return { h, jet: jet - jet / 100n };
   };
+  /* une vente : le Swap rend `eth`, le crochet en RETIENT 1 % en ETH (evenement
+     0xc532c43b hors du Swap, comme 0x332f… sur NILF : revue C1) ; le wallet
+     recoit donc 99 % */
+  const fraisCrochet = (h, bloc, pool, montant) => ajoute(h, journal(ADR.HOOK, [K.TOPIC.FRAIS_CROCHET, pool], [0n, montant, 0n], bloc, h, idx++));
   const vente = (jeton, qui, bloc, jet, eth, sq) => {
     const h = nouvelleTx(bloc, qui, ADR.ROUTEUR);
     swap(h, bloc, POOL[jeton], eth, -jet, sq || SQ(1000n));
+    fraisCrochet(h, bloc, POOL[jeton], eth / 100n);
     transfer(h, bloc, ADR[jeton], qui, PM, jet);
     return h;
   };
@@ -136,6 +141,10 @@ function cree() {
     }
     /* le dernier Swap : un petit achat d'un passant, au prix bas (les L tiennent a perte) */
     achat(j, A('ab'), L + 90000, 10n ** 15n, SQ(10000n));
+    /* J1 : un acheteur LOIN du lancement (~53 h : apres 24 h, avant 72 h), au
+       meme prix bas que le passant (revue C5 : la lecture par acheteur
+       s'arretait a 24 h) */
+    if (j === 'J1') achat(j, ADR.LOIN, L + 1900000, E / 50n, SQ(10000n));
   }
   return { logs, recus, txs, sacs, nouvelleTx, ajoute, achat, transfer, init, idxRef: () => idx };
 }
