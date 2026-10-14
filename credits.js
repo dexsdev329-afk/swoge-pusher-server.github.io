@@ -208,23 +208,44 @@ function cree(deps) {
   /** Le prix x402 de la recharge (appele par x402.prix) : le montant lui-meme. */
   const prixUsd = (args) => montant(args && args.usd);
 
-  /** Ajouter au credit, une seule fois par transaction. Rend le solde, ou null si deja credite. */
+  /** Ajouter au credit, une seule fois par transaction. Rend le solde, ou null si deja credite.
+      Depot Relay (14/10, credit_depot.js) : `recu.cle` (« relay:<tx Base>:<index du journal> ») est
+      l'anti-doublon et `recu.micro` le montant ENTIER en micro-dollars lu dans le recu — `usd` est
+      alors ignore. La transaction elle-meme (`recu.transaction`) est refusee si x402 l'a deja
+      creditee : une meme arrivee d'USDC ne se compte jamais par les deux chemins. */
   function ajoute(a, usd, recu) {
     /* Une signature Solana est en base58 : la casse en fait partie (13/10 : le journal gardait
        `5kgnq9kz…`, une signature qu'aucun explorateur ne retrouve). Un hash 0x reste en minuscules.
        L'anti-doublon regarde aussi la forme en minuscules, celle des recharges Solana d'avant. */
     const brut = String((recu && recu.transaction) || '');
     const tx = /^0x/i.test(brut) ? brut.toLowerCase() : brut;
-    if (!tx) return null;
-    if (E.tx[tx] || E.tx[tx.toLowerCase()]) return null;
-    const k = cle(a), micro = versMicro(usd);
-    E.tx[tx] = 1;
+    const parCle = !!(recu && recu.cle);
+    const id = parCle ? String(recu.cle).toLowerCase() : tx;
+    if (!id) return null;
+    if (E.tx[id] || E.tx[id.toLowerCase()]) return null;
+    /* La transaction elle-meme : refusee si x402 l'a creditee (marque 1) ; une marque 'relay' (un
+       autre journal de la MEME livraison, deja credite par sa propre cle) ne bloque pas. */
+    if (parCle && tx && ((E.tx[tx] && E.tx[tx] !== 'relay') || (E.tx[tx.toLowerCase()] && E.tx[tx.toLowerCase()] !== 'relay'))) return null;
+    let micro;
+    if (parCle) {
+      micro = Number(recu.micro);
+      if (!Number.isSafeInteger(micro) || micro <= 0) return null;
+    } else micro = versMicro(usd);
+    const k = cle(a);
+    E.tx[id] = 1;
+    /* Une livraison Relay marque aussi sa transaction : x402 ne la creditera jamais une seconde fois. */
+    if (parCle && tx && !E.tx[tx]) E.tx[tx] = 'relay';
     E.soldes[k] = (E.soldes[k] || 0) + micro;
-    MESURE.recharges++; MESURE.rechargesUsd += usd;
-    journal({ sorte: 'recharge', addr: k, micro, tx, reseau: (recu && recu.network) || null });
+    MESURE.recharges++; MESURE.rechargesUsd += versUsd(micro);
+    journal({ sorte: 'recharge', addr: k, micro, tx: tx || id, reseau: (recu && recu.network) || null });
     ecrit();
     return versUsd(E.soldes[k]);
   }
+  /** Deja credite sous cette cle (ou cette transaction) ? Lecture seule : 1 (x402 ou cle Relay),
+      'relay' (transaction d'une livraison Relay deja creditee), ou false. */
+  const dejaCredite = (k) => { const s = String(k || ''); return (s && (E.tx[s] || E.tx[s.toLowerCase()])) || false; };
+  /** Le solde en micro-dollars entiers (les bornes d'un depot se comparent sans flottant). */
+  const soldeMicroDe = (a) => soldeMicro(a);
 
   /**
    * La recharge en x402 : sans signature, le 402 ; avec, x402.traite verifie, `sert` accepte
@@ -267,7 +288,7 @@ function cree(deps) {
       usd: versUsd(x.micro), what: x.quoi || null, tx: x.tx || null, network: x.reseau || null }));
   }
 
-  return { soldeUsd, soldeChat, soldeDurable, durables, factu, recharge, ajoute, prixUsd, montant, historique, MESURE,
+  return { soldeUsd, soldeChat, soldeDurable, durables, factu, recharge, ajoute, dejaCredite, soldeMicro: soldeMicroDe, prixUsd, montant, historique, MESURE,
     etat: () => ({ comptes: Object.keys(E.soldes).filter((k) => E.soldes[k] > 0).length, totalUsd: versUsd(Object.values(E.soldes).reduce((a, b) => a + b, 0)),
       ouvertes: Object.keys(E.ouvertes).length, durables: Object.values(E.ouvertes).filter((o) => o.durable).length, mesure: Object.assign({}, MESURE) }),
     LIMITES: { minUsd: MIN_RECHARGE_USD, maxUsd: MAX_RECHARGE_USD, maxSoldeUsd: MAX_SOLDE_USD() } };

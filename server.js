@@ -2888,6 +2888,29 @@ function credits() {
   if (!CREDITS) CREDITS = require('./credits').cree({ dossier: cfg.DATA_DIR, x402: () => x402(), url: MOI_URL + '/credit/topup' });
   return CREDITS;
 }
+/* ---- LE CREDIT RECHARGE EN SOL OU EN USDT (credit_depot.js, 14/10/2026) ----
+   Une adresse de depot STRICTE de Relay, livree en USDC a la tresorerie de Base : le MEME payTo
+   que x402 Base (X402_BASE_PAYTO, sinon X402_PAYTO), relu ici sans exiger la cle CDP (ce chemin
+   ne passe par aucun facilitateur). Le recu se lit sur X402_BASE_RPC (mainnet.base.org sinon).
+   Eteint sans RELAY_API_KEY (/requests/v3 ne montre que les demandes de notre cle), sans payTo
+   valide, sur Base Sepolia, ou si payTo est le portefeuille de gaz. CREDIT_DEPOT=0 coupe. */
+let DEPOT = null;
+function depot() {
+  if (DEPOT) return DEPOT;
+  let payTo = null;
+  const brut = String(process.env.X402_BASE_PAYTO || process.env.X402_PAYTO || '').trim();
+  try { if (brut) payTo = ethers.utils.getAddress(brut); } catch (e) { console.error('[depot] the Base payTo is not a valid address - SOL/USDT top-ups stay off'); }
+  if (String(process.env.X402_BASE_RESEAU || '').trim() === 'eip155:84532') payTo = null;
+  if (process.env.CREDIT_DEPOT === '0') payTo = null;
+  /* Le portefeuille de gaz, lu de sa cle sans construire x402 (x402() a des effets au demarrage). */
+  try { const cle = String(process.env.X402_CLE || '').trim(); if (payTo && cle && new ethers.Wallet(cle).address.toLowerCase() === payTo.toLowerCase()) { console.error('[depot] the Base payTo is the gas wallet - SOL/USDT top-ups stay off'); payTo = null; } } catch (e) { /* cle illisible : x402 la refuse aussi */ }
+  const X = require('./x402');
+  DEPOT = require('./credit_depot').cree({ dossier: cfg.DATA_DIR, credits: credits(), payTo, api: cfg.RELAY_API, cle: cfg.RELAY_API_KEY,
+    rpc: X.rpcBase(String(process.env.X402_BASE_RPC || '').trim() || 'https://mainnet.base.org'),
+    cadenceMs: Number(process.env.CREDIT_DEPOT_CADENCE_MS) > 0 ? Number(process.env.CREDIT_DEPOT_CADENCE_MS) : undefined,
+    tourMs: Number(process.env.CREDIT_DEPOT_TOUR_MS) > 0 ? Number(process.env.CREDIT_DEPOT_TOUR_MS) : undefined });
+  return DEPOT;
+}
 /** Qui paie une reponse de l'agent ou du chat : le credit en dollars ('credit') ou le solde $SWOGE (defaut). */
 function payeurDe(addr, payeur, quoi) {
   if (payeur === 'credit') {
@@ -4360,6 +4383,37 @@ const server = http.createServer(async (req, res) => {
     const x = await credits().recharge({ entete: req.headers['payment-signature'], usd: q.usd, addr, qui: compteurs.ip(qui(req)), client: require('./famille_client').famille(req.headers['user-agent']) });
     res.writeHead(x.status, Object.assign({ 'cache-control': 'no-store' }, cors, x.entetes));
     return res.end(x.corps);
+  }
+  /* ---- LE CREDIT RECHARGE EN SOL OU EN USDT (credit_depot.js) : GET /credit/deposit (provenances et
+     commandes de la session), POST /credit/deposit {origin, amountUsd}, GET /credit/deposit/<id>.
+     SESSION seulement (pas de cle swg_) : la commande credite l'adresse de la session, jamais une
+     adresse du corps ; une commande d'une autre session repond 404. */
+  if (path === '/credit/deposit' || /^\/credit\/deposit\/d[0-9a-f]{24}$/.test(path)) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    const D = depot();
+    if (path !== '/credit/deposit') {
+      if (req.method !== 'GET') return json(405, { ok: false, raison: 'GET only' });
+      const id = path.slice('/credit/deposit/'.length);
+      D.presse(addr, id);
+      const v = D.lit(addr, id);
+      return v ? json(200, Object.assign({ ok: true, balanceUsd: credits().soldeUsd(addr) }, v)) : json(404, { ok: false, raison: 'no such deposit for this sign-in' });
+    }
+    if (req.method === 'GET') {
+      return json(200, { ok: true, available: D.actif() && !D.enPanne(), origins: D.origines(), orders: D.liste(addr),
+        note: 'Send SOL or USDT to a one-time address; it is converted to USDC and you are credited what actually arrives.' });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'GET or POST only' });
+    let q;
+    try { q = JSON.parse((await corps(req, 2048)).toString('utf8') || '{}'); } catch (e) { q = null; }
+    if (!q || typeof q !== 'object') return json(400, { ok: false, raison: 'unreadable request' });
+    D.demarre();
+    const r = await D.nouvelle(addr, q);
+    return json(r.status, r.corps);
   }
   /* Les images de fond (publiques, immuables : une image faite n'est jamais refaite) et les pays vendus. */
   if (/^\/esim\/fond\/[1-9]\.jpg$/.test(path) && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -11062,6 +11116,8 @@ server.listen(cfg.PORT, () => {
      de suite, puis toutes les 10 min ; tant qu'elle n'a pas repondu, le 402 est
      offert SANS Base. */
   try { demarreBase(); } catch (e) { console.error('[x402] Base start: ' + (e && e.message || e)); }
+  /* Les commandes de depot SOL/USDT ouvertes avant l'arret sont relues sur le disque et suivies. */
+  try { depot().demarre(); } catch (e) { console.error('[depot] start: ' + (e && e.message || e)); }
   /* ---- LES VIDEOS PAYEES AU CREDIT, REPRISES (14/10) ----
      Leurs reserves durables ont survecu a l'arret (credits.js) : le suivi reprend sous le meme
      identifiant (la page continue de la suivre) et regle chacune une fois ; sans identifiant xAI,
