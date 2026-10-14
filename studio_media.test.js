@@ -233,6 +233,93 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
        'une video arrivee : facturee ' + vn.usd + ' $ contre 0,3 $ de cout reel, au canal de sa demande');
   }
 
+  console.log('\n-- 4 quater. une video AU CREDIT : reserve durable, redemarrage, reglee une fois (14/10) --');
+  {
+    const K = require('./credits');
+    const os = require('os'), path = require('path');
+    const dos = fs.mkdtempSync(path.join(os.tmpdir(), 'video-credit-'));
+    let C = K.cree({ dossier: dos });
+    const A = '0xc000000000000000000000000000000000000c01';
+    C.ajoute(A, 5, { transaction: '0xV1' });
+    let etat = { status: 'pending', progress: 10 }; const lances = [];
+    const four = { lanceVideo: async (o) => { lances.push(o); return 'rid-c' + lances.length; }, litVideo: async () => etat };
+    const depsC = (CC) => { const sd = CC.soldeDurable('video'); return { cours: sd.cours, solde: sd, sansBoucle: true, fournisseur: four }; };
+    const micro = (usd) => Math.ceil(Math.round(usd * 1.5 * 1e12) / 1e6);    /* factureUsd, au micro-dollar superieur */
+    const pire = micro(0.05 * 6 * M.RESERVE_X);
+    const r = await M.lanceVideo({ addr: A, modele: 'rapide', prompt: 'doge sprints', duree: 6 }, depsC(C));
+    ok(r.ok && Math.round((5 - C.soldeUsd(A)) * 1e6) === pire && C.etat().durables === 1, 'lancee au credit : le PIRE cas (liste × 3 × marge = ' + (pire / 1e6) + ' $) est reserve, durable');
+    ok(C.durables()[0].info.rid === 'rid-c1' && C.durables()[0].info.id === r.id && C.durables()[0].info.addr === A, 'la reserve porte l identifiant xAI et celui de la video');
+    eq(M.etatVideo(r.id, A).payeur, 'credit', 'la video dit qu elle est payee au credit');
+    /* --- le redemarrage : la memoire du processus est perdue, le fichier du credit reste --- */
+    M.JOBS.delete(r.id);
+    C = K.cree({ dossier: dos });
+    ok(Math.round((5 - C.soldeUsd(A)) * 1e6) === pire && C.MESURE.durablesGardees === 1, 'redemarrage pendant la video : la reserve n est PAS rendue');
+    const b = M.reprendVideos(depsC(C), C.durables());
+    ok(b.reprises === 1 && M.JOBS.has(r.id) && M.etatVideo(r.id, A).status === 'pending', 'le suivi est repris, sous le MEME identifiant (la page continue)');
+    eq(M.etatVideo(r.id, '0xautre').code, 404, 'reprise, elle reste a son proprietaire seul');
+    eq(M.reprendVideos(depsC(C), C.durables()).reprises, 0, 'reprise deux fois : une seule video suivie');
+    etat = { status: 'done', video: { url: 'https://vidgen.x.ai/c.mp4', duration: 6 }, usage: { cost_in_usd_ticks: 0.3 * 1e10 } };
+    const dR = depsC(C);
+    await M.avance(M.JOBS.get(r.id), dR);
+    const e = M.etatVideo(r.id, A);
+    ok(e.status === 'done' && Math.round((5 - C.soldeUsd(A)) * 1e6) === micro(0.3) && C.etat().ouvertes === 0, 'arrivee : facturee au cout reel × 1,5 (0,45 $), le reste rendu, plus de reserve');
+    ok(e.factureUsd === 0.45 && e.creditUsd === C.soldeUsd(A) && e.factureSwoge === undefined && e.solde === undefined, 'en dollars, jamais sous les noms $SWOGE');
+    const apres = C.soldeUsd(A);
+    await M.avance(M.JOBS.get(r.id), dR);
+    ok(M.JOBS.get(r.id).jeton && dR.solde.regleJeton(M.JOBS.get(r.id).jeton, 0n) === null && C.soldeUsd(A) === apres, 'reglement en double impossible (suivi, ou jeton represente)');
+    C = K.cree({ dossier: dos });
+    ok(C.soldeUsd(A) === apres && C.MESURE.rendusAuDemarrage === 0 && C.MESURE.durablesRenduesAuDemarrage === 0, 'et un redemarrage de plus ne rend rien');
+
+    /* Une video ratee, au credit : tout rendu. */
+    const av = C.soldeUsd(A);
+    etat = { status: 'pending' };
+    const r2 = await M.lanceVideo({ addr: A, prompt: 'x', duree: 6 }, depsC(C));
+    etat = { status: 'failed', erreur: 'moderation' };
+    await M.avance(M.JOBS.get(r2.id), depsC(C));
+    ok(M.etatVideo(r2.id, A).status === 'failed' && C.soldeUsd(A) === av && C.etat().ouvertes === 0 && M.etatVideo(r2.id, A).creditUsd === av, 'une video ratee au credit : tout rendu');
+    /* Ratee APRES un redemarrage : rendue aussi, une fois. */
+    etat = { status: 'pending' };
+    M.RYTHME.clear();
+    const r3 = await M.lanceVideo({ addr: A, prompt: 'x', duree: 6 }, depsC(C));
+    M.JOBS.delete(r3.id); C = K.cree({ dossier: dos }); M.reprendVideos(depsC(C), C.durables());
+    etat = { status: 'expired' };
+    await M.avance(M.JOBS.get(r3.id), depsC(C));
+    ok(C.soldeUsd(A) === av && C.etat().ouvertes === 0, 'expiree apres un redemarrage : tout rendu');
+    /* Trop longue, arret compris : le temps de suivi part du DEPART de la video. */
+    etat = { status: 'pending' };
+    const r4 = await M.lanceVideo({ addr: A, prompt: 'x', duree: 6, maintenant: 5000 }, depsC(C));
+    M.JOBS.delete(r4.id); C = K.cree({ dossier: dos }); M.reprendVideos(depsC(C), C.durables());
+    eq(M.JOBS.get(r4.id).t0, 5000, 'reprise avec son heure de depart');
+    await M.avance(M.JOBS.get(r4.id), depsC(C), 5000 + 61000);
+    ok(M.etatVideo(r4.id, A).status === 'failed' && C.soldeUsd(A) === av && C.etat().ouvertes === 0, 'trop longue (arret compris) : tout rendu');
+    /* Arret ENTRE la reserve et la reponse d'xAI : aucun identifiant xAI, rendue a la reprise. */
+    const sd = C.soldeDurable('video');
+    sd.reserve(A, 10n ** 18n, { genre: 'video', id: 'f'.repeat(24), addr: A });
+    ok(C.soldeUsd(A) === av - 1, 'une reserve sans identifiant xAI (arret au mauvais moment)');
+    C = K.cree({ dossier: dos });
+    const b2 = M.reprendVideos(depsC(C), C.durables());
+    ok(b2.rendues === 1 && b2.reprises === 0 && C.soldeUsd(A) === av && !M.JOBS.has('f'.repeat(24)), 'reprise : rendue entiere, rien a suivre');
+    /* Credit insuffisant : 402, et AUCUN appel au fournisseur. */
+    const B = '0xc000000000000000000000000000000000000c02';
+    const n0 = lances.length;
+    const r5 = await M.lanceVideo({ addr: B, prompt: 'x', duree: 10, modele: 'qualite' }, depsC(C));
+    ok(r5.code === 402 && Number(r5.requisSwoge) > 0 && lances.length === n0 && C.etat().ouvertes === 0, 'credit insuffisant : 402, zero appel a xAI');
+    /* Le fournisseur refuse le lancement : la reserve durable est rendue tout de suite. */
+    const fauxLance = { cours: async () => 1, solde: C.soldeDurable('video'), sansBoucle: true, fournisseur: { lanceVideo: async () => { throw new Error('xAI 500'); }, litVideo: async () => ({}) } };
+    M.RYTHME.clear();
+    const r6 = await M.lanceVideo({ addr: A, prompt: 'x', duree: 6 }, fauxLance);
+    ok(r6.code === 502 && C.soldeUsd(A) === av && C.etat().ouvertes === 0, 'xAI refuse le lancement : tout rendu, aucune reserve qui traine');
+    /* Le $SWOGE ne change pas : la reserve passe par reserve(a, w) a deux arguments, rien de durable. */
+    const sw = faux(); const vus = [];
+    const r0 = sw.solde.reserve; sw.solde.reserve = function () { vus.push(arguments.length); return r0.apply(null, arguments); };
+    const dS = { cours: async () => COURS, solde: sw.solde, sansBoucle: true, fournisseur: { lanceVideo: async () => 'rid-sw', litVideo: async () => ({ status: 'done', video: { url: 'https://vidgen.x.ai/s.mp4', duration: 6 }, usage: { cost_in_usd_ticks: 0.3 * 1e10 } }) } };
+    const rs = await M.lanceVideo({ addr: '0xsw', prompt: 'x', duree: 6 }, dS);
+    await M.avance(M.JOBS.get(rs.id), dS);
+    const es = M.etatVideo(rs.id, '0xsw');
+    ok(vus.length === 1 && vus[0] === 2 && M.JOBS.get(rs.id).jeton === null && es.payeur === undefined && Number(es.factureSwoge) > 0 && es.solde != null && sw.reglements.length === 1,
+       'paye en $SWOGE : la meme reserve qu avant, facture et solde en $SWOGE, un reglement');
+  }
+
   console.log('\n-- 5. de bout en bout : vrai serveur, faux xAI --');
   {
     const vus = [];
@@ -270,6 +357,21 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     let moteur = null;
     const p0 = Game.prototype._p;
     Game.prototype._p = function (a) { moteur = this; return p0.call(this, a); };
+    /* Un REDEMARRAGE pendant une video payee au credit : le fichier du credit, tel que l'arret l'a
+       laisse — une reserve durable (video req-9, lancee il y a 30 s) et une reserve courte. Le vrai
+       demarrage doit garder la premiere, reprendre son suivi, la regler une fois ; rendre la seconde. */
+    const wc = new ethers.Wallet('0x' + '5a'.repeat(32));
+    const adrC = wc.address.toLowerCase();
+    const VID_REPRISE = 'ab'.repeat(12);
+    const pireMicro = 1350000;                                   /* 0,05 $/s × 6 s × 3 × 1,5 */
+    fs.writeFileSync(require('path').join(process.env.DATA_DIR, 'credits.json'), JSON.stringify({
+      soldes: { [adrC]: 5000000 - pireMicro - 100000 }, tx: {}, seq: 2,
+      ouvertes: {
+        r1: { addr: adrC, micro: pireMicro, durable: true, t: Date.now() - 30000,
+              info: { quoi: 'video', genre: 'video', id: VID_REPRISE, addr: adrC, canal: 'studio', modele: 'rapide', duree: 6, resolution: '480p',
+                      t0: Date.now() - 30000, listeUsd: 0.3, rid: 'req-9', reserveWei: String(BigInt(pireMicro) * 10n ** 12n) } },
+        r2: { addr: adrC, micro: 100000 },
+      } }));
     require('./server');
     await new Promise((r) => setTimeout(r, 900));
     const base = 'http://127.0.0.1:' + port;
@@ -343,6 +445,49 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
     ok(re.ok && eo && /multipart\/form-data/.test(eo.type) && /name="image"; filename="photo.png"/.test(eo.brut) && /name="quality"\r\n\r\nmedium/.test(eo.brut),
        'une retouche part en multipart, la photo en fichier, qualite medium pour « Speed »');
     fauxOA.close();
+
+    console.log('\n-- 5 bis. la video AU CREDIT, de bout en bout, a travers un redemarrage (14/10) --');
+    {
+      const sc = new WebSocket('ws://127.0.0.1:' + port); sc.recus = [];
+      sc.on('message', (d) => { try { sc.recus.push(JSON.parse(d)); } catch (e) {} });
+      await new Promise((r) => sc.on('open', r));
+      const attendC = (t) => new Promise((res, rej) => { const t0 = Date.now(); (function tour() { const m = sc.recus.filter((x) => x.type === t).pop(); if (m) return res(m); if (Date.now() - t0 > 5000) return rej(new Error('pas de ' + t)); setTimeout(tour, 25); })(); });
+      const hc = await attendC('hello');
+      const mc = 'SWOGE Pusher login\nnonce: ' + hc.loginNonce;
+      sc.send(JSON.stringify({ type: 'login', message: mc, signature: await wc.signMessage(mc) }));
+      const HC = { 'content-type': 'application/json', authorization: 'Bearer ' + (await attendC('auth')).session };
+      const credit = async () => (await (await fetch(base + '/credit', { headers: HC })).json()).balanceUsd;
+      let er = null;
+      for (let i = 0; i < 40; i++) { er = await (await fetch(base + '/studio/media/video/' + VID_REPRISE, { headers: HC })).json(); if (er.status !== 'pending') break; await new Promise((r) => setTimeout(r, 100)); }
+      ok(er.ok && er.status === 'done' && er.url === 'https://vidgen.x.ai/9.mp4', 'apres le redemarrage, la video au credit est retrouvee sous son identifiant et suivie jusqu au bout');
+      ok(er.payeur === 'credit' && er.factureUsd === 0.45 && er.factureSwoge === undefined && er.solde === undefined, 'reglee au cout reel × 1,5 (0,45 $), en dollars');
+      eq(await credit(), 4.55, 'credit = 5 $ - 0,45 $ : la reserve durable reglee une fois, la courte rendue au demarrage');
+      eq(er.creditUsd, 4.55, 'la video dit le credit restant');
+      const nv = vus.filter((v) => v.url === '/v1/videos/generations').length;
+      const rc = await (await fetch(base + '/studio/media/video', { method: 'POST', headers: HC,
+        body: JSON.stringify({ modele: 'rapide', prompt: 'the doge flexes', duree: 6, resolution: '480p', payeur: 'credit', addr: adr }) })).json();
+      ok(rc.ok && rc.id && rc.payeur === 'credit' && Math.abs(rc.creditUsd - (4.55 - 1.35)) < 1e-9 && rc.requisSwoge === undefined, 'payee au credit : le pire cas (1,35 $) reserve, la reponse en dollars');
+      let ec = null;
+      for (let i = 0; i < 40; i++) { ec = await (await fetch(base + '/studio/media/video/' + rc.id, { headers: HC })).json(); if (ec.status !== 'pending') break; await new Promise((r) => setTimeout(r, 100)); }
+      ok(ec.status === 'done' && ec.factureUsd === 0.45 && (await credit()) === 4.1, 'arrivee : 0,45 $ factures, le reste rendu au credit [' + ec.factureUsd + ' $]');
+      ok(vus.filter((v) => v.url === '/v1/videos/generations').length === nv + 1, 'un seul lancement chez xAI');
+      /* Un credit vide : 402 en dollars, et xAI n est jamais appele. */
+      const wv = ethers.Wallet.createRandom();
+      const sv = new WebSocket('ws://127.0.0.1:' + port); sv.recus = [];
+      sv.on('message', (d) => { try { sv.recus.push(JSON.parse(d)); } catch (e) {} });
+      await new Promise((r) => sv.on('open', r));
+      const attendV = (t) => new Promise((res, rej) => { const t0 = Date.now(); (function tour() { const m = sv.recus.filter((x) => x.type === t).pop(); if (m) return res(m); if (Date.now() - t0 > 5000) return rej(new Error('pas de ' + t)); setTimeout(tour, 25); })(); });
+      const hv = await attendV('hello'); const mv = 'SWOGE Pusher login\nnonce: ' + hv.loginNonce;
+      sv.send(JSON.stringify({ type: 'login', message: mv, signature: await wv.signMessage(mv) }));
+      const HV = { 'content-type': 'application/json', authorization: 'Bearer ' + (await attendV('auth')).session };
+      const nv2 = vus.filter((v) => v.url === '/v1/videos/generations').length;
+      const r402 = await fetch(base + '/studio/media/video', { method: 'POST', headers: HV, body: JSON.stringify({ modele: 'rapide', prompt: 'x', duree: 6, payeur: 'credit' }) });
+      const j402 = await r402.json();
+      ok(r402.status === 402 && j402.payeur === 'credit' && j402.requisUsd === 1.35 && /dollar credit is too low/.test(j402.raison) && j402.requisSwoge === undefined && !/SWOGE/.test(j402.raison),
+         'credit vide : 402, « dollar credit is too low », 1,35 $ requis — jamais en $SWOGE');
+      eq(vus.filter((v) => v.url === '/v1/videos/generations').length, nv2, 'et zero appel a xAI');
+      sc.close(); sv.close();
+    }
 
     s.close(); fauxXai.close();
   }

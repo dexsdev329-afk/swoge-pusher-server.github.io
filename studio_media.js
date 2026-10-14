@@ -27,6 +27,16 @@
  * joueur est quand même remboursé ou facturé juste). La page interroge le
  * serveur, jamais xAI : la clé ne quitte pas l'hôte. Une vidéo n'est lisible
  * que par l'adresse qui l'a payée.
+ *
+ * ---- UNE VIDÉO AU CRÉDIT EN DOLLARS (14 octobre 2026) ----
+ * Payée au crédit (credits.js), une vidéo prend une réserve DURABLE : son
+ * identifiant xAI, son départ et sa liste sont écrits AVEC la réserve, dans le
+ * fichier du crédit. Au redémarrage elle n'est pas rendue : `reprendVideos`
+ * remet la vidéo dans JOBS sous le MÊME identifiant (la page continue de la
+ * suivre) et le suivi la règle une fois — coût réel × marge à l'arrivée, tout
+ * rendu si elle échoue ou dépasse VIDEO_MAX_MS (compté depuis son départ, arrêt
+ * compris). Le $SWOGE ne change pas : sa réserve vit dans le solde de jeu et la
+ * vidéo, en mémoire seulement (voir EXPLOITATION.md, 14/10).
  * ================================================================== */
 
 const crypto = require('crypto');
@@ -104,6 +114,8 @@ const MIN_USD = 0.001;
 const PAR_MINUTE = () => Math.max(1, Number(process.env.STUDIO_MEDIA_PAR_MINUTE || 6));
 
 const MESURE = { images: 0, videos: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, sansUsage: 0,
+  /* Vidéos au crédit retrouvées au démarrage : reprises (suivies), ou rendues faute d'identifiant xAI. */
+  reprises: 0, reprisesRendues: 0,
   /* Les images payées en x402 (prix FIXE = le pire cas, faute de mesure) : ce
      qu'elles ont coûté vraiment, pour baisser ce prix sur mesure et non au jugé. */
   horsSolde: { images: 0, coutUsd: 0, prixUsd: 0, sansUsage: 0 } };
@@ -156,34 +168,48 @@ function catalogue(cours, actifs) {
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — generation is paused so nobody is overcharged.' : null,
     marge: MARGE(),
     image,
-    video: { modeles: VIDEO.map((m) => ({ id: m.id, nom: m.nom, parSecondeSwoge: pourSwoge(m.usdSeconde, cours),
-                                           typiqueSwoge: pourSwoge(m.usdSeconde * DUREES[0], cours) })),
+    /* `credit` : la route accepte payeur 'credit' pour une video (14/10, reserve durable). Les prix en
+       dollars sont la MEME liste × marge que le $SWOGE (pourUsd), sans conversion par le cours. */
+    video: { credit: true,
+             modeles: VIDEO.map((m) => ({ id: m.id, nom: m.nom, parSecondeSwoge: pourSwoge(m.usdSeconde, cours),
+                                           typiqueSwoge: pourSwoge(m.usdSeconde * DUREES[0], cours),
+                                           parSecondeUsd: pourUsd(m.usdSeconde), typiqueUsd: pourUsd(m.usdSeconde * DUREES[0]) })),
              formats: FORMATS_VIDEO, durees: DUREES, resolutions: RESOLUTIONS },
   };
 }
 
+/* Rend ou règle une réserve : par son jeton quand elle est DURABLE (crédit, vidéo), sinon par
+   (adresse, montant) comme toujours. Une réserve durable déjà réglée rend null : rien ne bouge. */
+function regleSolde(deps, addr, reserveWei, fWei, jeton) {
+  return jeton ? deps.solde.regleJeton(jeton, fWei) : deps.solde.regle(addr, reserveWei, fWei);
+}
+
 /* Règle une réserve : facture le coût réel (ou la liste, comptée), jamais plus que la réserve. */
-function regle(deps, addr, reserveWei, cours, cout, listeUsd) {
+function regle(deps, addr, reserveWei, cours, cout, listeUsd, jeton) {
   const dec = config.DECIMALS || 18;
   let c = cout;
   if (c == null) { MESURE.sansUsage++; c = listeUsd; }
   const f = factureUsd(c);
   let fWei = studio.montantBaseDe(f, cours, dec);
   if (fWei > reserveWei) { MESURE.depassements++; console.error('[studio] DÉPASSEMENT de réserve : ' + f.toFixed(4) + ' $'); fWei = reserveWei; }
-  const solde = deps.solde.regle(addr, reserveWei, fWei);
+  const solde = regleSolde(deps, addr, reserveWei, fWei, jeton);
   MESURE.coutUsd += c; MESURE.factureUsd += f;
   return { solde, factureSwoge: studio.formateBase(fWei, dec), factureUsd: Number(f.toFixed(5)) };
 }
 
-async function reserve(deps, addr, usd) {
+/* `info` : avec un solde DURABLE (deps.solde.durable, le credit pour une video), la reserve garde
+   ce qu'il faut pour reprendre le travail apres un redemarrage, et son jeton est rendu. */
+async function reserve(deps, addr, usd, info) {
   const cours = await deps.cours();
   if (!(cours > 0)) return { erreur: { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' } };
   const dec = config.DECIMALS || 18;
   const wei = studio.montantBaseDe(factureUsd(usd), cours, dec);
-  if (!deps.solde.reserve(addr, wei)) {
+  const durable = !!(info && deps.solde.durable);
+  const j = durable ? deps.solde.reserve(addr, wei, info) : deps.solde.reserve(addr, wei);
+  if (!j) {
     return { erreur: { ok: false, code: 402, raison: 'balance too low for this generation', requisSwoge: studio.formateBase(wei, dec) } };
   }
-  return { cours, wei };
+  return { cours, wei, jeton: durable ? j : null };
 }
 
 /**
@@ -334,11 +360,16 @@ async function lanceVideo(q, deps) {
   const t = q.maintenant || Date.now();
   if (!rythmeOk(addr, t)) return { ok: false, code: 429, raison: 'too many generations — wait a minute' };
   const listeUsd = m.usdSeconde * duree;
-  const r = await reserve(deps, addr, listeUsd * RESERVE_X);
+  const id = crypto.randomBytes(12).toString('hex');
+  const canal = q.canal || 'studio';
+  /* Au credit, la reserve est DURABLE : elle porte deja l'identifiant de la video et sa liste ;
+     l'identifiant xAI s'y ajoute des qu'xAI repond (sans lui, la reprise la rend). */
+  const r = await reserve(deps, addr, listeUsd * RESERVE_X, { genre: 'video', id, addr, canal, modele: m.id, duree, resolution, t0: t, listeUsd });
   if (r.erreur) return r.erreur;
+  const rend = () => regleSolde(deps, addr, r.wei, 0n, r.jeton);
   let rid;
   const fv = (deps.fournisseurs && deps.fournisseurs.grok) || deps.fournisseur;
-  if (!fv || (fv.actif && !fv.actif())) { deps.solde.regle(addr, r.wei, 0n); return { ok: false, code: 503, raison: 'Video is not switched on yet (Grok Imagine).' }; }
+  if (!fv || (fv.actif && !fv.actif())) { rend(); return { ok: false, code: 503, raison: 'Video is not switched on yet (Grok Imagine).' }; }
   let seule = false;
   try { rid = await fv.lanceVideo({ api: m.api, prompt, duree, resolution, format, image: image || debut || undefined, references: refs.length ? refs.map((r) => (deps.urlReference ? deps.urlReference(r) : r)) : undefined, voix: voix.length ? voix : undefined }); }
   catch (e) {
@@ -348,15 +379,16 @@ async function lanceVideo(q, deps) {
       catch (e3) { e2 = e3; }
     }
     if (e2) {
-      deps.solde.regle(addr, r.wei, 0n); MESURE.echecs++;
+      rend(); MESURE.echecs++;
       AlerteSolde.erreur('xai', e2);   /* credit epuise : alerte privee (09/10) */
       return { ok: false, code: 502, raison: 'the video provider failed — you were not charged', detail: String(e2 && e2.message || e2).slice(0, 200) };
     }
   }
-  const id = crypto.randomBytes(12).toString('hex');
+  if (r.jeton) deps.solde.attache(r.jeton, { rid, reserveWei: String(r.wei) });
   AlerteSolde.succes('xai');
-  const job = { id, rid, addr, canal: q.canal || 'studio', modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
-                reserveWei: r.wei, cours: r.cours, listeUsd, url: null, factureSwoge: null, solde: null, raison: null };
+  const job = { id, rid, addr, canal, modele: m.id, duree, resolution, t0: t, status: 'pending', progress: 0,
+                reserveWei: r.wei, cours: r.cours, listeUsd, url: null, factureSwoge: null, solde: null, raison: null,
+                jeton: r.jeton || null, payeur: r.jeton ? 'credit' : null };
   JOBS.set(id, job);
   if (!deps.sansBoucle) suit(job, deps);
   return { ok: true, genre: 'video', id, status: 'pending', duree, resolution, modele: m.id, suite: !!debut, suiteSeule: seule };
@@ -371,7 +403,7 @@ async function avance(job, deps, maintenant) {
   if (v && v.status === 'done' && v.video && v.video.url) {
     job.status = 'done'; job.url = v.video.url; job.progress = 100;
     const secondes = Number(v.video.duration) > 0 ? Number(v.video.duration) : job.duree;
-    Object.assign(job, regle(deps, job.addr, job.reserveWei, job.cours, coutDe(v.usage), job.listeUsd * secondes / job.duree));
+    Object.assign(job, regle(deps, job.addr, job.reserveWei, job.cours, coutDe(v.usage), job.listeUsd * secondes / job.duree, job.jeton));
     MESURE.videos++;
     if (deps.note) {
       try { deps.note('video_facturee', { outil: 'generate_video', canal: job.canal || 'studio', qui: job.addr, sorte: job.modele, usd: job.factureUsd, coutUsd: coutDe(v.usage) }); }
@@ -379,11 +411,11 @@ async function avance(job, deps, maintenant) {
     }
   } else if (v && (v.status === 'failed' || v.status === 'expired')) {
     job.status = 'failed'; job.raison = 'the video could not be generated' + (v.erreur ? ' (' + v.erreur + ')' : '') + ' — you were not charged';
-    job.solde = deps.solde.regle(job.addr, job.reserveWei, 0n); MESURE.echecs++;
+    job.solde = regleSolde(deps, job.addr, job.reserveWei, 0n, job.jeton); MESURE.echecs++;
   } else if (t - job.t0 > VIDEO_MAX_MS()) {
     /* Trop long : on rend tout. Si xAI la livre plus tard, c'est la maison qui paie. */
     job.status = 'failed'; job.raison = 'the video took too long — you were not charged';
-    job.solde = deps.solde.regle(job.addr, job.reserveWei, 0n); MESURE.echecs++;
+    job.solde = regleSolde(deps, job.addr, job.reserveWei, 0n, job.jeton); MESURE.echecs++;
   } else if (v && Number.isFinite(Number(v.progress))) {
     job.progress = Number(v.progress);
   }
@@ -403,10 +435,51 @@ function suit(job, deps) {
 function etatVideo(id, addr) {
   const j = JOBS.get(String(id || ''));
   if (!j || !addr || j.addr !== addr) return { ok: false, code: 404, raison: 'unknown video' };
-  return { ok: true, genre: 'video', id: j.id, status: j.status, progress: j.progress, url: j.url,
+  const o = { ok: true, genre: 'video', id: j.id, status: j.status, progress: j.progress, url: j.url,
            duree: j.duree, resolution: j.resolution, modele: j.modele, factureSwoge: j.factureSwoge, factureUsd: j.factureUsd || null,
            solde: j.solde, raison: j.raison };
+  /* Au credit : des dollars, jamais sous les noms $SWOGE (la page les lirait comme tels, cf. enCredit
+     du serveur). Le montant facture est celui retenu sur le credit (cours 1 : 10^18 unites = 1 $). */
+  if (j.payeur === 'credit') {
+    o.payeur = 'credit';
+    if (j.factureSwoge != null) o.factureUsd = Number(j.factureSwoge);
+    if (j.solde != null) o.creditUsd = Number(j.solde);
+    delete o.factureSwoge; delete o.solde;
+  }
+  return o;
+}
+
+/**
+ * Au démarrage : les vidéos payées au crédit restées en cours (réserves durables, credits.js).
+ * `durables` : credits.durables() ; `deps` : celles du crédit (deps.solde = credits.soldeDurable).
+ * Avec son identifiant xAI, la vidéo revient dans JOBS sous le même identifiant et son suivi
+ * reprend ; sans (arrêt entre la réserve et la réponse d'xAI), la réserve est rendue entière.
+ */
+function reprendVideos(deps, durables) {
+  const bilan = { reprises: 0, rendues: 0 };
+  for (const d of durables || []) {
+    const i = d.info || {};
+    if (i.genre !== 'video') continue;
+    if (i.id && JOBS.has(i.id)) continue;
+    let w = null;
+    try { w = BigInt(String(i.reserveWei)); } catch (e) { w = null; }
+    if (!i.rid || !i.id || !(w > 0n)) {
+      deps.solde.regleJeton(d.id, 0n);
+      MESURE.reprisesRendues++; bilan.rendues++;
+      continue;
+    }
+    /* i.addr : l'adresse de session telle quelle (le credit range ses cles en minuscules) — c'est
+       elle qu'etatVideo compare, comme pour une video lancee sans redemarrage. */
+    const job = { id: i.id, rid: i.rid, addr: i.addr || d.addr, canal: i.canal || 'studio', modele: i.modele, duree: Number(i.duree) || DUREES[0],
+                  resolution: i.resolution, t0: Number(i.t0) || Number(d.t) || Date.now(), status: 'pending', progress: 0,
+                  reserveWei: w, cours: 1, listeUsd: Number(i.listeUsd) || 0, url: null, factureSwoge: null, solde: null, raison: null,
+                  jeton: d.id, payeur: 'credit', reprise: true };
+    JOBS.set(job.id, job);
+    MESURE.reprises++; bilan.reprises++;
+    if (!deps.sansBoucle) suit(job, deps);
+  }
+  return bilan;
 }
 
 module.exports = { VOIX, voixPermises, REFERENCES_MAX, pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
-                   MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, imageJointe, coutDe };
+                   MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, reprendVideos, imageJointe, coutDe };

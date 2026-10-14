@@ -27,6 +27,21 @@
  *
  * Une reserve ouverte au moment d'un arret du serveur est RENDUE au demarrage :
  * le fournisseur a peut-etre deja facture, la maison le paie.
+ *
+ * ---- SAUF UNE RESERVE DURABLE (14 octobre 2026) ----
+ * Demande du proprietaire : « pourquoi la video ne se paie pas au credit ». Une
+ * video tourne plusieurs minutes chez xAI ; un redeploiement Railway (chaque
+ * poussee sur `main`) tombe pendant. Rendue au demarrage, la reserve d'une video
+ * encore en cours laissait xAI facturer une video que personne ne paie (et la
+ * reglait une seconde fois si le suivi la retrouvait). Une reserve DURABLE porte
+ * son travail (`info` : l'identifiant xAI, l'heure de depart, la liste) dans le
+ * MEME fichier que le solde, ecrit en une fois : elle n'est PAS rendue au
+ * demarrage ; le suivi repris (studio_media.reprendVideos) la regle une fois,
+ * a la fin de la video. Une reserve durable sans identifiant xAI (arret entre la
+ * reserve et la reponse d'xAI) est rendue par la reprise ; une plus vieille que
+ * DURABLE_MAX_MS l'est des le demarrage, quoi qu'il arrive. Releve du 14/10 :
+ * aucune video n'est encore payee au credit — ces bornes sont celles du suivi
+ * (STUDIO_VIDEO_MAX_MS, 15 min) et une marge, pas une mesure.
  * ================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +53,9 @@ const MICRO = 1e6;
 const UN_18 = 10n ** 12n;                  /* 1 micro-dollar en unites 18 decimales (cours 1) */
 const versMicro = (usd) => Math.round(Number(usd) * MICRO);
 const versUsd = (m) => Math.round(m) / MICRO;
+/* Une reserve durable plus vieille que ca est rendue au demarrage, suivie ou non : le suivi d'une
+   video abandonne a STUDIO_VIDEO_MAX_MS (15 min par defaut) ; 2 h couvre un arret long. */
+const DURABLE_MAX_MS = () => { const v = Number(process.env.CREDIT_DURABLE_MAX_MS); return v > 0 ? v : 2 * 60 * 60 * 1000; };
 
 /**
  * deps : { dossier, x402() → l'instance x402 ou null, url (URL publique de /credit/topup), maintenant?, note?(evenement, info) }
@@ -46,8 +64,9 @@ function cree(deps) {
   const maintenant = deps.maintenant || Date.now;
   const fEtat = deps.dossier ? path.join(deps.dossier, 'credits.json') : null;
   const fJournal = deps.dossier ? path.join(deps.dossier, 'credits_journal.jsonl') : null;
-  const MESURE = { recharges: 0, rechargesUsd: 0, reserves: 0, factureUsd: 0, refus: 0, rendusAuDemarrage: 0 };
-  /* E.soldes : addr → micro-dollars ; E.ouvertes : id → { addr, micro } ; E.tx : transaction → 1 */
+  const MESURE = { recharges: 0, rechargesUsd: 0, reserves: 0, factureUsd: 0, refus: 0, rendusAuDemarrage: 0,
+    durablesGardees: 0, durablesRenduesAuDemarrage: 0, durablesReglees: 0 };
+  /* E.soldes : addr → micro-dollars ; E.ouvertes : id → { addr, micro, durable?, t?, info? } ; E.tx : transaction → 1 */
   let E = { soldes: {}, ouvertes: {}, tx: {}, seq: 0 };
   try { if (fEtat) E = Object.assign(E, JSON.parse(fs.readFileSync(fEtat, 'utf8')) || {}); } catch (e) { /* premier demarrage */ }
   const journal = (l) => {
@@ -63,26 +82,35 @@ function cree(deps) {
       fs.renameSync(fEtat + '.tmp', fEtat);
     } catch (e) { console.error('[credits] write failed: ' + (e && e.code || e)); }
   };
-  /* Les reserves restees ouvertes (arret pendant une reponse) : rendues. */
-  for (const [id, o] of Object.entries(E.ouvertes)) {
-    E.soldes[o.addr] = (E.soldes[o.addr] || 0) + o.micro;
-    MESURE.rendusAuDemarrage++;
-    journal({ sorte: 'rendu_demarrage', addr: o.addr, micro: o.micro, id });
-    delete E.ouvertes[id];
+  /* Les reserves restees ouvertes (arret pendant une reponse) : rendues — sauf une reserve
+     DURABLE de moins de DURABLE_MAX_MS, dont le travail est repris et la reglera. */
+  {
+    const t = maintenant();
+    let change = false;
+    for (const [id, o] of Object.entries(E.ouvertes)) {
+      if (o.durable && t - (Number(o.t) || 0) < DURABLE_MAX_MS()) { MESURE.durablesGardees++; continue; }
+      E.soldes[o.addr] = (E.soldes[o.addr] || 0) + o.micro;
+      if (o.durable) MESURE.durablesRenduesAuDemarrage++; else MESURE.rendusAuDemarrage++;
+      journal({ sorte: o.durable ? 'rendu_durable_expire' : 'rendu_demarrage', addr: o.addr, micro: o.micro, id });
+      delete E.ouvertes[id];
+      change = true;
+    }
+    if (change) ecrit();
   }
-  if (MESURE.rendusAuDemarrage) ecrit();
 
   const cle = (a) => String(a || '').toLowerCase();
   const soldeMicro = (a) => E.soldes[cle(a)] || 0;
 
-  /** Reserver `micro` sur le credit de `a` : un jeton, ou null si le credit ne suffit pas. */
-  function reserveMicro(a, micro) {
+  /** Reserver `micro` sur le credit de `a` : un jeton, ou null si le credit ne suffit pas.
+      `info` (objet) : la reserve est DURABLE — gardee a un redemarrage, avec ce qu'il faut pour
+      reprendre son travail. */
+  function reserveMicro(a, micro, info) {
     const k = cle(a);
     micro = Math.ceil(micro);
     if (!(micro > 0) || soldeMicro(k) < micro) { MESURE.refus++; return null; }
     E.soldes[k] -= micro;
     const id = 'r' + (++E.seq);
-    E.ouvertes[id] = { addr: k, micro };
+    E.ouvertes[id] = info && typeof info === 'object' ? { addr: k, micro, durable: true, t: maintenant(), info: Object.assign({}, info) } : { addr: k, micro };
     MESURE.reserves++;
     ecrit();
     return id;
@@ -95,9 +123,39 @@ function cree(deps) {
     E.soldes[o.addr] = (E.soldes[o.addr] || 0) + (o.micro - f);
     delete E.ouvertes[id];
     if (f > 0) { MESURE.factureUsd += versUsd(f); journal({ sorte: 'debit', addr: o.addr, micro: f, quoi: String(quoi || '').slice(0, 60) }); }
+    if (o.durable) MESURE.durablesReglees++;
     ecrit();
     return versUsd(E.soldes[o.addr]);
   }
+  /* 10^18 unites (cours 1) → micro-dollars, arrondi au micro-dollar SUPERIEUR (jamais sous le cout). */
+  const weiVersMicro = (w) => Number((BigInt(String(w)) + UN_18 - 1n) / UN_18);
+
+  /**
+   * Le solde d'un travail LONG (une video) : reserves durables. reserve(a, w, info) rend l'identifiant
+   * de la reserve (ou null) ; attache(id, info) y ajoute l'identifiant du fournisseur des qu'il est
+   * connu ; regleJeton(id, fw) regle CETTE reserve, une seule fois (null ensuite), et rend le credit.
+   */
+  function soldeDurable(quoi) {
+    return {
+      durable: true,
+      cours: async () => 1,
+      reserve: (a, w, info) => reserveMicro(a, weiVersMicro(w), Object.assign({ quoi: String(quoi || '') }, info || {})),
+      attache: (id, info) => {
+        const o = E.ouvertes[id];
+        if (!o || !o.durable) return false;
+        o.info = Object.assign({}, o.info, info);
+        ecrit();
+        return true;
+      },
+      regleJeton: (id, fw) => {
+        const s = regleMicro(id, weiVersMicro(fw || 0), quoi);
+        return s === null ? null : String(s);
+      },
+    };
+  }
+  /** Les reserves durables encore ouvertes (relues au demarrage), pour reprendre leur travail. */
+  const durables = () => Object.entries(E.ouvertes).filter(([, o]) => o.durable)
+    .map(([id, o]) => ({ id, addr: o.addr, micro: o.micro, t: o.t, info: Object.assign({}, o.info) }));
 
   /**
    * Le solde au format du chat (studio_chat.repond) : cours 1, donc 1 $ = 10^18 unites.
@@ -209,9 +267,9 @@ function cree(deps) {
       usd: versUsd(x.micro), what: x.quoi || null, tx: x.tx || null, network: x.reseau || null }));
   }
 
-  return { soldeUsd, soldeChat, factu, recharge, ajoute, prixUsd, montant, historique, MESURE,
+  return { soldeUsd, soldeChat, soldeDurable, durables, factu, recharge, ajoute, prixUsd, montant, historique, MESURE,
     etat: () => ({ comptes: Object.keys(E.soldes).filter((k) => E.soldes[k] > 0).length, totalUsd: versUsd(Object.values(E.soldes).reduce((a, b) => a + b, 0)),
-      ouvertes: Object.keys(E.ouvertes).length, mesure: Object.assign({}, MESURE) }),
+      ouvertes: Object.keys(E.ouvertes).length, durables: Object.values(E.ouvertes).filter((o) => o.durable).length, mesure: Object.assign({}, MESURE) }),
     LIMITES: { minUsd: MIN_RECHARGE_USD, maxUsd: MAX_RECHARGE_USD, maxSoldeUsd: MAX_SOLDE_USD() } };
 }
 

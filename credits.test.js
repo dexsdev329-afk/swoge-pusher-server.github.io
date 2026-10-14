@@ -11,6 +11,7 @@ const K = require('./credits');
 const C = require('./studio_chat');
 let n = 0, rates = 0;
 const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RATE ') + m); };
+const eq2 = (a, b, m) => ok(a === b, m + ' [' + a + ' vs ' + b + ']');
 
 (async () => {
   const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'credits-'));
@@ -94,6 +95,40 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
   tx = '0xT1';
   ok(JSON.parse((await S.recharge({ entete: 'sig', usd: 1, addr: A })).corps).alreadyCredited, 'les transactions deja creditees survivent au redemarrage');
 
+  console.log('\n-- une reserve DURABLE (une video, 14/10) : gardee au redemarrage, reglee une fois --');
+  {
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'credits-durable-'));
+    let horloge = 1e12;
+    const V = '0xd00000000000000000000000000000000000000d';
+    let D = K.cree({ dossier: d2, x402: () => x402, url: 'u', maintenant: () => horloge });
+    D.ajoute(V, 5, { transaction: '0xD1' });
+    const sd = D.soldeDurable('video');
+    const W = (usd) => BigInt(Math.round(usd * 1e6)) * 10n ** 12n;     /* cours 1 : 1 $ = 10^18 unites */
+    const id = sd.reserve(V, W(1.35), { genre: 'video', id: 'v1' });
+    ok(id && D.soldeUsd(V) === 3.65 && D.etat().durables === 1, 'la reserve durable est prise sur le credit (1,35 $)');
+    ok(sd.attache(id, { rid: 'req-1' }) && D.durables()[0].info.rid === 'req-1' && D.durables()[0].info.genre === 'video', 'l identifiant du fournisseur s y attache, ecrit avec elle');
+    const courte = await D.factu(V, 'x').reserve(0.5);
+    ok(courte.ok && D.soldeUsd(V) === 3.15, 'et une reserve courte a cote (0,50 $)');
+    horloge += 10 * 60 * 1000;
+    D = K.cree({ dossier: d2, x402: () => x402, url: 'u', maintenant: () => horloge });
+    ok(D.soldeUsd(V) === 3.65 && D.etat().ouvertes === 1 && D.etat().durables === 1 && D.MESURE.durablesGardees === 1 && D.MESURE.rendusAuDemarrage === 1,
+       'au redemarrage : la courte est rendue, la durable GARDEE (pas de credit rendu pendant qu xAI facture)');
+    ok(D.durables()[0].id === id && D.durables()[0].info.rid === 'req-1', 'et elle se relit, avec son identifiant xAI');
+    const sd2 = D.soldeDurable('video');
+    eq2(sd2.regleJeton(id, W(0.45)), '4.55', 'reglee au cout reel (0,45 $) : le reste (0,90 $) rendu');
+    ok(sd2.regleJeton(id, W(0.45)) === null && sd2.regleJeton(id, 0n) === null && D.soldeUsd(V) === 4.55, 'une seconde fois : rien (ni facture, ni rendu)');
+    D = K.cree({ dossier: d2, x402: () => x402, url: 'u', maintenant: () => horloge });
+    ok(D.soldeUsd(V) === 4.55 && D.etat().ouvertes === 0 && D.MESURE.rendusAuDemarrage === 0 && D.MESURE.durablesRenduesAuDemarrage === 0, 'reglee puis redemarree : rien n est rendu une seconde fois');
+    ok(D.historique(V, 10).some((x) => x.kind === 'spent' && x.what === 'video' && x.usd === 0.45), 'l historique dit « video » et le montant reel');
+    /* Bornee dans le temps : une durable jamais reglee (suivi perdu) est rendue apres DURABLE_MAX_MS (2 h). */
+    const id2 = D.soldeDurable('video').reserve(V, W(1), { genre: 'video', id: 'v2' });
+    ok(id2 && D.soldeUsd(V) === 3.55, 'une autre durable (1 $)');
+    horloge += 2 * 60 * 60 * 1000 + 1;
+    D = K.cree({ dossier: d2, x402: () => x402, url: 'u', maintenant: () => horloge });
+    ok(D.soldeUsd(V) === 4.55 && D.etat().ouvertes === 0 && D.MESURE.durablesRenduesAuDemarrage === 1, 'plus de 2 h apres : rendue au demarrage, quoi qu il arrive');
+    ok(D.soldeDurable('video').reserve(V, W(50), { genre: 'video' }) === null && D.soldeUsd(V) === 4.55, 'credit insuffisant : aucune reserve, rien de debite');
+  }
+
   console.log('\n-- l\'historique --');
   const h = S.historique(A, 50);
   ok(h.length >= 4 && h.some((x) => x.kind === 'top-up' && x.usd === 5 && x.tx === '0xt1') && h.some((x) => x.kind === 'spent' && x.what === 'chat:sonnet-5') && h.some((x) => x.kind === 'refund'),
@@ -111,9 +146,14 @@ const ok = (c, m) => { n++; if (!c) rates++; console.log((c ? '  ok   ' : '  RAT
      '/credit : une requete qui porte la cle admin ou les parametres du robinet va a la porte admin');
   ok(/o === 'credit' \? credits\(\)\.prixUsd\(a\)/.test(srv), 'le prix x402 de la recharge vient du module');
   /* 02/10 : le pilote du navigateur (/navigateur/pilote) est une route payante de plus : meme payeur, meme reponse en dollars. */
-  ok((srv.match(/const pay = payeurDe\(addr, q\.payeur/g) || []).length === 3 && (srv.match(/if \(pay\.credit\) r = enCredit\(r, addr\);/g) || []).length === 4,
-     'l\'agent, le chat, le pilote et les images : le payeur choisi, et la reponse en dollars quand c\'est le credit');
-  ok(/const pay = path === '\/studio\/media\/image' \? payeurDe\(addr, q\.payeur, 'image'\) : \{ credit: false \};/.test(srv), 'une video reste en $SWOGE (ses reserves survivent a un redemarrage)');
+  /* 14/10 : la route /studio/media (images ET videos) a son propre appel ; les trois autres inchanges. */
+  ok((srv.match(/const pay = payeurDe\(addr, q\.payeur/g) || []).length === 4 && (srv.match(/if \(pay\.credit\) r = enCredit\(r, addr\);/g) || []).length === 4,
+     'l\'agent, le chat, le pilote, les images et les videos : le payeur choisi, et la reponse en dollars quand c\'est le credit');
+  /* Intention d'avant (« une video reste en $SWOGE, ses reserves survivent a un redemarrage ») : une
+     reserve de video doit survivre au redemarrage. Au credit, c'est la reserve DURABLE, et le suivi
+     est repris au demarrage. */
+  ok(/solde: enVideo \? credits\(\)\.soldeDurable\('video'\) : pay\.solde/.test(srv) && /studioMedia\.reprendVideos\([^\n]*credits\(\)\.soldeDurable\('video'\)[^\n]*credits\(\)\.durables\(\)\)/.test(srv),
+     'une video au credit prend une reserve DURABLE, et son suivi est repris au demarrage');
   ok(/embauche\(\)\.pour\(addr, pay\.factu\(\)\)/.test(srv) && /achats\(\)\.pour\(addr, pay\.factu\('buy this eSIM'\)\)/.test(srv), 'les embauches de l\'agent paient comme l\'agent');
   const ec = srv.slice(srv.indexOf('function enCredit'), srv.indexOf('let AUTO_INSCRIPTION'));
   ok(/delete o\.solde; delete o\.factureSwoge; delete o\.requisSwoge;/.test(ec), 'jamais des dollars sous les noms $SWOGE');

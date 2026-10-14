@@ -6788,7 +6788,7 @@ const server = http.createServer(async (req, res) => {
     if (path === '/studio/media/catalogue') {
       const M = studioMedia.MESURE;
       return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), { grok: studioXai.actif(), openai: studioOpenai.actif() }), {
-        mesure: { images: M.images, videos: M.videos, echecs: M.echecs, depassements: M.depassements, sansUsage: M.sansUsage,
+        mesure: { images: M.images, videos: M.videos, echecs: M.echecs, depassements: M.depassements, sansUsage: M.sansUsage, reprises: M.reprises, reprisesRendues: M.reprisesRendues,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) } }));
     }
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
@@ -6805,10 +6805,13 @@ const server = http.createServer(async (req, res) => {
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }
     /* Voir depsMedia : la demande comprise avec son fil (Claude Haiku 4.5) et
        l'image officielle de SWOGE, lue sur le site — studio_comprend.js. */
-    /* Une IMAGE peut se payer au credit en dollars ; une video reste en $SWOGE (un travail long,
-       repris apres un redemarrage, alors que le credit rend ses reserves ouvertes au demarrage). */
-    const pay = path === '/studio/media/image' ? payeurDe(addr, q.payeur, 'image') : { credit: false };
-    const deps = pay.credit ? Object.assign(depsMedia(), { cours: pay.cours, solde: pay.solde }) : depsMedia();
+    /* Une image OU une video se paie au credit en dollars. La video au credit prend une reserve
+       DURABLE (credits.soldeDurable, 14/10) : gardee a un redemarrage avec l'identifiant xAI, reglee
+       une fois par le suivi repris (studio_media.reprendVideos, au demarrage) — et non rendue au
+       demarrage pendant qu'xAI facture. Le $SWOGE ne change pas. */
+    const enVideo = path === '/studio/media/video';
+    const pay = payeurDe(addr, q.payeur, enVideo ? 'video' : 'image');
+    const deps = pay.credit ? Object.assign(depsMedia(), { cours: pay.cours, solde: enVideo ? credits().soldeDurable('video') : pay.solde }) : depsMedia();
     const base = { addr, modele: q.modele, prompt: q.prompt, format: q.format, image: q.image, contexte: q.contexte };
     const rid = reprises.ridOk(q.rid) ? q.rid : null;
     if (rid) reprises.note(addr, rid, { genre: path === '/studio/media/image' ? 'image' : 'video', status: 'pending' });
@@ -11059,6 +11062,14 @@ server.listen(cfg.PORT, () => {
      de suite, puis toutes les 10 min ; tant qu'elle n'a pas repondu, le 402 est
      offert SANS Base. */
   try { demarreBase(); } catch (e) { console.error('[x402] Base start: ' + (e && e.message || e)); }
+  /* ---- LES VIDEOS PAYEES AU CREDIT, REPRISES (14/10) ----
+     Leurs reserves durables ont survecu a l'arret (credits.js) : le suivi reprend sous le meme
+     identifiant (la page continue de la suivre) et regle chacune une fois ; sans identifiant xAI,
+     la reserve est rendue. */
+  try {
+    const b = studioMedia.reprendVideos(Object.assign(depsMedia(), { cours: async () => 1, solde: credits().soldeDurable('video') }), credits().durables());
+    if (b.reprises || b.rendues) console.log('[studio] credit videos after restart: ' + b.reprises + ' resumed, ' + b.rendues + ' refunded');
+  } catch (e) { console.error('[studio] credit video resume: ' + (e && e.message || e)); }
 
   /* ---- LA COLONIE TOURNE, QUE QUELQU'UN REGARDE OU NON ----
    * Elle se relit sur le disque et reprend ou elle en etait : les positions
