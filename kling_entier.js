@@ -85,8 +85,8 @@
  * ---- ANIMER L'IMAGE FIXE DU PROPRIETAIRE (15 octobre 2026) ----
  *   L'edition (base_video) a rate 4 fois le 15/10 (mauvaise personne, corps humain,
  *   mauvaise tete). Le proprietaire a fait l'image 0 de son clip AVEC SWOGE en place ;
- *   `cree_(…, { anime: true, clip? })` ouvre une passe `mode: 'anime'` (proprietaire
- *   seulement, jamais avec `deps.public`) : chaque morceau part en feature_video avec une
+ *   `cree_(…, { anime: true, clip? })` ouvre une passe `mode: 'anime'` (le public aussi
+ *   depuis le soir du 15/10, voir plus bas) : chaque morceau part en feature_video avec une
  *   first_frame (kling.js lanceAnime) et le texte de swoge_texte.texteAnime.
  *     - `clip` : UN seul morceau, le clip entier (3 a 10 s), sans decoupage.
  *     - morceau 1 : l'image fixe ; morceau n : la DERNIERE image du resultat n-1, tel qu'il
@@ -97,6 +97,15 @@
  *     - audio 'off' chez Kling, le son d'origine remis au recollage comme d'habitude, a la
  *       longueur exacte de la source (un clip seul compris).
  *   Tout est sur le disque (etat.json, still.*, chaine_*.jpg) : un redemarrage reprend.
+ *
+ * ---- LE MEME MODE POUR LE PUBLIC : SWOGE SWAP V2 (15 octobre 2026, soir) ----
+ *   Le chemin que le proprietaire a valide (plan → image refaite avec le personnage → Kling
+ *   l'anime → son d'origine) ouvert aux joueurs dans studio.html. Avec `deps.public`, une passe
+ *   `anime` prend sa premiere image SEULEMENT parmi les apercus faits par le serveur pour elle
+ *   (swap_apercu.js, `PUB.stillApercu`) : une image envoyee par la page est refusee (400), comme
+ *   les images et le texte libres de l'edition publique. Clip seul jusqu'a 10 s, au-dela morceaux
+ *   enchaines ; meme prix (« With Video Input » × SWAP_MARGE), meme reserve durable, meme file,
+ *   meme plafond du jour (partage avec l'apercu : `jour`), meme marque au recollage.
  * ======================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -341,9 +350,9 @@ function cree(deps) {
   async function cree_(addr, flux, octetsAnnonces, o) {
     if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
     if (PUB && !(o && o.droits === true)) return { ok: false, code: 400, raison: 'tick the box first: ' + PUB.droitsTexte };
-    /* « Animate my still » : le proprietaire seulement, jamais le service public */
+    /* « Animate my still ». Public depuis le 15/10/2026 (SWOGE Swap v2) : la premiere image n'est
+       jamais une image de la page, seulement un apercu fait ICI pour cette passe (choixAnimePublic) */
     const anime = !!(o && o.anime);
-    if (anime && PUB) return { ok: false, code: 400, raison: 'unknown mode' };
     if (Number(octetsAnnonces) > OCTETS_MAX) return { ok: false, code: 413, raison: 'the video is ' + (Number(octetsAnnonces) / 1048576).toFixed(1) + ' MB — ' + (OCTETS_MAX / 1048576) + ' MB max' };
     for (const P of PASSES.values()) {
       if (P.addr !== addr) continue;
@@ -358,7 +367,7 @@ function cree(deps) {
     const id = crypto.randomBytes(12).toString('hex');
     const P = { id, addr, t: temps(), statut: 'decoupe', message: null, source: null, fps: null, cotes: null, segments: [], resolution: null,
                 prompt: null, images: [], prixPlan: null, depenseMaxUsd: 0, final: null, tFin: null };
-    if (anime) { P.mode = 'anime'; P.clip = !!(o && o.clip); }
+    if (anime) { P.mode = 'anime'; P.clip = !!(o && o.clip); if (PUB) { P.clip = false; P.clipAuto = true; } }
     try { fs.mkdirSync(rep(id), { recursive: true }); }
     catch (e) { return { ok: false, code: 500, raison: 'the server could not store the video' }; }
     let n;
@@ -382,6 +391,8 @@ function cree(deps) {
     if (!s || !s.video || !(s.duree > 0)) return refuse('not a video ffmpeg can read');
     if (s.duree < DECOUPE.min) return refuse('the video is ' + s.duree.toFixed(2) + ' s long — ' + DECOUPE.min + ' s at least');
     if (s.duree > DUREE_MAX) return refuse('the video is ' + s.duree.toFixed(1) + ' s long — ' + DUREE_MAX + ' s at most');
+    /* public : un clip seul jusqu'a 10 s, au-dela la video entiere en morceaux enchaines */
+    if (P.clipAuto && s.duree <= DECOUPE.max) P.clip = true;
     if (P.clip && s.duree > DECOUPE.max) return refuse('the clip is ' + s.duree.toFixed(2) + ' s long — one clip is ' + DECOUPE.min + ' to ' + DECOUPE.max + ' s (use "Whole video" for a longer one)');
     const cotes = cotesSortie(s.largeur, s.hauteur);
     if (!cotes) return refuse('the video is ' + s.largeur + '×' + s.hauteur + ' px — too narrow for Kling (700 to 2160 px per side)');
@@ -515,6 +526,36 @@ function cree(deps) {
              choix: { personnage: c.personnage, cible: c.cible, resolution, imagesJoueur: imgs.length, texteJoueur: t.texte.length } };
   }
 
+  /* Le choix d'un joueur en « Animate » (SWOGE Swap v2, 15/10/2026) : la premiere image est
+     l'APERCU numero `q.apercu` fait par le serveur pour CETTE passe et CETTE adresse
+     (swap_apercu.js, via PUB.stillApercu) — une image envoyee par la page (`still`) est refusee,
+     pas ignoree. Le personnage et la cible sont ceux de l'apercu ; les references : SWOGE (l'element,
+     sinon le corps et le visage) ou l'image du joueur ACCEPTEE par la porte ; le texte est celui du
+     serveur (swoge_texte.texteAnime / texteAnimeLibre). */
+  function choixAnimePublic(q, P) {
+    if (q.still != null && q.still !== '') return { ok: false, code: 400, raison: 'the starting picture must be a preview made here — press "Create preview" first' };
+    if (q.images != null && q.images !== '' && !(Array.isArray(q.images) && !q.images.length)) return { ok: false, code: 400, raison: 'pictures are not sent here: the character comes from your preview' };
+    const s = PUB.stillApercu ? PUB.stillApercu(P.id, P.addr, q.apercu) : null;
+    if (!s || !s.ok) return { ok: false, code: (s && s.code) || 400, raison: (s && s.raison) || 'create the preview picture first, then press "Use this picture"' };
+    const f = K.referenceEdition(s.base64);
+    if (!f.ok) return { ok: false, code: 400, raison: 'preview picture: ' + f.raison };
+    const resolution = q.resolution == null || q.resolution === '' ? '720p' : String(q.resolution);
+    if (!PUB.resolutions.includes(resolution)) return { ok: false, code: 400, raison: 'pick ' + PUB.resolutions.join(' or ') };
+    let liste = [], el = null, texte;
+    if (s.perso === 'libre') {
+      const im = PUB.imageVerifiee(s.sha);
+      if (!im) return { ok: false, code: 400, raison: 'your character picture expired — upload it again and make a new preview' };
+      liste = [im.base64];
+      texte = ST.texteAnimeLibre();
+    } else {
+      try { el = deps.element ? deps.element() : null; } catch (e) { el = null; }
+      liste = el ? [] : DEFAUT.slice(0, 2);
+      texte = ST.texteAnime(el ? 'element' : liste.length === 2 ? 'images' : null, '');
+    }
+    return { ok: true, liste, element: el ? String(el) : null, texte, resolution, still: f,
+             choix: { personnage: s.perso === 'libre' ? 'libre' : 'swoge', cible: s.cible, resolution, imagesJoueur: s.perso === 'libre' ? 1 : 0, texteJoueur: 0, apercu: s.k, anime: true } };
+  }
+
   /* Les passes qui occupent Kling (public : la file attend qu'une place se libere). */
   const occupees = () => [...PASSES.values()].filter((P) => P.statut === 'en_cours' || P.statut === 'assemblage').length;
   const fileDAttente = () => [...PASSES.values()].filter((P) => P.statut === 'file').sort((a, b) => a.tFile - b.tFile);
@@ -532,7 +573,7 @@ function cree(deps) {
     if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown whole-video edit' };
     if (P.statut !== 'pret') return { ok: false, code: 409, raison: 'this edit is ' + P.statut + ', not waiting for a go' };
     const anime = P.mode === 'anime';
-    const c = PUB ? choixPublic(q) : anime ? choixAnime(q) : choixProprietaire(q);
+    const c = PUB ? (anime ? choixAnimePublic(q, P) : choixPublic(q)) : anime ? choixAnime(q) : choixProprietaire(q);
     if (!c.ok) return c;
     const liste = c.liste, texte = c.texte, resolution = c.resolution, element = c.element || null;
     /* la premiere image (proprietaire seulement, premiere_image.js, 15/10/2026) : une refer_image de plus */
@@ -569,8 +610,8 @@ function cree(deps) {
       P.choix = c.choix;
       P.jour = jourDe(temps()); P.engageJourUsd = prix;
       ajouteJour(prix);
-      note({ entier: P.id, paiement: 'reserve', prixUsd: aPayer, prixKlingUsd: prix, personnage: c.choix.personnage, cible: c.choix.cible,
-             resolution, imagesJoueur: c.choix.imagesJoueur, texteJoueur: c.choix.texteJoueur });
+      note(Object.assign({ entier: P.id, paiement: 'reserve', prixUsd: aPayer, prixKlingUsd: prix, personnage: c.choix.personnage, cible: c.choix.cible,
+             resolution, imagesJoueur: c.choix.imagesJoueur, texteJoueur: c.choix.texteJoueur }, anime ? { anime: true, apercu: c.choix.apercu } : {}));
     }
     /* les images fournies vont sur le disque (l'etat reste petit) */
     P.images = refs.map((r, i) => {
@@ -1073,6 +1114,22 @@ function cree(deps) {
     return fs.existsSync(f) ? f : null;
   }
 
+  /**
+   * Ce qu'il faut a l'apercu (swap_apercu.js, 15/10/2026) : le morceau 1 et les cotes envoyees a
+   * Kling, d'une passe PRETE de `addr`. Public : seulement une passe « Animate ». Lu par le serveur,
+   * jamais servi. Rend { ok, chemin, cotes } ou un refus.
+   */
+  function sourceApercu(id, addr) {
+    const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
+    if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown video' };
+    if (PUB && P.mode !== 'anime') return { ok: false, code: 400, raison: 'this video was not uploaded for SWOGE Swap animate' };
+    if (P.statut !== 'pret') return { ok: false, code: 409, raison: P.statut === 'decoupe' ? 'the video is still being read — wait a moment' : 'this video is ' + P.statut + ', not waiting for a picture' };
+    const s = P.segments && P.segments[0];
+    const f = s && s.fichier ? fic(P, s.fichier) : null;
+    if (!f || !fs.existsSync(f)) return { ok: false, code: 410, raison: 'the video is gone — upload it again' };
+    return { ok: true, chemin: f, cotes: { largeur: P.cotes.largeur, hauteur: P.cotes.hauteur } };
+  }
+
   function vue(addr) {
     const mienne = [...PASSES.values()].filter((P) => P.addr === addr).sort((a, b) => b.t - a.t)[0];
     if (PUB) {
@@ -1081,7 +1138,10 @@ function cree(deps) {
       return Object.assign({ actif: kling.actif(), dureeMinS: DECOUPE.min, dureeMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, resolution: '720p', resolutions: PUB.resolutions.slice(),
         prixParSecondeUsd: parSec('720p'), prixParSecondeUsdParResolution: Object.fromEntries(PUB.resolutions.map((r) => [r, parSec(r)])), partMaxS: DECOUPE.cible,
         passesMax: PUB.passesMax, enFile: fileDAttente().length, occupees: occupees(), ouvertAujourdhui: lisJour().usd < PUB.plafondJourUsd,
-        relancesGratuites: PUB.relancesGratuites, gardeH: GARDE_MS / 3600e3, droitsTexte: PUB.droitsTexte, passe: mienne ? mienne.id : null }, PUB.catalogue());
+        relancesGratuites: PUB.relancesGratuites, gardeH: GARDE_MS / 3600e3, droitsTexte: PUB.droitsTexte, passe: mienne ? mienne.id : null,
+        /* SWOGE Swap v2 (Studio) : la derniere passe « Animate », reprise apres un rechargement */
+        passeAnime: (([...PASSES.values()].filter((P) => P.addr === addr && P.mode === 'anime').sort((a, b) => b.t - a.t)[0]) || {}).id || null,
+        clipMaxS: DECOUPE.max }, PUB.catalogue());
     }
     /* `passe` : la derniere passe d'edition ; `passeAnime` : la derniere « Animate my still » */
     const derniere = (anime) => [...PASSES.values()].filter((P) => P.addr === addr && (P.mode === 'anime') === anime).sort((a, b) => b.t - a.t)[0];
@@ -1105,7 +1165,9 @@ function cree(deps) {
 
   relit();
   /* les passes reprises au demarrage repartent au premier tour */
-  return { cree: cree_, lance, relance, cheminMorceau, recolle, abandonne, termine, reprendReserves, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES, public: !!PUB,
+  return { cree: cree_, lance, relance, cheminMorceau, sourceApercu, recolle,
+           /* public : le plafond de depense du jour, partage avec l'apercu (swap_apercu.js) */
+           jour: PUB ? { plein: (plus) => jourPlein(plus), ajoute: (usd, j) => ajouteJour(usd, j), message: MSG_JOUR } : null, abandonne, termine, reprendReserves, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES, public: !!PUB,
            attend: async (id) => { const P = PASSES.get(id); if (P && P.travail) await P.travail; } };
 }
 

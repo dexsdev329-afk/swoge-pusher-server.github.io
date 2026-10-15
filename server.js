@@ -2401,6 +2401,13 @@ const premiereImage = require('./premiere_image').cree({
   dossier: require('path').join(cfg.DATA_DIR, 'premiere_image'), kling, site: SITE_URL,
   journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
 });
+/* L'image de depart faite par OpenAI (swap_apercu.js, 15/10/2026 soir) pour « Animate a picture » du
+   proprietaire : le plan de SA video, SWOGE a la place de la personne visee, sur son compte OpenAI
+   (OPENAI_API_KEY, celle des posts X), 30 images par jour UTC. Proprietaire seulement (route plus bas). */
+const klingApercu = require('./swap_apercu').cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'kling_apercu'),
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
 const klingEditionMod = require('./kling_edition');
 const klingEdition = klingEditionMod.cree({
   element: () => swogeElement.elementPret(),
@@ -6785,8 +6792,11 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
       const droits = String(req.headers['x-swap-rights'] || '').trim().toLowerCase() === 'yes';
       if (!kling.actif()) { res.setHeader('connection', 'close'); return json(503, { ok: false, raison: 'SWOGE Swap is not open yet' }); }
+      /* ?mode=anime (SWOGE Swap v2, studio.html) : la video sera ANIMEE depuis un apercu fait ici */
+      const mode = new URLSearchParams(req.url.split('?')[1] || '').get('mode');
+      if (mode != null && mode !== 'anime') { res.setHeader('connection', 'close'); return json(400, { ok: false, raison: 'unknown mode' }); }
       let r;
-      try { r = await swap.cree(addr, req, req.headers['content-length'], { droits }); }
+      try { r = await swap.cree(addr, req, req.headers['content-length'], mode === 'anime' ? { droits, anime: true } : { droits }); }
       catch (e) { console.error('[swap] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
       if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
       return json(r.ok ? 200 : (r.code || 500), r);
@@ -6806,9 +6816,30 @@ const server = http.createServer(async (req, res) => {
       catch (e) { console.error('[swap] image ' + (e && e.stack || e)); r = { ok: false, code: 503, raison: require('./swap_garde').MSG_ECHEC }; }
       return json(r.ok ? 200 : (r.code || 500), r);
     }
-    const sm = /^\/studio\/swap\/([0-9a-f]{24})(?:\/(lance|reessaie|termine|abandonne|video)(?:\/(\d{1,3}))?)?$/.exec(path);
+    const sm = /^\/studio\/swap\/([0-9a-f]{24})(?:\/(lance|reessaie|termine|abandonne|video|apercu)(?:\/(\d{1,3}))?)?$/.exec(path);
     if (!sm) return json(404, { ok: false, raison: 'unknown' });
     const [, sid, geste, num] = sm;
+    /* v2 : l'apercu (swap_apercu.js). GET …/apercu : l'etat ; GET …/apercu/<k> : l'image, avec la
+       session seulement ; POST …/apercu { personnage | image (sha256 accepte), cible, qui? } : une
+       image de plus, payee au credit (reserve avant OpenAI, rendue a un echec). */
+    if (geste === 'apercu') {
+      if (req.method === 'GET' && num != null) {
+        const f = swap.apercuFichier(sid, addr, num);
+        if (!f) return json(404, { ok: false, raison: 'unknown picture' });
+        res.writeHead(200, Object.assign({ 'content-type': f.type, 'content-length': f.octets.length, 'cache-control': 'no-store, private' }, cors));
+        return res.end(f.octets);
+      }
+      if (req.method === 'GET') return json(200, swap.apercuEtat(sid, addr));
+      if (req.method !== 'POST' || num != null) return json(405, { ok: false, raison: 'POST only' });
+      let q;
+      try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); }
+      catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request' }); }
+      if (!q || typeof q !== 'object') q = {};
+      let r;
+      try { r = await swap.apercu(sid, addr, { personnage: q.personnage, image: q.image, cible: q.cible, qui: q.qui }); }
+      catch (e) { console.error('[swap] apercu ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
     if (!geste && req.method === 'GET') { swap.tour().catch(() => {}); const r = swap.etat(sid, addr); return json(r.ok ? 200 : r.code, r); }
     if (geste === 'video' && req.method === 'GET') {
       const f = swap.resultat(sid, addr);
@@ -6825,7 +6856,7 @@ const server = http.createServer(async (req, res) => {
         try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); }
         catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request' }); }
         if (!q || typeof q !== 'object') q = {};
-        r = await swap.lance(sid, addr, { personnage: q.personnage, cible: q.cible, confirmeUsd: q.confirmeUsd, images: q.images, prompt: q.prompt, resolution: q.resolution });
+        r = await swap.lance(sid, addr, { personnage: q.personnage, cible: q.cible, confirmeUsd: q.confirmeUsd, images: q.images, prompt: q.prompt, resolution: q.resolution, apercu: q.apercu, still: q.still });
       } else if (geste === 'reessaie' && num != null) r = await swap.relance(sid, addr, num);
       else if (geste === 'termine') r = swap.termine(sid, addr);
       else if (geste === 'abandonne') r = swap.abandonne(sid, addr);
@@ -6875,7 +6906,8 @@ const server = http.createServer(async (req, res) => {
       let essais = [];
       try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
       return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat(),
-                         edition: klingEdition.vue(addr), wan: wan.vue(addr), entier: klingEntier.vue(addr), swoge: swogeElement.vue() });
+                         edition: klingEdition.vue(addr), wan: wan.vue(addr), entier: klingEntier.vue(addr), swoge: swogeElement.vue(),
+                         apercu: { actif: klingApercu.actif(), modele: klingApercu.modele(), prixPireUsd: klingApercu.prixPireUsd(), parJour: require('./swap_apercu').PROPRIO_JOUR_MAX } });
     }
     /* L'element SWOGE (swoge_element.js, 15/10/2026), proprietaire seulement (verifie plus haut) :
        GET /studio/kling/swoge (l'etat ; avance le suivi d'un pas), POST …/prepare { vues: ['pied','profil'] }
@@ -6977,9 +7009,34 @@ const server = http.createServer(async (req, res) => {
       if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
       return json(r.ok ? 200 : (r.code || 500), r);
     }
-    const em = /^\/studio\/kling\/entier\/([0-9a-f]{24})(?:\/(lance|reessaie|recolle|abandonne|video)(?:\/(\d{1,3}))?)?$/.exec(path);
+    const em = /^\/studio\/kling\/entier\/([0-9a-f]{24})(?:\/(lance|reessaie|recolle|abandonne|video|apercu)(?:\/(\d{1,3}))?)?$/.exec(path);
     if (em) {
       const [, eid, geste, num] = em;
+      /* « Make the picture from the video » (kling_animer.html, 15/10/2026 soir) : swap_apercu.js sur le
+         morceau 1 de CETTE passe prete, SWOGE a la place de la personne visee — toujours apres AI_OWNER
+         (plus haut). POST …/apercu { cible, qui? }, GET …/apercu (l'etat), GET …/apercu/<k> (l'image). */
+      if (geste === 'apercu') {
+        const cleA = 'kling_' + eid;
+        if (req.method === 'GET' && num != null) {
+          const f = klingApercu.fichier(cleA, addr, num);
+          if (!f) return json(404, { ok: false, raison: 'unknown picture' });
+          res.writeHead(200, Object.assign({ 'content-type': f.type, 'content-length': f.octets.length, 'cache-control': 'no-store, private' }, cors));
+          return res.end(f.octets);
+        }
+        if (req.method === 'GET') return json(200, klingApercu.etat(cleA, addr, false));
+        if (req.method !== 'POST' || num != null) return json(405, { ok: false, raison: 'POST only' });
+        let q = {};
+        try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = {}; }
+        if (!q || typeof q !== 'object') q = {};
+        klingApercu.menage();
+        const src = klingEntier.sourceApercu(eid, addr);
+        let r = src;
+        if (src.ok) {
+          try { r = await klingApercu.demande(addr, { cle: cleA, chemin: src.chemin, cotes: src.cotes, cible: q.cible, qui: q.qui, perso: { id: 'swoge' } }); }
+          catch (e) { console.error('[kling-apercu] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+        }
+        return json(r.ok ? 200 : (r.code || 500), r);
+      }
       if (!geste && req.method === 'GET') { klingEntier.tour().catch(() => {}); const r = klingEntier.etat(eid, addr); return json(r.ok ? 200 : r.code, r); }
       if (geste === 'video' && req.method === 'GET') {
         const f = klingEntier.resultat(eid, addr);

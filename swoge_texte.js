@@ -115,4 +115,15 @@ function texteAnime(refs, note) {
     + (n ? ' ' + n : '');
 }
 
-module.exports = { REF_CORPS, REF_VISAGE, CIBLES, ALIAS, AUTRES, NOTE_ANIME_MAX, cible, personnage, texte, versElement, texteAnime };
+/* ---- SWOGE SWAP, LE PERSONNAGE D'UN JOUEUR ANIME (15/10/2026, swap_apercu.js) ----
+ * Le meme principe que texteAnime, sans rien de propre a SWOGE : @image_1 est l'apercu fait par
+ * le serveur (le personnage deja a sa place), @image_2 l'image du joueur ACCEPTEE par la porte
+ * (swap_garde.js). Aucune direction du joueur ici : le texte est entierement celui du serveur. */
+function texteAnimeLibre() {
+  return 'Start exactly from @image_1: the first frame of the video is @image_1. '
+    + 'Keep every character exactly as it looks in @image_1 (same body, face, clothes, proportions and colours) for the whole video; nobody turns into someone else.'
+    + ' @image_2 shows exactly how the new character looks: it keeps that look and the look it has in @image_1, and never gets the face of a real person.'
+    + ' Follow the motion, gestures, timing and camera movement of @video_1 exactly. Keep the background of @image_1.';
+}
+
+module.exports = { REF_CORPS, REF_VISAGE, CIBLES, ALIAS, AUTRES, NOTE_ANIME_MAX, cible, personnage, texte, versElement, texteAnime, texteAnimeLibre };

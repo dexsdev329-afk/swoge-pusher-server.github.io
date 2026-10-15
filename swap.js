@@ -77,11 +77,25 @@
  *     personnage maison part comme { type: 'element' } A LA PLACE des deux images,
  *     et le texte cite @element_1. Les images d'un JOUEUR n'utilisent jamais
  *     l'element (ce n'est pas SWOGE) : 1-2 images, sous les 4 de la doc.
+ *
+ * ---- 15 OCTOBRE 2026, SOIR : SWOGE SWAP V2, DANS LE STUDIO ----
+ *   L'edition (base_video) a rate quatre fois sur le meme clip (EXPLOITATION.md, « Animate my
+ *   still ») ; le chemin du proprietaire qui a marche est : le plan → l'image refaite avec le
+ *   personnage → Kling l'anime → le son d'origine. studio.html l'offre au public en trois gestes :
+ *     1. la video (POST /studio/swap?mode=anime, la meme case de droits) ;
+ *     2. le personnage (SWOGE, ou une image du joueur passee par la PORTE) et qui remplacer
+ *        (gauche / centre / droite / seule personne / description courte), puis « Create
+ *        preview » : swap_apercu.js demande l'image a OpenAI (POST /studio/swap/<id>/apercu),
+ *        payee au credit (reserve avant l'appel, rendue a un echec, marge SWAP_MARGE) ;
+ *     3. « Animate » : POST /studio/swap/<id>/lance { apercu: k, confirmeUsd, resolution } —
+ *        kling_entier.js, mode 'anime', avec CET apercu comme premiere image.
+ *   L'edition publique d'avant (sans apercu) reste servie par les memes routes.
  * ======================================================================== */
 const path = require('path');
 const KE = require('./kling_entier');
 const K = require('./kling');
 const SG = require('./swap_garde');
+const SA = require('./swap_apercu');
 const ST = require('./swoge_texte');
 
 const VIDEO_PREFIXE = '/studio/swap-clip/';
@@ -187,6 +201,9 @@ function cree(deps) {
   /* la porte des images (swap_garde.js) : son cache, ses bornes et ses images dans DATA_DIR/swap/garde */
   const garde = deps.garde || SG.cree({ dossier: path.join(deps.dossier, 'garde'), journal: deps.journal, fetch: deps.fetchAnthropic, cle: deps.cleAnthropic,
     env: deps.env, maintenant: deps.maintenant, ffmpeg: deps.ffmpeg });
+  /* l'apercu OpenAI (swap_apercu.js) : ses images dans DATA_DIR/swap/apercu, le meme journal */
+  const apercu = deps.apercu || SA.cree({ dossier: path.join(deps.dossier, 'apercu'), journal: deps.journal, fetch: deps.fetchOpenai, cle: deps.cleOpenai,
+    modele: deps.modeleImage, ffmpeg: deps.ffmpeg, maintenant: deps.maintenant });
   const pub = {
     marge: R.marge,
     passesMax: R.parallele,
@@ -223,6 +240,8 @@ function cree(deps) {
     imagesMax: SG.IMAGES_MAX,
     /* seule porte vers Kling pour une image du joueur : l'identifiant d'une image ACCEPTEE */
     imageVerifiee: (id) => garde.image(id),
+    /* « Animate » (v2) : la seule premiere image possible, un apercu fait ici pour cette passe */
+    stillApercu: (id, addr, k) => apercu.choisie('swap_' + id, addr, k),
     marque: deps.marque !== undefined ? deps.marque : MARQUE,
   };
   const moteur = KE.cree(Object.assign({}, deps, {
@@ -236,6 +255,39 @@ function cree(deps) {
   /* POST /studio/swap/image : une image du joueur devant la porte, AVANT tout paiement */
   moteur.verifieImage = (addr, octets) => garde.verifie(addr, octets);
   moteur.garde = garde;
+
+  /* ---- v2 : l'apercu (POST/GET /studio/swap/<id>/apercu, GET …/apercu/<k>) ----
+     q : { personnage: 'swoge' | image: <sha256 d'une image ACCEPTEE par la porte>, cible, qui? } */
+  moteur.apercu = async (id, addr, q) => {
+    q = q || {};
+    apercu.menage();
+    const src = moteur.sourceApercu(id, addr);
+    if (!src.ok) return src;
+    let perso = { id: 'swoge' };
+    if (q.image != null && q.image !== '') {
+      const im = typeof q.image === 'string' ? garde.image(q.image) : null;
+      if (!im) return { ok: false, code: 400, raison: 'your character picture was not checked by SWOGE Swap — upload it under "Your character" first' };
+      perso = { id: 'libre', octets: Buffer.from(im.base64, 'base64'), sha: q.image };
+    } else if (q.personnage != null && q.personnage !== 'swoge') return { ok: false, code: 400, raison: 'pick SWOGE, or upload your own character' };
+    if (!moteur.jour) return { ok: false, code: 500, raison: 'server error' };
+    if (!(R.plafondJourUsd > 0)) return { ok: false, code: 429, raison: moteur.jour.message };
+    return apercu.demande(addr, { cle: 'swap_' + id, chemin: src.chemin, cotes: src.cotes, cible: q.cible, qui: q.qui, perso, jour: moteur.jour,
+      paie: { reserve: (usd, info) => pub.paie.reserve(addr, usd, info), regle: (j, usd) => pub.paie.regle(j, usd), prixClient: pub.prixClient,
+              solde: () => (pub.paie.solde ? pub.paie.solde(addr) : null) } });
+  };
+  moteur.apercuEtat = (id, addr) => apercu.etat('swap_' + id, addr, true);
+  moteur.apercuFichier = (id, addr, k) => apercu.fichier('swap_' + id, addr, k);
+  moteur.apercuModule = apercu;
+  /* au demarrage : les reserves des passes ET celles des apercus */
+  const reprendPasses = moteur.reprendReserves;
+  moteur.reprendReserves = (durables) => {
+    const b = reprendPasses(durables);
+    const a = apercu.reprendReserves(durables, { regle: (j, usd) => pub.paie.regle(j, usd), prixClient: pub.prixClient });
+    return Object.assign(b, { apercusRegles: a.reglees, apercusRendus: a.rendues });
+  };
+  /* ce que la page lit avant tout : le prix d'un apercu (pire cas × marge) et ses bornes */
+  const vuePasses = moteur.vue;
+  moteur.vue = (addr) => Object.assign(vuePasses(addr), { apercu: { actif: apercu.actif(), prixUsd: prixClient(apercu.prixPireUsd(), R.marge), max: SA.APERCUS_MAX, quiMax: SA.QUI_MAX } });
   return moteur;
 }
 

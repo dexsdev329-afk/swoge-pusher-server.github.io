@@ -19,7 +19,9 @@
  *      relance reprend la MEME image.
  *   6. Un redemarrage reprend : l'image fixe et les images d'enchainement sont
  *      sur le disque, le morceau suivant part de la bonne.
- *   7. Le service public (SWOGE Swap) n'a pas ce mode.
+ *   7. Le service public (SWOGE Swap) n'anime jamais une image envoyee par la page : depuis le
+ *      15/10/2026 (soir, v2) il a ce mode, mais sa premiere image ne peut etre qu'un apercu fait
+ *      par le serveur pour CETTE passe (swap_apercu.js) ; une `still` de la page est refusee.
  * Kling est simule : aucun appel reel. ffmpeg est le vrai.
  * ==========================================================================*/
 const fs = require('fs'), os = require('os'), path = require('path');
@@ -341,13 +343,33 @@ async function tourne(M, fin, max) {
     M3.arrete();
   }
 
-  console.log('\n-- 6. le service public n a pas ce mode --');
+  console.log('\n-- 6. le service public n anime jamais une image de la page --');
   {
-    const M = KE.cree({ dossier: path.join(D, 'pub'), kling: { actif: () => true }, urlPublique: (n) => n, imagesDefaut: IMG, journal: () => {}, public: { droitsTexte: 'I own it' } });
+    /* l'intention d'avant (« jamais en public ») : aucune image fournie par un joueur ne devient la
+       premiere image chez Kling. Depuis la v2, le mode existe, la premiere image vient de l'apercu. */
+    const envois = [];
+    const kl = { actif: () => true, lanceAnime: async (q) => { envois.push(q); return { ok: true, id: 'X1', estimationUsd: 1 }; }, etat: async () => ({ ok: true, statut: 'processing' }), etatExterne: async () => ({ ok: false, code: 404 }) };
+    const reserves = [];
+    const pub = { droitsTexte: 'I own it', resolutions: ['720p', '1080p'], prixClient: (x) => Math.ceil(x * 2 * 100 - 1e-9) / 100, passesMax: 2, plafondJourUsd: 50, relancesGratuites: 1, decoupesMax: 3,
+      pretMaxMs: 3600e3, incompletMaxMs: 3600e3, marge: 2, urlVideo: (id) => '/v/' + id, catalogue: () => ({}), imageVerifiee: () => null,
+      paie: { reserve: (a, usd) => { reserves.push(usd); return 'r1'; }, regle: () => '0', solde: () => 100 },
+      stillApercu: (id, addr, k) => (String(k) === '0' ? { ok: true, base64: image(path.join(D, 'apercu.jpg'), 720, 1280, 'red').toString('base64'), perso: 'swoge', cible: 'gauche', k: 0 } : { ok: false, code: 400, raison: 'create the preview picture first' }) };
+    const M = KE.cree({ dossier: path.join(D, 'pub'), kling: kl, urlPublique: (n) => 'https://srv.example/c/' + n, imagesDefaut: IMG, journal: () => {}, public: pub });
     const src = path.join(D, 'clip4.mp4');
     const r = await M.cree('0xjoueur', fs.createReadStream(src), fs.statSync(src).size, { droits: true, anime: true });
-    const vide = !fs.existsSync(path.join(D, 'pub')) || fs.readdirSync(path.join(D, 'pub')).length === 0;
-    ok(!r.ok && r.code === 400 && /unknown mode/.test(r.raison) && vide, 'SWOGE Swap : anime refuse, rien ecrit');
+    await M.attend(r.id);
+    const e = M.etat(r.id, '0xjoueur');
+    ok(r.ok && e.statut === 'pret' && e.morceaux.length === 1 && e.anime && e.anime.clip === true, 'SWOGE Swap v2 : ?mode=anime ouvert, un clip de 4 s = UN morceau (clip seul automatique)');
+    const prix = e.prixUsdParResolution['720p'];
+    const stillPage = 'data:image/png;base64,' + image(path.join(D, 'page.png'), 720, 1280, 'blue').toString('base64');
+    const l1 = await M.lance(r.id, '0xjoueur', { still: stillPage, apercu: 0, confirmeUsd: prix });
+    ok(!l1.ok && l1.code === 400 && /preview made here/.test(l1.raison) && envois.length === 0 && reserves.length === 0, 'une image envoyee par la page : 400, rien reserve, rien chez Kling');
+    const l2 = await M.lance(r.id, '0xjoueur', { confirmeUsd: prix });
+    ok(!l2.ok && l2.code === 400 && envois.length === 0 && reserves.length === 0, 'sans apercu : 400, rien reserve, rien chez Kling');
+    const l3 = await M.lance(r.id, '0xjoueur', { apercu: 0, confirmeUsd: prix });
+    ok(l3.ok && envois.length === 1 && rouge(couleur(Buffer.from(envois[0].premiere, 'base64'), D)) && reserves[0] === prix && envois[0].images.length === 2 && envois[0].prompt.startsWith('Start exactly from @image_1'),
+       'l apercu 0 du serveur : premiere image = l apercu (rouge), SWOGE en refer_image, prix reserve');
+    M.arrete();
   }
   fin();
   function fin() {
