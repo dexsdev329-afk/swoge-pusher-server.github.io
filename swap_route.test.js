@@ -193,7 +193,7 @@ const suspendue = (port, chemin, entetes, octets) => new Promise((res) => {
   const l1 = await L(id1, j1.H);
   ok(l1.statut === 200 && l1.j.statut === 'en_cours' && await credit(j1.H) === 6.47, 'le bon prix : en cours, 3,53 $ reserves (credit 6,47 $)');
   const envois = envoisKling().map((x) => JSON.parse(x.o.body));
-  ok(envois.length === 2 && envois.every((b) => /^Replace the person who is singing or talking in @video_1 with the character of @image_1/.test(b.contents[0].text)
+  ok(envois.length === 2 && envois.every((b) => /^Replace the person who is singing or talking in @video_1 with the exact 3D character of @image_1 and @image_2/.test(b.contents[0].text)
      && b.contents[1].url === 'https://site.example/img/site/swoge_swole_ref.jpg' && b.contents[1].id === 'image_1' && b.contents[2].url === 'https://site.example/img/site/swoge_face_ref.jpg'
      && b.contents[2].id === 'image_2' && b.contents[3].id === 'video_1' && b.settings.audio === 'original' && b.settings.resolution === '720p'),
      'Kling recoit le texte de la maison, le corps et le visage de SWOGE par URL, 720p, son d origine');

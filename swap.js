@@ -76,7 +76,7 @@ const DROITS_TEXTE = 'I own this video or have the right to use it, and it shows
    (kling_essai.html, « Whole video », 14/10/2026). @image_1 = corps, @image_2 = visage. */
 const PERSONNAGES = [
   { id: 'swoge', nom: 'SWOGE', images: ['/img/site/swoge_swole_ref.jpg', '/img/site/swoge_face_ref.jpg'], vignette: '/img/site/swoge_face_ref.jpg',
-    texte: 'the character of @image_1 (body: huge muscular shirtless Swole Doge, cream-beige fur everywhere, furry dog paws with black pads instead of hands), with exactly the face of @image_2: the classic Doge meme face, pale cream-beige fur (not orange, not red), white cheeks and muzzle, small dark eyes glancing sideways, raised eyebrows, mouth closed in a slight smirk that only opens to lip-sync the words, the head proportionally small on a thick neck' },
+    texte: 'the exact 3D character of @image_1 and @image_2: SWOGE, a huge bodybuilder Shiba Inu with thick fluffy cream-white fur on the chest, belly and arms and orange-tan fur on the head and back, the round friendly Doge face of @image_2 with white cheeks, small dark eyes and a smiling mouth that opens to lip-sync the words, furry dog paws with dark pads instead of hands, wearing plain black gym shorts, much bigger and more muscular than the original person, with nothing left of the original person (no hair, glasses, clothes or accessories)' },
 ];
 /* Qui remplacer : `qui` entre dans « Replace <qui> in @video_1 », `garde` dans « Keep <garde>… ».
    « the singer » et « the other person » sont ceux du texte du proprietaire. */

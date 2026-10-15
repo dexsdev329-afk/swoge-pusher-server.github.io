@@ -107,7 +107,7 @@ async function attend(M, id, addr, statuts, max) {
     const r2 = SW.reglages({ SWAP_MARGE: '3', SWAP_MO_MAX: '20', SWAP_DUREE_MAX_S: '30', SWAP_PARALLELE: '4', SWAP_PLAFOND_JOUR_USD: '0' });
     ok(r2.marge === 3 && r2.moMax === 20 && r2.dureeMaxS === 30 && r2.parallele === 4 && r2.plafondJourUsd === 0, 'dans les bornes : pris tels quels (0 $ par jour ferme le service)');
     const p = SW.prompt(SW.PERSONNAGES[0], SW.CIBLES.find((c) => c.id === 'chante'));
-    ok(/^Replace the person who is singing or talking in @video_1 with the character of @image_1 \(body: huge muscular shirtless Swole Doge/.test(p) && /face of @image_2/.test(p)
+    ok(/^Replace the person who is singing or talking in @video_1 with the exact 3D character of @image_1 and @image_2: SWOGE, a huge bodybuilder Shiba Inu/.test(p) && /face of @image_2/.test(p)
        && /Keep every other person, the camera, the background and the original audio unchanged\.$/.test(p), 'le texte de Kling : celui du proprietaire, la cible remplacee');
     const pt = SW.prompt(SW.PERSONNAGES[0], SW.CIBLES.find((c) => c.id === 'tous'));
     ok(/^Replace every person in @video_1/.test(pt) && /Keep the camera, the background/.test(pt) && pt.length <= K.TEXTE_MAX, 'tout le monde : « Keep the camera… », sous ' + K.TEXTE_MAX + ' signes');
