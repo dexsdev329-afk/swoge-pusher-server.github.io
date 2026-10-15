@@ -313,6 +313,19 @@ const ecart = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Mat
     const hg = ecart(region(res.chemin, 2, 22, 22, L, Hm), region(V, 2, 22, 22, L, Hm));
     ok(bd > 8 && hg < 4 && bd > 3 * hg, 'la marque est incrustee en bas a droite : ecart moyen ' + bd.toFixed(1) + ' (gris 0-255) contre ' + hg.toFixed(1) + ' en haut a gauche');
     ok(lignes.some((x) => x.entier === r.id && x.statut === 'fini' && x.marque === true) && fs.existsSync(SW.MARQUE), 'journal : la fin porte marque:true ; le PNG est dans le depot (' + path.relative(__dirname, SW.MARQUE) + ')');
+    /* 16/10 : la marque est un CHOIX du joueur (« pas oblige ») : `marque: false` la retire */
+    {
+      const r2 = await M.cree(A, fs.createReadStream(V), null, { droits: true });
+      const e2 = await attend(M, r2.id, A, ['pret', 'erreur']);
+      const n0 = F.envois.length;
+      const g2 = await M.lance(r2.id, A, { personnage: 'swoge', cible: 'chante', confirmeUsd: e2.prixUsd, marque: false });
+      ok(g2.ok && F.envois.length > n0, 'marque:false : le lancement part comme les autres');
+      F.finit(); t += 2000; await M.tour();
+      const f2 = await attend(M, r2.id, A, ['fini', 'incomplet', 'erreur']);
+      const res2 = M.resultat(r2.id, A);
+      const bd2 = f2.statut === 'fini' ? ecart(region(res2.chemin, 2, 720 - L - 22, 1280 - Hm - 22, L, Hm), region(V, 2, 720 - L - 22, 1280 - Hm - 22, L, Hm)) : 99;
+      ok(f2.statut === 'fini' && bd2 < 4 && !lignes.some((x) => x.entier === r2.id && x.marque), 'sans marque : fini, rien en bas a droite (ecart ' + bd2.toFixed(1) + '), le journal ne la porte pas');
+    }
     /* deux images, le personnage maison sans image : B */
     CL.verdict(false, 'cartoon', 0.9);
     const rb = await M.verifieImage(B, I.dessin);

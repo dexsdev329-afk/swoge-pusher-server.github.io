@@ -596,6 +596,9 @@ function cree(deps) {
     if (PUB) { if (!(Math.abs(Number(q.confirmeUsd) - aPayer) < 0.005)) return { ok: false, code: 409, raison: 'the price to confirm is $' + aPayer.toFixed(2) + ' — confirm that amount' }; }
     else if (!(Math.abs(Number(q.confirmeUsd) - prix) < 0.0005)) return { ok: false, code: 409, raison: 'the price to confirm is $' + prix.toFixed(3) + ' — confirm that amount' };
     if (!kling.actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    /* 16/10 : la marque devient un CHOIX du joueur (demande du proprietaire : « pas oblige »).
+       Mise par defaut ; seul un `marque: false` explicite la retire. */
+    if (PUB) P.sansMarque = q.marque === false;
     if (PUB) {
       if (jourPlein(prix)) { note({ entier: P.id, refus: 'plafond-jour', jourUsd: lisJour().usd, prixKlingUsd: prix, plafondJourUsd: PUB.plafondJourUsd }); return { ok: false, code: 429, raison: MSG_JOUR }; }
       /* la reserve DURABLE (credits.soldeDurable) : gardee a un redemarrage, reglee a la fin */
@@ -976,7 +979,7 @@ function cree(deps) {
       }
       args.push('-i', orig);
       /* public : la marque « Made with SWOGE AI » (PNG du depot), entree apres la source */
-      const marque = PUB && PUB.marque ? PUB.marque : null;
+      const marque = PUB && PUB.marque && !P.sansMarque ? PUB.marque : null;
       if (marque) args.push('-i', marque);
       /* chaque resultat ramene a la longueur EXACTE de son morceau source :
          prolonge (derniere image tenue) puis coupe ; meme taille, meme i/s */
