@@ -6962,11 +6962,17 @@ const server = http.createServer(async (req, res) => {
        POST …/<id>/lance { images[], prompt, resolution, confirmeUsd },
        POST …/<id>/reessaie/<n>, POST …/<id>/recolle, POST …/<id>/abandonne,
        GET …/<id>/video (le resultat, avec la session). Tout n'agit que pour
-       l'adresse de la session. */
+       l'adresse de la session.
+       « Animate my still » (15/10/2026, kling.js lanceAnime) : la meme route avec
+       ?mode=anime (video entiere, morceaux enchaines) ou ?mode=anime-clip (un clip
+       de 3 a 10 s, un morceau), puis …/<id>/lance { still: data-URL PNG/JPEG,
+       note?, resolution, confirmeUsd } — toujours apres AI_OWNER (plus haut). */
     if (path === '/studio/kling/entier') {
       if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      const mode = new URLSearchParams(req.url.split('?')[1] || '').get('mode');
+      if (mode != null && mode !== 'anime' && mode !== 'anime-clip') { res.setHeader('connection', 'close'); return json(400, { ok: false, raison: 'unknown mode' }); }
       let r;
-      try { r = await klingEntier.cree(addr, req, req.headers['content-length']); }
+      try { r = await klingEntier.cree(addr, req, req.headers['content-length'], mode ? { anime: true, clip: mode === 'anime-clip' } : undefined); }
       catch (e) { console.error('[kling-entier] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
       if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
       return json(r.ok ? 200 : (r.code || 500), r);
@@ -6998,7 +7004,7 @@ const server = http.createServer(async (req, res) => {
             if (c.depuis !== 'entier' || c.entier !== eid) return json(400, { ok: false, raison: 'this first frame was made for another video — prepare it from this plan' });
             premiere = c;
           }
-          r = await klingEntier.lance(eid, addr, { images: q.images, prompt: q.prompt, resolution: q.resolution, confirmeUsd: q.confirmeUsd, premiere });
+          r = await klingEntier.lance(eid, addr, { images: q.images, prompt: q.prompt, resolution: q.resolution, confirmeUsd: q.confirmeUsd, premiere, still: q.still, note: q.note });
         } else if (geste === 'reessaie' && num != null) r = await klingEntier.relance(eid, addr, num);
         else if (geste === 'recolle') r = await klingEntier.recolle(eid, addr);
         else if (geste === 'abandonne') r = klingEntier.abandonne(eid, addr);

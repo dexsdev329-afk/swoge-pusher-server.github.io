@@ -93,4 +93,26 @@ function versElement(t) {
   return s;
 }
 
-module.exports = { REF_CORPS, REF_VISAGE, CIBLES, ALIAS, AUTRES, cible, personnage, texte, versElement };
+/* ---- ANIMER L'IMAGE FIXE DU PROPRIETAIRE (15/10/2026, kling.js lanceAnime) ----
+ * L'edition (base_video) a rate 4 fois le 15/10 : mauvaise personne, corps humain, mauvaise
+ * tete. Ici rien n'est « remplace » : @image_1 (first_frame) montre deja SWOGE a sa place, et
+ * @video_1 (feature_video) ne donne que le mouvement. Le texte dit donc : partir EXACTEMENT de
+ * @image_1, garder chaque personnage tel qu'il y est, suivre le mouvement, les gestes, le
+ * rythme et la camera de @video_1, garder le decor. Les deux defauts mesures (peau humaine,
+ * mains humaines) sont nommes une fois. `refs` : 'element' (@element_1), 'images' (@image_2
+ * corps, @image_3 visage) ou rien. `note` : une direction du proprietaire, citee a la fin. */
+const NOTE_ANIME_MAX = 400;
+function texteAnime(refs, note) {
+  const qui = refs === 'element' ? ' SWOGE is @element_1: he keeps exactly the look of @element_1 and of @image_1.'
+    : refs === 'images' ? ' @image_2 (full body) and @image_3 (face) show exactly how SWOGE looks: he keeps that look and the look he has in @image_1.'
+    : '';
+  const n = String(note || '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, NOTE_ANIME_MAX);
+  return 'Start exactly from @image_1: the first frame of the video is @image_1. '
+    + 'Keep every character exactly as it looks in @image_1 (same body, fur, face, clothes, proportions and colours) for the whole video; nobody turns into someone else.'
+    + qui
+    + ' SWOGE, the furry Swole Doge, keeps thick cream-beige fur everywhere and furry dog paws: never human skin, human hands or a human body.'
+    + ' Follow the motion, gestures, timing and camera movement of @video_1 exactly. Keep the background of @image_1.'
+    + (n ? ' ' + n : '');
+}
+
+module.exports = { REF_CORPS, REF_VISAGE, CIBLES, ALIAS, AUTRES, NOTE_ANIME_MAX, cible, personnage, texte, versElement, texteAnime };

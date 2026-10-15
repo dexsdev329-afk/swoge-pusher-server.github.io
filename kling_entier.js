@@ -81,6 +81,22 @@
  *   L'id est FIGE dans la passe au lancement (P.element, ecrit sur le disque) :
  *   une relance ou une reprise apres redemarrage envoie le meme.
  *   « reference images + Elements <= 4 » avec une video (video-omni.md).
+ *
+ * ---- ANIMER L'IMAGE FIXE DU PROPRIETAIRE (15 octobre 2026) ----
+ *   L'edition (base_video) a rate 4 fois le 15/10 (mauvaise personne, corps humain,
+ *   mauvaise tete). Le proprietaire a fait l'image 0 de son clip AVEC SWOGE en place ;
+ *   `cree_(…, { anime: true, clip? })` ouvre une passe `mode: 'anime'` (proprietaire
+ *   seulement, jamais avec `deps.public`) : chaque morceau part en feature_video avec une
+ *   first_frame (kling.js lanceAnime) et le texte de swoge_texte.texteAnime.
+ *     - `clip` : UN seul morceau, le clip entier (3 a 10 s), sans decoupage.
+ *     - morceau 1 : l'image fixe ; morceau n : la DERNIERE image du resultat n-1, tel qu'il
+ *       sera recolle (ramene a la longueur de son morceau source, meme i/s), extraite par
+ *       ffmpeg dans chaine_<n>.jpg, gardee : une relance du morceau n reprend la meme.
+ *     - donc SEQUENTIEL : le morceau n attend le resultat n-1 (un seul chez Kling a la fois) ;
+ *       un morceau rate bloque ceux d'apres jusqu'a sa relance.
+ *     - audio 'off' chez Kling, le son d'origine remis au recollage comme d'habitude, a la
+ *       longueur exacte de la source (un clip seul compris).
+ *   Tout est sur le disque (etat.json, still.*, chaine_*.jpg) : un redemarrage reprend.
  * ======================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -325,6 +341,9 @@ function cree(deps) {
   async function cree_(addr, flux, octetsAnnonces, o) {
     if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
     if (PUB && !(o && o.droits === true)) return { ok: false, code: 400, raison: 'tick the box first: ' + PUB.droitsTexte };
+    /* « Animate my still » : le proprietaire seulement, jamais le service public */
+    const anime = !!(o && o.anime);
+    if (anime && PUB) return { ok: false, code: 400, raison: 'unknown mode' };
     if (Number(octetsAnnonces) > OCTETS_MAX) return { ok: false, code: 413, raison: 'the video is ' + (Number(octetsAnnonces) / 1048576).toFixed(1) + ' MB — ' + (OCTETS_MAX / 1048576) + ' MB max' };
     for (const P of PASSES.values()) {
       if (P.addr !== addr) continue;
@@ -339,6 +358,7 @@ function cree(deps) {
     const id = crypto.randomBytes(12).toString('hex');
     const P = { id, addr, t: temps(), statut: 'decoupe', message: null, source: null, fps: null, cotes: null, segments: [], resolution: null,
                 prompt: null, images: [], prixPlan: null, depenseMaxUsd: 0, final: null, tFin: null };
+    if (anime) { P.mode = 'anime'; P.clip = !!(o && o.clip); }
     try { fs.mkdirSync(rep(id), { recursive: true }); }
     catch (e) { return { ok: false, code: 500, raison: 'the server could not store the video' }; }
     let n;
@@ -362,14 +382,16 @@ function cree(deps) {
     if (!s || !s.video || !(s.duree > 0)) return refuse('not a video ffmpeg can read');
     if (s.duree < DECOUPE.min) return refuse('the video is ' + s.duree.toFixed(2) + ' s long — ' + DECOUPE.min + ' s at least');
     if (s.duree > DUREE_MAX) return refuse('the video is ' + s.duree.toFixed(1) + ' s long — ' + DUREE_MAX + ' s at most');
+    if (P.clip && s.duree > DECOUPE.max) return refuse('the clip is ' + s.duree.toFixed(2) + ' s long — one clip is ' + DECOUPE.min + ' to ' + DECOUPE.max + ' s (use "Whole video" for a longer one)');
     const cotes = cotesSortie(s.largeur, s.hauteur);
     if (!cotes) return refuse('the video is ' + s.largeur + '×' + s.hauteur + ' px — too narrow for Kling (700 to 2160 px per side)');
     const F = fpsSortie(s.fps);
     P.source = { duree: arrondi3(s.duree), largeur: s.largeur, hauteur: s.hauteur, fps: s.fps ? Math.round(s.fps * 100) / 100 : null, son: s.son };
     P.fps = F; P.cotes = cotes;
     let sc = [];
-    try { sc = await scenes(orig); } catch (e) { sc = []; }
-    const plan = coupes(s.duree, sc, { fps: F });
+    /* un clip seul (Animate my still) : un morceau, le clip entier, rien a chercher */
+    if (!P.clip) try { sc = await scenes(orig); } catch (e) { sc = []; }
+    const plan = P.clip ? [{ debut: 0, duree: arrondi3(s.duree) }] : coupes(s.duree, sc, { fps: F });
     /* Un ffmpeg par morceau, recherche AVANT -i : avec un reencodage, ffmpeg
        decode depuis l'image cle precedente et jette ce qui precede `debut` —
        coupure a l'image pres (mesure du 14/10/2026 sur 30 i/s : 6,033 s →
@@ -452,6 +474,23 @@ function cree(deps) {
     if (el) return { ok: true, liste: [], element: String(el), texte: ST.versElement(texte), resolution };
     return { ok: true, liste, texte, resolution };
   }
+  /* Le choix du proprietaire en « Animate my still » : son image fixe (data-URL PNG/JPEG,
+     6 Mo au plus, gardee sur le disque pour les relances), une direction facultative, la
+     resolution. SWOGE : l'element s'il existe, sinon le corps et le visage par defaut ; la
+     premiere image comptee, « images + elements <= 4 » (video-omni.md). */
+  function choixAnime(q) {
+    if (q.still == null || q.still === '') return { ok: false, code: 400, raison: 'choose your still first (JPG or PNG)' };
+    const f = K.referenceEdition(q.still);
+    if (!f.ok) return { ok: false, code: 400, raison: 'still: ' + f.raison };
+    if (f.source === 'url') return { ok: false, code: 400, raison: 'upload the still itself (JPG or PNG), not a link' };
+    if (Buffer.byteLength(f.image, 'base64') > 6 * 1024 * 1024) return { ok: false, code: 413, raison: 'the still is too large (6 MB max)' };
+    const resolution = q.resolution === '1080p' ? '1080p' : '720p';
+    let el = null;
+    try { el = deps.element ? deps.element() : null; } catch (e) { el = null; }
+    const liste = el ? [] : (DEFAUT.length >= 2 && DEFAUT[0] && DEFAUT[1] ? DEFAUT.slice(0, Math.min(2, K.ANIME_IMAGES_MAX - 1)) : []);
+    const texte = ST.texteAnime(el ? 'element' : liste.length === 2 ? 'images' : null, q.note);
+    return { ok: true, liste, element: el ? String(el) : null, texte, resolution, still: f };
+  }
   /* Le choix d'un joueur (15/10/2026) : un personnage MAISON ou 1-2 images DEJA ACCEPTEES par la
      porte (swap_garde.js, par leur sha256), qui remplacer, un texte libre CITE dans le gabarit de
      la maison, 720p ou 1080p. Une image qui n'est pas l'identifiant d'une image acceptee (URL,
@@ -492,13 +531,15 @@ function cree(deps) {
     const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
     if (!P || P.addr !== addr) return { ok: false, code: 404, raison: 'unknown whole-video edit' };
     if (P.statut !== 'pret') return { ok: false, code: 409, raison: 'this edit is ' + P.statut + ', not waiting for a go' };
-    const c = PUB ? choixPublic(q) : choixProprietaire(q);
+    const anime = P.mode === 'anime';
+    const c = PUB ? choixPublic(q) : anime ? choixAnime(q) : choixProprietaire(q);
     if (!c.ok) return c;
     const liste = c.liste, texte = c.texte, resolution = c.resolution, element = c.element || null;
     /* la premiere image (proprietaire seulement, premiere_image.js, 15/10/2026) : une refer_image de plus */
-    const premiere = !PUB && q.premiere && q.premiere.base64 ? q.premiere : null;
-    if (liste.length + (element ? 1 : 0) + (premiere ? 1 : 0) > K.EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: K.EDITION_IMAGES_MAX + ' reference pictures and elements at most (Kling limit with a video)' + (premiere ? ' — the first frame counts as one: remove a picture' : '') };
-    if (!liste.length && !element) return { ok: false, code: 400, raison: 'a reference picture is needed' };
+    const premiere = !PUB && !anime && q.premiere && q.premiere.base64 ? q.premiere : null;
+    /* « Animate my still » : l'image fixe (first_frame) compte parmi les 4 */
+    if (liste.length + (element ? 1 : 0) + (premiere ? 1 : 0) + (anime ? 1 : 0) > K.EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: K.EDITION_IMAGES_MAX + ' reference pictures and elements at most (Kling limit with a video)' + (premiere ? ' — the first frame counts as one: remove a picture' : anime ? ' — the still counts as one' : '') };
+    if (!liste.length && !element && !anime) return { ok: false, code: 400, raison: 'a reference picture is needed' };
     const refs = [];
     for (let i = 0; i < liste.length; i++) {
       const r = K.referenceEdition(liste[i]);
@@ -544,14 +585,20 @@ function cree(deps) {
       const nom = 'premiere.' + (premiere.format === 'png' ? 'png' : 'jpg');
       fs.writeFileSync(fic(P, nom), Buffer.from(premiere.base64, 'base64'));
       P.premiere = { nom, format: premiere.format === 'png' ? 'png' : 'jpeg' };
-    } P.prixConfirme = PUB ? aPayer : prix; P.tLance = temps();
+    }
+    if (anime) {
+      const nom = 'still.' + (c.still.source === 'png' ? 'png' : 'jpg');
+      fs.writeFileSync(fic(P, nom), Buffer.from(c.still.image, 'base64'));
+      P.anime = { still: nom, format: c.still.source, largeur: c.still.largeur, hauteur: c.still.hauteur };
+    }
+    P.prixConfirme = PUB ? aPayer : prix; P.tLance = temps();
     for (const s of P.segments) s.statut = 'attente';
     /* public : une place parmi `passesMax`, sinon la file (la reserve est deja prise) */
     if (PUB && occupees() >= PUB.passesMax) { P.statut = 'file'; P.tFile = temps(); }
     else P.statut = 'en_cours';
     ecrit(P);
     note({ entier: P.id, lance: true, morceaux: P.segments.length, resolution, images: P.images.map((x) => (x.type === 'url' ? (x.url === DEFAUT[0] ? 'swoge' : x.url === DEFAUT[1] ? 'swoge-face' : 'url') : x.format)), prixPire: prix, plafondUsd: PLAFOND, parallele: PAR,
-           ...(element ? { element } : {}), ...(P.premiere ? { premiere: true } : {}), ...(P.statut === 'file' ? { file: fileDAttente().length } : {}) });
+           ...(element ? { element } : {}), ...(P.premiere ? { premiere: true } : {}), ...(anime ? { anime: true, clip: !!P.clip, still: P.anime.largeur + 'x' + P.anime.hauteur } : {}), ...(P.statut === 'file' ? { file: fileDAttente().length } : {}) });
     /* les premiers envois partent avant la reponse : la page voit tout de suite un refus de Kling */
     if (P.statut === 'en_cours') await pompe(P).catch((e) => console.error('[kling-entier] ' + e.message));
     return Object.assign({ ok: true }, vue1(P));
@@ -563,7 +610,42 @@ function cree(deps) {
   }
 
   /* ---- 3. l'envoi, au plus PAR a la fois ---- */
+  /**
+   * « Animate my still » : la first_frame du morceau `s`, en base64. Morceau 1 : l'image fixe.
+   * Morceau n : la DERNIERE image du resultat n-1 tel qu'il sera recolle (meme i/s, prolonge
+   * puis coupe a la longueur de son morceau source, comme assemble()), extraite une fois par
+   * ffmpeg dans chaine_<n>.jpg et gardee : une relance du morceau n reprend la meme image.
+   */
+  async function premiereDe(P, s) {
+    if (s.i === 0) return fs.readFileSync(fic(P, P.anime.still)).toString('base64');
+    const nom = 'chaine_' + String(s.i).padStart(3, '0') + '.jpg';
+    if (!fs.existsSync(fic(P, nom))) {
+      const av = P.segments[s.i - 1];
+      if (!av || !av.resultat) throw new Error('part ' + s.i + ' has no result yet');
+      const d = av.dureePlan != null ? av.dureePlan : av.duree;
+      await executer(ffmpeg, ['-v', 'error', '-y', '-i', fic(P, av.resultat), '-an',
+        '-vf', 'fps=' + P.fps + ',tpad=stop_mode=clone:stop_duration=' + (d + 1).toFixed(3) + ',trim=duration=' + d.toFixed(3),
+        '-update', '1', '-c:v', 'mjpeg', '-q:v', '2', '-f', 'image2', fic(P, nom + '.part')], 5 * 60e3);
+      fs.renameSync(fic(P, nom + '.part'), fic(P, nom));
+    }
+    const b64 = fs.readFileSync(fic(P, nom)).toString('base64');
+    const r = K.referenceEdition(b64);
+    if (!r.ok) { efface(P, nom); throw new Error('the last frame of part ' + s.i + ' is not usable: ' + r.raison); }
+    return b64;
+  }
+
   async function envoie(P, s) {
+    /* « Animate my still » : la premiere image d'abord (ffmpeg) ; un echec ici n'a rien coute */
+    let premiereAnime = null;
+    if (P.mode === 'anime') {
+      try { premiereAnime = await premiereDe(P, s); }
+      catch (e) {
+        efface(P, 'chaine_' + String(s.i).padStart(3, '0') + '.jpg.part');
+        s.statut = 'echec'; s.message = propre('the first frame of part ' + (s.i + 1) + ' could not be made: ' + (e.err || e.message)); ecrit(P);
+        note({ entier: P.id, morceau: s.i, anime: true, statut: 'chaine-ratee', message: s.message });
+        return;
+      }
+    }
     s.statut = 'envoi'; s.essais++; s.externe = crypto.randomBytes(12).toString('hex'); s.message = null;
     ecrit(P);   /* l'identifiant externe est sur le disque AVANT l'appel */
     EN_VOL.add(s.externe);
@@ -571,12 +653,17 @@ function cree(deps) {
     try {
       /* la premiere image : en DERNIERE refer_image ; « the first frame … » pour le morceau 1 seulement */
       let images = references(P), texteMorceau = P.prompt;
-      if (P.premiere) {
-        images = images.concat([fs.readFileSync(fic(P, P.premiere.nom)).toString('base64')]);
-        texteMorceau = P.prompt + require('./premiere_image').phraseVideo(images.length, s.i === 0);
+      if (premiereAnime) {
+        r = await kling.lanceAnime(Object.assign({ videoUrl: deps.urlPublique(s.fichier), premiere: premiereAnime, images, prompt: P.prompt, resolution: P.resolution,
+                                     dureeS: s.duree, externe: s.externe }, P.element ? { element: P.element } : {}));
+      } else {
+        if (P.premiere) {
+          images = images.concat([fs.readFileSync(fic(P, P.premiere.nom)).toString('base64')]);
+          texteMorceau = P.prompt + require('./premiere_image').phraseVideo(images.length, s.i === 0);
+        }
+        r = await kling.lanceEdition(Object.assign({ videoUrl: deps.urlPublique(s.fichier), images, prompt: texteMorceau, resolution: P.resolution,
+                                       audio: 'original', dureeS: s.duree, externe: s.externe }, P.element ? { element: P.element } : {}));
       }
-      r = await kling.lanceEdition(Object.assign({ videoUrl: deps.urlPublique(s.fichier), images, prompt: texteMorceau, resolution: P.resolution,
-                                     audio: 'original', dureeS: s.duree, externe: s.externe }, P.element ? { element: P.element } : {}));
     } catch (e) { r = { ok: false, code: 502, raison: 'Kling refused: ' + (e && e.message) }; }
     EN_VOL.delete(s.externe);
     if (r && r.ok) {
@@ -584,7 +671,7 @@ function cree(deps) {
       P.depenseMaxUsd = arrondi3(P.depenseMaxUsd + (r.estimationUsd || 0));
       ecrit(P);
       note({ id: r.id, entier: P.id, morceau: s.i, edition: true, modele: r.modele, dureeS: r.dureeS, resolution: r.resolution, audio: r.audio,
-             images: (r.images || []).length, ...(r.element ? { element: r.element } : {}), estimationUsd: r.estimationUsd, essai: s.essais });
+             images: (r.images || []).length, ...(r.element ? { element: r.element } : {}), ...(r.anime ? { anime: true, duree: r.duree, chaine: s.i > 0 } : {}), estimationUsd: r.estimationUsd, essai: s.essais });
       return;
     }
     const code = r && r.klingCode != null ? Number(r.klingCode) : null;
@@ -603,12 +690,17 @@ function cree(deps) {
     note({ entier: P.id, morceau: s.i, statut: 'refuse', message: s.message, code });
   }
 
+  /* « Animate my still » : un morceau part quand le precedent a son resultat (sa derniere
+     image est la premiere du suivant), donc un seul a la fois. */
+  const pretAPartir = (P, x) => P.mode !== 'anime' || x.i === 0 || !!(P.segments[x.i - 1] && P.segments[x.i - 1].statut === 'reussi' && P.segments[x.i - 1].resultat);
+  const bloque = (P, x) => P.mode === 'anime' && x.statut === 'attente' && P.segments.some((y) => y.i < x.i && y.statut === 'echec');
   async function pompe(P) {
     if (P.statut !== 'en_cours') return;
+    const par = P.mode === 'anime' ? 1 : PAR;
     for (;;) {
       const enVol = P.segments.filter((s) => s.statut === 'envoi' || s.statut === 'soumis').length;
-      if (enVol >= PAR) break;
-      const s = P.segments.find((x) => x.statut === 'attente' && !(x.reessaiA > temps()));
+      if (enVol >= par) break;
+      const s = P.segments.find((x) => x.statut === 'attente' && !(x.reessaiA > temps()) && pretAPartir(P, x));
       if (!s) break;
       await envoie(P, s);
     }
@@ -618,7 +710,7 @@ function cree(deps) {
   /** Tout est conclu ? assemble si tout a reussi, sinon attend le clic de relance. */
   function bilan(P) {
     if (P.statut !== 'en_cours' && P.statut !== 'incomplet') return;
-    const ouverts = P.segments.filter((s) => ['attente', 'envoi', 'soumis', 'telechargement'].includes(s.statut)).length;
+    const ouverts = P.segments.filter((s) => ['attente', 'envoi', 'soumis', 'telechargement'].includes(s.statut) && !bloque(P, s)).length;
     if (ouverts) { if (P.statut !== 'en_cours') { P.statut = 'en_cours'; ecrit(P); } return; }
     if (P.segments.every((s) => s.statut === 'reussi' || (PUB && s.statut === 'origine'))) { P.statut = 'assemblage'; ecrit(P); P.travail = assemble(P); return; }
     if (PUB) {
@@ -632,7 +724,13 @@ function cree(deps) {
       }
       return;
     }
-    if (P.statut !== 'incomplet') { P.statut = 'incomplet'; P.message = 'some parts failed — retry them one by one'; ecrit(P); }
+    if (P.statut !== 'incomplet') {
+      const k = P.segments.find((s) => s.statut === 'echec');
+      P.statut = 'incomplet';
+      P.message = P.mode === 'anime' && k && P.segments.length > 1 ? 'part ' + (k.i + 1) + ' failed — retry it; the parts after it wait for it (each one starts from the last frame of the part before)'
+        : 'some parts failed — retry them one by one';
+      ecrit(P);
+    }
   }
 
   /** Un morceau rate peut-il repartir ? Retelecharger (deja paye chez Kling) : toujours ;
@@ -921,6 +1019,12 @@ function cree(deps) {
              prixPire: P.prixPlan, element: P.element ? true : false, premiere: P.premiere ? true : false, plafondUsd: PLAFOND, parallele: PAR, resolution: P.resolution, prixConfirme: P.prixConfirme || null, depenseMaxUsd: P.depenseMaxUsd,
              video: P.statut === 'fini' && P.final ? (PUB ? PUB.urlVideo(P.id) : '/studio/kling/entier/' + P.id + '/video') : null, dureeFinale: P.dureeFinale || null,
              expire: P.statut === 'fini' ? Number(P.t) + GARDE_MS : null };
+    if (P.mode === 'anime') {
+      /* « Animate my still » : un morceau a la fois, et le temps reel de chacun (l'estimation de la page) */
+      v.parallele = 1;
+      v.anime = { clip: !!P.clip, sequentiel: true, still: P.anime ? { largeur: P.anime.largeur, hauteur: P.anime.hauteur } : null };
+      P.segments.forEach((s, k) => { segs[k].secondes = s.t0 && s.t1 ? Math.round((s.t1 - s.t0) / 1000) : null; segs[k].bloque = bloque(P, s); });
+    }
     if (!PUB) return v;
     /* public : le prix du joueur et son paiement ; jamais les couts Kling de la maison */
     for (const m of segs) { delete m.estimationUsd; delete m.facturation; m.relanceGratuite = m.rejouable && !(P.segments[m.i].url && !P.segments[m.i].resultat); }
@@ -979,9 +1083,17 @@ function cree(deps) {
         passesMax: PUB.passesMax, enFile: fileDAttente().length, occupees: occupees(), ouvertAujourdhui: lisJour().usd < PUB.plafondJourUsd,
         relancesGratuites: PUB.relancesGratuites, gardeH: GARDE_MS / 3600e3, droitsTexte: PUB.droitsTexte, passe: mienne ? mienne.id : null }, PUB.catalogue());
     }
+    /* `passe` : la derniere passe d'edition ; `passeAnime` : la derniere « Animate my still » */
+    const derniere = (anime) => [...PASSES.values()].filter((P) => P.addr === addr && (P.mode === 'anime') === anime).sort((a, b) => b.t - a.t)[0];
+    const edit = derniere(false), an = derniere(true);
+    let el = null;
+    try { el = deps.element ? deps.element() : null; } catch (e) { el = null; }
     return { modele: K.EDITION_MODELE, prixParSeconde: K.EDITION_PRIX, dureeMinS: DECOUPE.min, dureeMaxS: DECOUPE.max, cibleS: DECOUPE.cible,
              dureeEntierMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, imagesMax: K.EDITION_IMAGES_MAX, imageOctetsMax: 6 * 1024 * 1024,
-             plafondUsd: PLAFOND, parallele: PAR, gardeH: GARDE_MS / 3600e3, passe: mienne ? mienne.id : null };
+             plafondUsd: PLAFOND, parallele: PAR, gardeH: GARDE_MS / 3600e3, passe: edit ? edit.id : null,
+             passeAnime: an ? an.id : null, passeAnimeClip: an ? !!an.clip : null,
+             anime: { stillOctetsMax: 6 * 1024 * 1024, clipMaxS: DECOUPE.max, audio: K.ANIME_AUDIO, noteMax: ST.NOTE_ANIME_MAX, swoge: el ? 'element' : 'images',
+                      texte: ST.texteAnime(el ? 'element' : 'images', '') } };
   }
 
   function demarre() {

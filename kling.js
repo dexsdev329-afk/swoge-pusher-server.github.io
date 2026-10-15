@@ -108,6 +108,45 @@
  *   prix    (pricing/base/image.md) « Kling Image O1, 1K/2K : 8 Units ($0.028) / image ».
  *   AMBIGU : la note du champ dit <<<image_1>>>, un exemple ecrit <<element_1>>
  *   (deux chevrons) : on suit la note du champ.
+ *
+ * ---- ANIMER UNE IMAGE FIXE, KLING O1 + feature_video (relu le 15/10/2026) ----
+ *   Pourquoi : l'edition (base_video) a rate 4 fois le 15/10/2026 (mauvaise
+ *   personne, corps humain, mauvaise tete ; EXPLOITATION.md). Le proprietaire a
+ *   fait l'image 0 de son clip AVEC SWOGE deja en place (ChatGPT) : on anime
+ *   cette image d'apres le mouvement du clip.
+ *   Doc : video-omni.md, lignes citees mot pour mot :
+ *     contents[].type  « feature_video: feature reference video input identifier »
+ *     video            « When using a video as a feature reference video: Only
+ *                      supports defining the first frame of the video, not the
+ *                      last frame. » ; « Add at most one reference video. » ;
+ *                      3 a 10 s, 700 a 2160 px, 24 a 60 i/s, <= 200 Mo, URL seulement.
+ *     images           « With a reference video + multi-image elements: the total
+ *                      number of reference images and multi-image elements must
+ *                      not exceed 4. » — la premiere image est COMPTEE dans les 4
+ *                      (lecture prudente : c'est une image).
+ *     exemple          « First_frame & multi-image_elements & feature_video » :
+ *                      contents [prompt, element element_1, first_frame image_1,
+ *                      feature_video video_1], settings { resolution: '1080p',
+ *                      aspect_ratio: '16:9', audio: 'off' } — sans `duration`.
+ *   Les champs, un par un :
+ *     aspect_ratio  « When there is no first frame and reference video, the
+ *                   current parameter is required » : nous avons les deux, il
+ *                   n'est PAS envoye (l'enum n'a que 16:9, 9:16, 1:1 ; un clip de
+ *                   telephone 720×1280 serait mal decrit par un choix force).
+ *     duration      enum 3..10, defaut 5 ; la seule regle ecrite vise « the first
+ *                   frame … without any other reference images or videos » (5 ou
+ *                   10 s seulement), pas notre cas. AMBIGU : l'exemple feature_video
+ *                   ne l'envoie pas. Sans lui, le defaut (5 s) couperait un morceau
+ *                   de 9,5 s ; on ENVOIE la seconde entamee du morceau (3 a 10).
+ *                   Si Kling la refuse, le premier clic montre son message exact.
+ *     audio         « original: The generated video retains the original sound of
+ *                   the reference video » — rien ne dit si un feature_video compte ;
+ *                   l'exemple envoie 'off'. On envoie 'off' et le son d'ORIGINE est
+ *                   remis par ffmpeg (kling_entier.js), a la longueur exacte du clip.
+ *   prix    pricing/base/video.md (relu le 15/10/2026) : « Kling O1 | Per second |
+ *           With Video Input | 0.9 Units ($0.126) /s | 1.2 Units ($0.168) /s ».
+ *           La page ne distingue pas feature_video de base_video : meme grille,
+ *           estimee sur `duration` envoyee (la seconde entamee).
  * ======================================================================== */
 const crypto = require('crypto');
 
@@ -137,6 +176,18 @@ const ELEMENT_IMAGE_MAX_OCTETS = 10 * 1024 * 1024;
 const ELEMENT_AUTRES = { min: 1, max: 3 };
 const ELEMENT_NOM_MAX = 20, ELEMENT_DESCRIPTION_MAX = 100;
 const IMAGE_O1_MODELE = 'kling-image-o1';
+/* Animer une image fixe (feature_video, video-omni.md relu le 15/10/2026) : la premiere
+   image compte parmi les 4 ; 'off' comme l'exemple de la doc, le son d'origine est remis
+   par ffmpeg ensuite. */
+const ANIME_IMAGES_MAX = EDITION_IMAGES_MAX;
+const ANIME_AUDIO = 'off';
+
+/** La `duration` envoyee pour un morceau de `dureeS` s : la seconde entamee, 3 a 10, ou null. */
+function dureeAnime(dureeS) {
+  const d = Number(dureeS);
+  if (!(d >= EDITION_DUREE.min && d <= EDITION_DUREE.max)) return null;
+  return Math.min(EDITION_DUREE.max, Math.max(EDITION_DUREE.min, Math.ceil(d - 1e-9)));
+}
 
 /** Le prix estime d'une edition : la seconde entamee compte (le pire cas), ou null. */
 function prixEdition(resolution, dureeS) {
@@ -354,6 +405,60 @@ function cree(deps) {
     } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code, http: e.statut || null }; }
   }
 
+  /**
+   * ANIMER UNE IMAGE FIXE (15/10/2026) : `premiere` (l'image fixe du proprietaire, ou la
+   * derniere image du morceau precedent) en first_frame image_1, le clip en feature_video
+   * video_1 (URL publique SEULEMENT), plus l'element SWOGE (element_1) ou des refer_image
+   * image_2.. ; « images + elements <= 4 », la premiere image comptee.
+   * q : { videoUrl, premiere, images[], element, prompt, resolution, dureeS, externe? }.
+   * Le texte doit citer @image_1 et @video_1 (et @element_1 s'il part). Tout refus est rendu
+   * AVANT le moindre envoi ; un refus de Kling rend son message EXACT, avec son code.
+   */
+  async function lanceAnime(q) {
+    q = q || {};
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    const texte = String(q.prompt || '').trim();
+    if (!texte) return { ok: false, code: 400, raison: 'the text is empty' };
+    if (texte.length > TEXTE_MAX) return { ok: false, code: 400, raison: 'prompt too long (' + TEXTE_MAX + ' characters at most)' };
+    if (texte.indexOf('@image_1') < 0 || texte.indexOf('@video_1') < 0) return { ok: false, code: 400, raison: 'the text must name the still as @image_1 and the clip as @video_1' };
+    const videoUrl = String(q.videoUrl || '');
+    if (!/^https?:\/\/[^\s]+$/i.test(videoUrl)) return { ok: false, code: 400, raison: 'the clip must be reachable at a public URL' };
+    const resolution = q.resolution === '1080p' ? '1080p' : '720p';
+    const dureeS = Number(q.dureeS);
+    const duree = dureeAnime(dureeS);
+    if (duree === null) return { ok: false, code: 400, raison: 'the clip must last ' + EDITION_DUREE.min + ' to ' + EDITION_DUREE.max + ' s (Kling limit)' };
+    const estimationUsd = Math.round(EDITION_PRIX[resolution] * duree * 1000) / 1000;
+    const element = q.element == null || q.element === '' ? null : String(q.element);
+    if (element !== null && !/^[0-9A-Za-z_-]{1,40}$/.test(element)) return { ok: false, code: 400, raison: 'unknown Kling element id' };
+    if (element && texte.indexOf('@' + ELEMENT_JETON) < 0) return { ok: false, code: 400, raison: 'the text must name the element as @' + ELEMENT_JETON };
+    const f = referenceEdition(q.premiere);
+    if (!f.ok) return { ok: false, code: 400, raison: 'still: ' + f.raison };
+    const brutes = Array.isArray(q.images) ? q.images : [];
+    if (1 + brutes.length + (element ? 1 : 0) > ANIME_IMAGES_MAX) return { ok: false, code: 400, raison: ANIME_IMAGES_MAX + ' pictures and elements at most with a video, the still included (Kling limit)' };
+    const refs = [];
+    for (let i = 0; i < brutes.length; i++) {
+      const r = referenceEdition(brutes[i]);
+      if (!r.ok) return { ok: false, code: 400, raison: 'picture ' + (i + 2) + ': ' + r.raison };
+      refs.push(r);
+    }
+    const externe = /^[0-9a-f]{24}$/.test(String(q.externe || '')) ? String(q.externe) : crypto.randomBytes(12).toString('hex');
+    const contents = [{ type: 'prompt', text: texte }].concat(element ? [{ type: 'element', element_id: element, id: ELEMENT_JETON }] : [],
+      [{ type: 'first_frame', url: f.image, id: 'image_1' }],
+      refs.map((r, i) => ({ type: 'refer_image', url: r.image, id: 'image_' + (i + 2) })),
+      [{ type: 'feature_video', url: videoUrl, id: 'video_1' }]);
+    const settings = { resolution, duration: duree, audio: ANIME_AUDIO };
+    try {
+      const d = await appel('/omni-video/' + EDITION_MODELE, { method: 'POST', body: JSON.stringify({ contents, settings, options: { external_task_id: externe } }) });
+      if (!d || !d.id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
+      return { ok: true, id: String(d.id), externe, statut: d.status || 'submitted', modele: EDITION_MODELE, anime: true, resolution, audio: ANIME_AUDIO, duree,
+               dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, premiere: f.source, images: refs.map((r) => r.source), element };
+    } catch (e) {
+      /* le message de Kling tel quel, avec son code : c'est ce que le premier clic doit montrer */
+      const qui = [e.code != null ? 'code ' + e.code : null, e.statut ? 'HTTP ' + e.statut : null].filter(Boolean).join(', ');
+      return { ok: false, code: 502, raison: 'Kling refused' + (qui ? ' (' + qui + ')' : '') + ': ' + e.message, klingCode: e.code == null ? null : e.code, http: e.statut || null };
+    }
+  }
+
   /* ---- L'IMAGE ----
    * `image` (une URL https ou du base64 sans prefixe) sert de reference ; si
    * Kling refuse `image_reference` sur ce modele, on redemande SANS ce champ
@@ -513,7 +618,7 @@ function cree(deps) {
     } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code }; }
   }
 
-  return { actif, lance, etat, etatExterne, lanceEdition, lanceImage, etatImage, image, video,
+  return { actif, lance, etat, etatExterne, lanceEdition, lanceAnime, lanceImage, etatImage, image, video,
            lanceImageOmni, etatImageOmni, creeElement, etatElement, supprimeElement };
 }
 
@@ -536,5 +641,5 @@ function referenceElement(octets) {
   return { ok: true, base64: octets.toString('base64'), format: dim.format, largeur: dim.largeur, hauteur: dim.hauteur };
 }
 
-module.exports = { cree, prixUsd, prixEdition, dimensionsImage, referenceEdition, referenceElement, EDITION_IMAGES_MAX, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
+module.exports = { cree, prixUsd, prixEdition, dureeAnime, ANIME_IMAGES_MAX, ANIME_AUDIO, dimensionsImage, referenceEdition, referenceElement, EDITION_IMAGES_MAX, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
   EDITION_MODELE, EDITION_PRIX, EDITION_DUREE, EDITION_COTE, ELEMENT_JETON, ELEMENT_IMAGE_MAX_OCTETS, ELEMENT_AUTRES, ELEMENT_NOM_MAX, ELEMENT_DESCRIPTION_MAX, IMAGE_O1_MODELE };
