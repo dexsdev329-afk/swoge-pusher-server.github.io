@@ -53,8 +53,10 @@
  * ---- LE MEME MOTEUR, DEUX PAYEURS (14 octobre 2026) ----
  *   Le proprietaire (routes /studio/kling/entier*) : ses references, son texte,
  *   son compte Kling, aucun debit. Le service PUBLIC « SWOGE Swap » (swap.js,
- *   routes /studio/swap*) passe `deps.public` : n'importe quelle session, des
- *   personnages MAISON seulement (aucune image ni aucun texte du joueur), le
+ *   routes /studio/swap*) passe `deps.public` : n'importe quelle session, un
+ *   personnage MAISON ou (15/10) 1-2 images du joueur ACCEPTEES par la porte
+ *   swap_garde.js, un texte libre cite dans le gabarit de la maison, 720p ou
+ *   1080p, la marque « Made with SWOGE AI » incrustee au recollage ; le
  *   prix montre = pire cas Kling × marge, reserve DURABLE sur le credit en
  *   dollars au lancement, reglee a la fin sur les morceaux LIVRES ; une file
  *   globale (passes en cours en meme temps), un plafond de depense par jour,
@@ -386,8 +388,11 @@ function cree(deps) {
     P.segments = segs;
     P.scenes = sc.length;
     P.prixPlan = { '720p': prixPire(segs.map((x) => x.duree), '720p'), '1080p': prixPire(segs.map((x) => x.duree), '1080p') };
-    /* public : le prix montre au joueur, 720p seulement */
-    if (PUB) P.prixClient = P.prixPlan['720p'] != null ? PUB.prixClient(P.prixPlan['720p']) : null;
+    /* public : le prix montre au joueur, par resolution (720p par defaut ; 1080p depuis le 15/10) */
+    if (PUB) {
+      P.prixClient = P.prixPlan['720p'] != null ? PUB.prixClient(P.prixPlan['720p']) : null;
+      P.prixClients = { '720p': P.prixClient, '1080p': P.prixPlan['1080p'] != null ? PUB.prixClient(P.prixPlan['1080p']) : null };
+    }
     P.statut = 'pret';
     ecrit(P);
     note(Object.assign({ entier: P.id, plan: true, dureeS: P.source.duree, morceaux: segs.length, scenes: sc.length, durees: segs.map((x) => x.duree), fps: F, prixPire: P.prixPlan },
@@ -430,18 +435,28 @@ function cree(deps) {
     if (liste.some((x) => x == null)) return { ok: false, code: 400, raison: 'unknown default picture' };
     return { ok: true, liste, texte, resolution: q.resolution === '1080p' ? '1080p' : '720p' };
   }
-  /* Le choix d'un joueur : un personnage MAISON et qui remplacer, rien d'autre. Une image ou un
-     texte envoyes quand meme sont REFUSES (pas ignores) : l'outil ne doit jamais pouvoir mettre
-     le visage de n'importe qui dans une video. 720p seulement. */
+  /* Le choix d'un joueur (15/10/2026) : un personnage MAISON ou 1-2 images DEJA ACCEPTEES par la
+     porte (swap_garde.js, par leur sha256), qui remplacer, un texte libre CITE dans le gabarit de
+     la maison, 720p ou 1080p. Une image qui n'est pas l'identifiant d'une image acceptee (URL,
+     data-URL, sha inconnu, refuse ou efface) est REFUSEE, pas ignoree : rien de ce que la page
+     envoie ne va chez Kling sans etre passe par la porte. */
   function choixPublic(q) {
-    const images = q.images, texte = q.prompt;
-    if ((Array.isArray(images) ? images.some((x) => x != null && x !== '') : images != null && images !== '') || (texte != null && String(texte).trim() !== '')) {
-      return { ok: false, code: 400, raison: 'custom pictures and prompts are not accepted — pick one of our characters and who to replace' };
+    const brutes = q.images == null || q.images === '' ? [] : (Array.isArray(q.images) ? q.images : [q.images]).filter((x) => x != null && x !== '');
+    if (brutes.length > PUB.imagesMax) return { ok: false, code: 400, raison: PUB.imagesMax + ' character pictures at most' };
+    const imgs = [];
+    for (let i = 0; i < brutes.length; i++) {
+      const im = typeof brutes[i] === 'string' ? PUB.imageVerifiee(brutes[i]) : null;
+      if (!im) return { ok: false, code: 400, raison: 'picture ' + (i + 1) + ' was not checked by SWOGE Swap — links and raw pictures are not accepted: upload it under "Your character" first' };
+      imgs.push(im);
     }
-    if (q.resolution != null && q.resolution !== '720p') return { ok: false, code: 400, raison: 'SWOGE Swap renders in 720p only' };
-    const c = PUB.choisit(q.personnage, q.cible);
+    const t = PUB.texteJoueur(q.prompt);
+    if (!t.ok) return { ok: false, code: 400, raison: t.raison };
+    const resolution = q.resolution == null || q.resolution === '' ? '720p' : String(q.resolution);
+    if (!PUB.resolutions.includes(resolution)) return { ok: false, code: 400, raison: 'pick ' + PUB.resolutions.join(' or ') };
+    const c = PUB.choisit(q.personnage, q.cible, { images: imgs.length, texte: t.texte });
     if (!c || !c.ok) return { ok: false, code: 400, raison: (c && c.raison) || 'pick a character and who to replace' };
-    return { ok: true, liste: c.images.slice(), texte: c.prompt, resolution: '720p', choix: { personnage: c.personnage, cible: c.cible } };
+    return { ok: true, liste: imgs.length ? imgs.map((x) => x.base64) : c.images.slice(), texte: c.prompt, resolution,
+             choix: { personnage: c.personnage, cible: c.cible, resolution, imagesJoueur: imgs.length, texteJoueur: t.texte.length } };
   }
 
   /* Les passes qui occupent Kling (public : la file attend qu'une place se libere). */
@@ -493,7 +508,8 @@ function cree(deps) {
       P.choix = c.choix;
       P.jour = jourDe(temps()); P.engageJourUsd = prix;
       ajouteJour(prix);
-      note({ entier: P.id, paiement: 'reserve', prixUsd: aPayer, prixKlingUsd: prix, personnage: c.choix.personnage, cible: c.choix.cible });
+      note({ entier: P.id, paiement: 'reserve', prixUsd: aPayer, prixKlingUsd: prix, personnage: c.choix.personnage, cible: c.choix.cible,
+             resolution, imagesJoueur: c.choix.imagesJoueur, texteJoueur: c.choix.texteJoueur });
     }
     /* les images fournies vont sur le disque (l'etat reste petit) */
     P.images = refs.map((r, i) => {
@@ -788,11 +804,20 @@ function cree(deps) {
         else args.push('-i', fic(P, s.resultat));
       }
       args.push('-i', orig);
+      /* public : la marque « Made with SWOGE AI » (PNG du depot), entree apres la source */
+      const marque = PUB && PUB.marque ? PUB.marque : null;
+      if (marque) args.push('-i', marque);
       /* chaque resultat ramene a la longueur EXACTE de son morceau source :
          prolonge (derniere image tenue) puis coupe ; meme taille, meme i/s */
       const f = segs.map((s, k) => '[' + k + ':v]fps=' + F + ',scale=' + W + ':' + H + ':force_original_aspect_ratio=decrease,pad=' + W + ':' + H + ':(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p,'
         + 'tpad=stop_mode=clone:stop_duration=' + (s.dureePlan + 1).toFixed(3) + ',trim=duration=' + s.dureePlan.toFixed(3) + ',setpts=PTS-STARTPTS[v' + k + ']');
-      const filtre = f.join(';') + ';' + segs.map((s, k) => '[v' + k + ']').join('') + 'concat=n=' + segs.length + ':v=1:a=0[v]';
+      let filtre = f.join(';') + ';' + segs.map((s, k) => '[v' + k + ']').join('') + 'concat=n=' + segs.length + ':v=1:a=0' + (marque ? '[vc]' : '[v]');
+      if (marque) {
+        /* en bas a droite : 30 % du petit cote de large, 3 % de marge, opacite 0,6 ; une image
+           fixe, repetee jusqu'a la fin par overlay (eof_action=repeat par defaut) */
+        const petit = Math.min(W, H), lm = 2 * Math.round(petit * 0.3 / 2), mg = Math.max(8, Math.round(petit * 0.03));
+        filtre += ';[' + (segs.length + 1) + ':v]format=rgba,scale=' + lm + ':-2,colorchannelmixer=aa=0.6[wm];[vc][wm]overlay=W-w-' + mg + ':H-h-' + mg + ':format=auto,format=yuv420p[v]';
+      }
       const D = P.source.duree;
       const nomFinal = (PUB ? 'swap_' : 'swoge_') + P.id + '.final.mp4';
       args.push('-filter_complex', filtre, '-map', '[v]');
@@ -808,8 +833,8 @@ function cree(deps) {
       nettoie(P); ecrit(P);
       regle(P);
       const factures = segs.map((s) => s.facturation).filter(Boolean);
-      note({ entier: P.id, statut: 'fini', morceaux: segs.length, dureeS: D, dureeFinaleS: P.dureeFinale, son: P.source.son, estimationUsd: P.depenseMaxUsd, facturations: factures.length,
-             secondes: Math.round((temps() - (P.tLance || P.t)) / 100) / 10 });
+      note(Object.assign({ entier: P.id, statut: 'fini', morceaux: segs.length, dureeS: D, dureeFinaleS: P.dureeFinale, son: P.source.son, estimationUsd: P.depenseMaxUsd, facturations: factures.length,
+             secondes: Math.round((temps() - (P.tLance || P.t)) / 100) / 10 }, marque ? { marque: true } : {}));
     } catch (e) {
       efface(P, (PUB ? 'swap_' : 'swoge_') + P.id + '.final.mp4.part');
       P.statut = 'incomplet'; P.message = 'gluing failed: ' + propre(e.err || e.message);
@@ -868,7 +893,8 @@ function cree(deps) {
     /* public : le prix du joueur et son paiement ; jamais les couts Kling de la maison */
     for (const m of segs) { delete m.estimationUsd; delete m.facturation; m.relanceGratuite = m.rejouable && !(P.segments[m.i].url && !P.segments[m.i].resultat); }
     const file = P.statut === 'file' ? fileDAttente().findIndex((x) => x.id === P.id) + 1 : null;
-    return Object.assign(v, { prixPire: null, plafondUsd: undefined, depenseMaxUsd: undefined, prixUsd: P.prixClient != null ? P.prixClient : null, choix: P.choix || null,
+    return Object.assign(v, { prixPire: null, plafondUsd: undefined, depenseMaxUsd: undefined, prixUsd: P.prixClient != null ? P.prixClient : null,
+      prixUsdParResolution: P.prixClients || (P.prixClient != null ? { '720p': P.prixClient } : null), choix: P.choix || null,
       droits: !!(P.droits && P.droits.accepte), file, paiement: P.paiement ? { reserveUsd: P.paiement.usd, factureUsd: P.paiement.regle ? P.paiement.regle.usd : null,
         renduUsd: P.paiement.regle ? P.paiement.regle.renduUsd : null } : null });
   }
@@ -905,8 +931,9 @@ function cree(deps) {
     const mienne = [...PASSES.values()].filter((P) => P.addr === addr).sort((a, b) => b.t - a.t)[0];
     if (PUB) {
       /* public : ce qu'il faut pour choisir et estimer AVANT de televerser ; aucun cout maison */
-      return Object.assign({ actif: kling.actif(), dureeMinS: DECOUPE.min, dureeMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, resolution: '720p',
-        prixParSecondeUsd: Math.ceil(K.EDITION_PRIX['720p'] * PUB.marge * 1e4 - 1e-9) / 1e4, partMaxS: DECOUPE.cible,
+      const parSec = (r) => Math.ceil(K.EDITION_PRIX[r] * PUB.marge * 1e4 - 1e-9) / 1e4;
+      return Object.assign({ actif: kling.actif(), dureeMinS: DECOUPE.min, dureeMaxS: DUREE_MAX, octetsMax: OCTETS_MAX, resolution: '720p', resolutions: PUB.resolutions.slice(),
+        prixParSecondeUsd: parSec('720p'), prixParSecondeUsdParResolution: Object.fromEntries(PUB.resolutions.map((r) => [r, parSec(r)])), partMaxS: DECOUPE.cible,
         passesMax: PUB.passesMax, enFile: fileDAttente().length, occupees: occupees(), ouvertAujourdhui: lisJour().usd < PUB.plafondJourUsd,
         relancesGratuites: PUB.relancesGratuites, gardeH: GARDE_MS / 3600e3, droitsTexte: PUB.droitsTexte, passe: mienne ? mienne.id : null }, PUB.catalogue());
     }

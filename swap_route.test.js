@@ -9,7 +9,8 @@
  *      de 60 Mo annonces : 413.
  *   2. Un joueur QUELCONQUE (pas AI_OWNER) televerse et recoit son plan et son
  *      prix (pire cas × 2) avant de payer ; l'etat est 404 pour un autre.
- *   3. Une image ou un texte envoyes : 400, rien chez Kling ; credit trop bas :
+ *   3. Une image qui n'est pas passee par la porte (une URL) ou un texte de plus
+ *      de 600 signes : 400, rien chez Kling ; credit trop bas :
  *      402, rien debite ; le bon prix : reserve sur le credit (GET /credit le
  *      montre), Kling recoit les morceaux par leur URL publique, le corps et le
  *      visage de SWOGE, le texte de la maison, 720p, son d'origine.
@@ -19,6 +20,10 @@
  *      un autre) ; le reglement rend le credit juste ; la file avance.
  *   6. La route du proprietaire reste fermee aux autres (403) ; le journal garde
  *      plan, reserve, morceaux et reglement ; la cle Kling ne sort jamais.
+ *   7. POST /studio/swap/image (15/10) : sans session 401 ; plus de 6 Mo annonces
+ *      413 avant de lire ; un GIF 400 sans appel ; une personne reelle 422 avec la
+ *      phrase exacte ; un dessin 200 (son sha256) ; le journal garde le verdict ;
+ *      la cle Anthropic ne sort jamais.
  * Kling et son CDN sont simules en remplacant `fetch` pour leurs seuls
  * domaines : aucun appel reel. ffmpeg est le vrai.
  * ==========================================================================*/
@@ -39,6 +44,7 @@ process.env.AI_COLONIE = '0'; process.env.PERP_COLONIES = '0'; process.env.PERP_
 process.env.ODDS_API_KEY = ''; process.env.MONITEUR_URL = '';
 process.env.TG_APPELS = '0'; process.env.TG_DECOUVERTE = '0';
 process.env.KLING_API_KEY = 'cle-kling-secrete';
+process.env.ANTHROPIC_API_KEY = 'cle-anthropic-secrete';
 process.env.KLING_TG = '0';
 process.env.SITE_URL = 'https://site.example';
 process.env.SWAP_PARALLELE = '1';
@@ -89,6 +95,16 @@ globalThis.fetch = async (u, o) => {
   const id = 'E' + (Object.keys(taches).length + 1);
   taches[id] = { octets, duree: 7, statut: 'processing' };
   return rep({ code: 0, data: { id, status: 'submitted' } });
+};
+/* Claude simule : seul le classifieur de la porte recoit un verdict ; tout autre appel est en panne */
+const classifieur = { appels: 0, verdict: { real_person: false, kind: 'cartoon', confidence: 0.9 } };
+const vraiFetch2 = globalThis.fetch;
+globalThis.fetch = async (u, o) => {
+  if (!String(u).startsWith('https://api.anthropic.com/')) return vraiFetch2(u, o);
+  let b = {}; try { b = JSON.parse(o.body); } catch (e) { b = {}; }
+  if (!(b.tools || []).some((t) => t.name === 'classify_image')) return new Response('{"type":"error"}', { status: 500 });
+  classifieur.appels++;
+  return new Response(JSON.stringify({ stop_reason: 'tool_use', usage: { input_tokens: 1500, output_tokens: 60 }, content: [{ type: 'tool_use', id: 'x', name: 'classify_image', input: classifieur.verdict }] }), { status: 200 });
 };
 const finit = () => { for (const t of Object.values(taches)) if (t.statut === 'processing') t.statut = 'succeeded'; };
 
@@ -167,8 +183,8 @@ const suspendue = (port, chemin, entetes, octets) => new Promise((res) => {
   console.log('\n-- 3. seulement nos personnages ; le credit --');
   const L = (id, H, q) => appel('/studio/swap/' + id + '/lance', H, Object.assign({ personnage: 'swoge', cible: 'chante', confirmeUsd: 3.53 }, q || {}));
   const ri = await L(id1, j1.H, { images: ['https://evil.example/x.jpg'] });
-  const rp = await L(id1, j1.H, { prompt: 'Replace him with @image_1' });
-  ok(ri.statut === 400 && rp.statut === 400 && /not accepted/.test(ri.j.raison) && envoisKling().length === 0, 'une image ou un texte envoyes : 400, rien chez Kling');
+  const rp = await L(id1, j1.H, { prompt: 'x'.repeat(601) });
+  ok(ri.statut === 400 && rp.statut === 400 && /not accepted/.test(ri.j.raison) && /600 at most/.test(rp.j.raison) && envoisKling().length === 0, 'une image non verifiee (URL) ou un texte de 601 signes : 400, rien chez Kling');
   ok((await L(id1, j1.H, { confirmeUsd: 1.764 })).statut === 409 && (await L(id1, j2.H)).statut === 404, 'le prix Kling au lieu du prix montre : 409 ; un autre joueur : 404');
   const c3 = await appel('/studio/swap', HV(j3.H), null, 'POST', octets);
   await attendStatut(c3.j.id, j3.H, ['pret']);
@@ -222,6 +238,29 @@ const suspendue = (port, chemin, entetes, octets) => new Promise((res) => {
   let essais = []; try { essais = fs.readFileSync(path.join(process.env.DATA_DIR, 'kling_essais.jsonl'), 'utf8').trim().split('\n').filter(Boolean); } catch (x) { essais = []; }
   ok(!essais.some((l) => /"swap":true/.test(l)), 'le journal du proprietaire ne recoit pas les passes des joueurs');
   ok(textes.every((t) => !t.includes('cle-kling-secrete')), 'la cle Kling n apparait dans aucune reponse');
+
+  console.log('\n-- 7. la porte des images --');
+  const png = path.join(process.env.DATA_DIR, 'perso.png');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=512x512', '-frames:v', '1', png]);
+  const img = fs.readFileSync(png);
+  const HI = (H) => ({ 'content-type': 'image/png', authorization: H.authorization });
+  ok((await appel('/studio/swap/image', { 'content-type': 'image/png' }, null, 'POST', img)).statut === 401, 'sans session : 401');
+  const gros = await suspendue(port, '/studio/swap/image', Object.assign(HI(j4.H), { 'content-length': String(7 * 1048576) }), img);
+  ok(gros.statut === 413 && /6 MB max/.test(gros.corps) && classifieur.appels === 0, 'plus de 6 Mo annonces : 413 avant de lire');
+  const gif = await appel('/studio/swap/image', HI(j4.H), null, 'POST', Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(64)]));
+  ok(gif.statut === 400 && classifieur.appels === 0, 'un GIF : 400, aucun appel au classifieur');
+  classifieur.verdict = { real_person: true, kind: 'photo_of_real_human', confidence: 0.98 };
+  const reel = await appel('/studio/swap/image', HI(j4.H), null, 'POST', img);
+  ok(reel.statut === 422 && reel.j.raison === "This looks like a photo of a real person. SWOGE Swap only puts characters in videos — mascots, NFTs, pets, drawings, 3D or game characters — never a real person's face." && classifieur.appels === 1,
+     'une personne reelle : 422, la phrase exacte');
+  const png2 = path.join(process.env.DATA_DIR, 'perso2.png');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'rgbtestsrc=size=520x520', '-frames:v', '1', png2]);
+  classifieur.verdict = { real_person: false, kind: 'cartoon', confidence: 0.95 };
+  const bon = await appel('/studio/swap/image', HI(j4.H), null, 'POST', fs.readFileSync(png2));
+  ok(bon.statut === 200 && bon.j.accepte === true && /^[0-9a-f]{64}$/.test(bon.j.id) && classifieur.appels === 2, 'un dessin : 200, son sha256');
+  ok(journal().some((x) => x.garde && x.verdict === 'refuse' && x.kind === 'photo_of_real_human' && /^[0-9a-f]{64}$/.test(x.sha256)) && journal().some((x) => x.garde && x.verdict === 'accepte' && x.coutUsd > 0),
+     'swap_journal.jsonl : les deux verdicts (genre, sha256, cout)');
+  ok(textes.every((t) => !t.includes('cle-anthropic-secrete')), 'la cle Anthropic n apparait dans aucune reponse');
 
   [j1, j2, j3, j4, moi].forEach((x) => x.s.close());
   console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe'));

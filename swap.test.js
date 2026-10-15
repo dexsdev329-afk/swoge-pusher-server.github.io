@@ -8,8 +8,11 @@
  *   2. N'importe quelle adresse (pas seulement le proprietaire) televerse, avec la
  *      case cochee — sans elle, rien n'est lu ; au-dela de la taille ou de la
  *      duree : refuse.
- *   3. Seuls nos personnages : une image ou un texte envoyes quand meme sont
- *      REFUSES avant tout appel ; le texte de Kling est celui de la maison.
+ *   3. Rien de non verifie ne va chez Kling : une image qui n'est pas l'identifiant
+ *      d'une image ACCEPTEE par la porte (URL, data-URL, sha inconnu), un texte de
+ *      plus de 600 signes ou une resolution hors 720p/1080p sont REFUSES avant
+ *      tout appel ; sans image ni texte du joueur, le texte de Kling est celui de
+ *      la maison, mot pour mot (la porte et le texte libre : swap_libre.test.js).
  *   4. Le credit : reserve au lancement (durable), credit trop bas = 402 sans
  *      appel ni debit ; regle sur les morceaux livres ; un morceau rate a une
  *      relance gratuite, puis garde l'image d'origine et n'est pas facture ;
@@ -149,15 +152,17 @@ async function attend(M, id, addr, statuts, max) {
     ok(M1.etat(r.id, B).code === 404, 'l etat : 404 pour une autre adresse');
   }
 
-  console.log('\n-- 3. seulement nos personnages, le prix confirme, le credit --');
+  console.log('\n-- 3. rien de non verifie, le prix confirme, le credit --');
   {
     const id = P1.id;
     const base = { personnage: 'swoge', cible: 'chante', confirmeUsd: 3.53 };
     const r1 = await M1.lance(id, A, Object.assign({}, base, { images: ['https://evil.example/face.jpg'] }));
-    const r2 = await M1.lance(id, A, Object.assign({}, base, { prompt: 'Replace the man with @image_1' }));
+    const r2 = await M1.lance(id, A, Object.assign({}, base, { prompt: 'x'.repeat(601) }));
     const r3 = await M1.lance(id, A, Object.assign({}, base, { images: 'data:image/png;base64,AAAA' }));
-    const r4 = await M1.lance(id, A, Object.assign({}, base, { resolution: '1080p' }));
-    ok(r1.code === 400 && r2.code === 400 && r3.code === 400 && /not accepted/.test(r1.raison) && r4.code === 400, 'une image, un texte, une data-URL ou du 1080p envoyes quand meme : 400 [' + r1.raison + ']');
+    const r3b = await M1.lance(id, A, Object.assign({}, base, { images: ['a'.repeat(64)] }));
+    const r4 = await M1.lance(id, A, Object.assign({}, base, { resolution: '4k' }));
+    ok(r1.code === 400 && r2.code === 400 && r3.code === 400 && r3b.code === 400 && /not accepted/.test(r1.raison) && /600 at most/.test(r2.raison) && r4.code === 400,
+       'une URL, une data-URL ou un sha jamais accepte par la porte, un texte de 601 signes, une resolution « 4k » : 400 [' + r1.raison + ']');
     ok((await M1.lance(id, A, Object.assign({}, base, { personnage: 'elon' }))).code === 400 && (await M1.lance(id, A, Object.assign({}, base, { cible: 'le-voisin' }))).code === 400, 'un personnage ou une cible hors liste : 400');
     const r5 = await M1.lance(id, A, Object.assign({}, base, { confirmeUsd: 1.764 }));
     ok(r5.code === 409 && /\$3\.53/.test(r5.raison), 'le pire cas Kling au lieu du prix montre : 409 [' + r5.raison + ']');

@@ -2413,7 +2413,9 @@ klingEntier.demarre();
    personnages maison seulement, prix = pire cas Kling × SWAP_MARGE (2) au cent, paye au credit en
    dollars (reserve DURABLE au lancement, reglee sur les morceaux livres) ; SWAP_PARALLELE passes
    chez Kling a la fois (2, les autres en file), SWAP_PLAFOND_JOUR_USD (50 $) par jour UTC. Le
-   credit est lu au moment du geste (credits() se construit a la demande, plus bas). */
+   credit est lu au moment du geste (credits() se construit a la demande, plus bas).
+   15/10 : la porte des images du joueur (swap_garde.js, Claude, ANTHROPIC_API_KEY) vit dans
+   DATA_DIR/swap/garde et ecrit au meme journal (`garde: true`). */
 const swapMod = require('./swap');
 const SWAP_JOURNAL = require('path').join(cfg.DATA_DIR, 'swap_journal.jsonl');
 const swap = swapMod.cree({
@@ -6750,7 +6752,9 @@ const server = http.createServer(async (req, res) => {
    * le suivi), POST …/<id>/lance { personnage, cible, confirmeUsd } (images et prompt sont
    * transmis au moteur pour y etre REFUSES), …/<id>/reessaie/<n> (une fois, gratuit),
    * …/<id>/termine, …/<id>/abandonne, GET …/<id>/video (le resultat, avec la session qui l'a
-   * lance, jamais par une adresse publique). Chaque geste n'agit que pour l'adresse de la SESSION. */
+   * lance, jamais par une adresse publique). Chaque geste n'agit que pour l'adresse de la SESSION.
+   * Depuis le 15/10 : POST /studio/swap/image (la porte des images du joueur), et …/lance accepte
+   * { images: [sha256 d'images ACCEPTEES], prompt (600 signes, cite), resolution 720p|1080p }. */
   if (path === '/studio/swap' || path.startsWith('/studio/swap/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
                    'access-control-allow-headers': 'content-type, authorization, x-swap-rights' };
@@ -6768,6 +6772,21 @@ const server = http.createServer(async (req, res) => {
       try { r = await swap.cree(addr, req, req.headers['content-length'], { droits }); }
       catch (e) { console.error('[swap] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
       if (!r.ok) res.setHeader('connection', 'close');   /* le corps n'a peut-etre pas ete lu */
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
+    /* POST /studio/swap/image (15/10/2026) : UNE image du joueur, corps BRUT (image/jpeg|png|webp),
+       6 Mo au plus (refuse sur la taille annoncee avant de lire), jugee par la porte de swap_garde.js
+       AVANT tout paiement. Rend { ok, id (sha256), accepte } ou le refus a montrer tel quel. */
+    if (path === '/studio/swap/image') {
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      const max = require('./swap_garde').OCTETS_MAX;
+      if (Number(req.headers['content-length']) > max) { res.setHeader('connection', 'close'); return json(413, { ok: false, raison: 'the image is ' + (Number(req.headers['content-length']) / 1048576).toFixed(1) + ' MB — 6 MB max' }); }
+      let b;
+      try { b = await corps(req, max); }
+      catch (e) { res.setHeader('connection', 'close'); return json(413, { ok: false, raison: 'the image is larger than 6 MB' }); }
+      let r;
+      try { r = await swap.verifieImage(addr, b); }
+      catch (e) { console.error('[swap] image ' + (e && e.stack || e)); r = { ok: false, code: 503, raison: require('./swap_garde').MSG_ECHEC }; }
       return json(r.ok ? 200 : (r.code || 500), r);
     }
     const sm = /^\/studio\/swap\/([0-9a-f]{24})(?:\/(lance|reessaie|termine|abandonne|video)(?:\/(\d{1,3}))?)?$/.exec(path);
