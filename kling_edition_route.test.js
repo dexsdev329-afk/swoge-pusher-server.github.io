@@ -148,8 +148,8 @@ async function connecte(port, w) {
   ok(new RegExp('^' + B.replace(/\./g, '\\.') + '/studio/kling-clip/[0-9a-f]{48}\\.mp4$').test(bv.url) && bv.id === 'video_1', 'base_video : l URL publique du clip [' + bv.url + ']');
   ok(luParKling && luParKling.statut === 200 && luParKling.octets.equals(bon), 'cette URL sert exactement le clip envoye, sans session');
   const ris = b.contents.filter((c) => c.type === 'refer_image');
-  ok(ris.length === 2 && ri.url === 'https://site.example/img/site/swoge_swole_ref.jpg' && ri.id === 'image_1' && ris[1].url === 'https://site.example/img/site/swoge_face_ref.jpg' && ris[1].id === 'image_2',
-     'refer_image : le corps (Swole Doge, image_1) puis le visage officiel (image_2), par leurs URL');
+  ok(ris.length === 2 && ri.url === 'https://site.example/img/site/swoge_meme_ref.jpg' && ri.id === 'image_1' && ris[1].url === 'https://site.example/img/site/swoge_face_ref.jpg' && ris[1].id === 'image_2',
+     'refer_image : le corps (le meme Swole Doge, image_1) puis le visage (image_2), par leurs URL — aucun element tant qu il n existe pas');
   ok(b.settings.audio === 'original' && b.settings.resolution === '720p' && b.contents[0].text === prompt, 'son d origine, 720p, le texte tel quel');
   ok((await appel('/studio/kling/edition', moi.H, { video: dataUrl(bon), prompt })).statut === 429, 'une seconde edition pendant la premiere : 429');
   const j1 = journal();

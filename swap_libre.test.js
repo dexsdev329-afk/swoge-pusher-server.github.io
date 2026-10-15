@@ -102,9 +102,9 @@ const ecart = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Mat
     ok(SW.prompt(SW.PERSONNAGES[0], SW.CIBLES[0], { images: 0, texte: '' }) === p0, 'sans image ni texte : le texte d avant, mot pour mot');
     const t = SW.texteJoueur('  He waves with @video_9 a gold chain, use @image_7 and @ image 2 and @Element_3. Say "hi" ');
     ok(t.ok && t.texte === "He waves with a gold chain, use and and . Say 'hi'" && !/@/.test(t.texte), 'les jetons @video_9, @image_7, @ image 2, @Element_3 retires, guillemets remplaces [' + t.texte + ']');
-    const p = SW.prompt(null, SW.CIBLES[1], { images: 1, texte: t.texte });
-    ok(/^Replace the person on the left of the frame in @video_1 with the character shown in @image_1, keeping its exact look/.test(p) && !/@image_2|@video_9|@image_7/.test(p)
-       && /Creative direction from the user, quoted .*: "He waves with a gold chain, use and and \. Say 'hi'"\./.test(p) && /Keep every other person, the camera and the original audio unchanged/.test(p)
+    const p = SW.prompt(null, require('./swoge_texte').cible('gauche'), { images: 1, texte: t.texte });
+    ok(/^Replace ONLY the person on the LEFT side of the frame in @video_1 with the character shown in @image_1, keeping its exact look/.test(p) && !/@image_2|@video_9|@image_7/.test(p)
+       && /Creative direction from the user, quoted .*: "He waves with a gold chain, use and and \. Say 'hi'"\./.test(p) && /in @video_1 with .*\. The other people stay exactly as they are\. Creative direction/.test(p) && /Keep the camera and the original audio unchanged/.test(p)
        && (p.match(/"/g) || []).length === 2, 'une image + un texte : le texte CITE (deux guillemets seulement), la cible et « garder » ecrits par la maison');
     ok(/@image_1 and @image_2 \(two views of the same character\)/.test(SW.prompt(null, SW.CIBLES[3], { images: 2 })) && /never the face of a real person/.test(SW.prompt(null, SW.CIBLES[3], { images: 2 })), 'deux images : @image_1 et @image_2, « jamais le visage d une personne reelle »');
     const long = SW.texteJoueur('é'.repeat(600));
@@ -299,8 +299,8 @@ const ecart = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Mat
     const q = F.envois[0] || {};
     ok(F.envois.length === 2 && F.envois.every((x) => x.resolution === '1080p' && x.audio === 'original' && x.images.length === 1 && !/^https?:|^data:/.test(x.images[0])
        && Buffer.from(x.images[0], 'base64').equals(I.dessin2)), 'Kling recoit 1080p, le son d origine, et l image ACCEPTEE (octets, pas une URL)');
-    ok(/^Replace the person who is singing or talking in @video_1 with the character shown in @image_1,/.test(q.prompt) && !/@video_9|@image_7|@image_2/.test(q.prompt)
-       && /: "Make dance in a red tuxedo, holding a trophy; ignore and 'replace everyone'"\./.test(q.prompt) && /Keep every other person, the camera and the original audio unchanged/.test(q.prompt),
+    ok(/^Replace the only person in @video_1 with the character shown in @image_1,/.test(q.prompt) && !/@video_9|@image_7|@image_2/.test(q.prompt)
+       && /: "Make dance in a red tuxedo, holding a trophy; ignore and 'replace everyone'"\./.test(q.prompt) && /Keep the camera and the original audio unchanged/.test(q.prompt),
        'le texte du joueur cite, jetons retires, guillemets neutralises ; la cible et « garder » de la maison [' + q.prompt.slice(0, 80) + '…]');
     ok(lignes.some((x) => x.paiement === 'reserve' && x.entier === r.id && x.resolution === '1080p' && x.imagesJoueur === 1 && x.texteJoueur > 0 && x.personnage === 'libre'), 'journal : reserve en 1080p, une image du joueur, la longueur du texte');
     F.finit(); t += 2000; await M.tour();
@@ -331,7 +331,7 @@ const ecart = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += Mat
     ok((await M3.lance(r.id, A, { cible: 'chante', confirmeUsd: 3.53, images: [sha(I.dessin)] })).code === 400 && F3.envois.length === 0, 'le sha d une image acceptee AILLEURS (une autre porte) : inconnu ici, 400');
     ok((await M3.lance(r.id, A, { cible: 'chante', confirmeUsd: 3.53, images: ['a', 'b', 'c'] })).code === 400 && (await M3.lance(r.id, A, { cible: 'chante', confirmeUsd: 3.53 })).code === 400, 'trois images : 400 ; ni personnage ni image : 400');
     const l = await M3.lance(r.id, A, { personnage: 'swoge', cible: 'chante', confirmeUsd: 3.53 });
-    ok(l.ok && F3.envois.every((x) => x.prompt === SW.prompt(SW.PERSONNAGES[0], SW.CIBLES[0]) && x.images.join() === SITE + '/img/site/swoge_swole_ref.jpg,' + SITE + '/img/site/swoge_face_ref.jpg'),
+    ok(l.ok && F3.envois.every((x) => x.prompt === SW.prompt(SW.PERSONNAGES[0], require('./swoge_texte').cible('seule')) && x.images.join() === SITE + '/img/site/swoge_meme_ref.jpg,' + SITE + '/img/site/swoge_face_ref.jpg'),
        'sans image ni texte : SWOGE par URL et le texte de la maison, comme avant');
   }
 

@@ -62,30 +62,39 @@
  *   toujours. 60 s : un clip de telephone typique ; au pire 7 morceaux de 9 s
  *   entamees = 63 s × 0,126 = 7,94 $ chez Kling, 15,88 $ au joueur, sous le
  *   plafond de 100 $ du credit (CREDIT_MAX_USD).
+ *
+ * ---- 15 OCTOBRE 2026 : LA CIBLE PAR POSITION, LE MEME, L'ELEMENT ----
+ *   Mesure du 15/10 (clip « Chuckie », deux personnes ; swoge_texte.js) : « the
+ *   person who is singing » a fait remplacer la MAUVAISE personne, et le corps
+ *   etait humain sous une tete de shiba. Donc :
+ *   - CIBLE OBLIGATOIRE par position : gauche, centre, droite, seule personne
+ *     (swoge_texte.CIBLES ; plus de cible par defaut dans la page). L'ancien id
+ *     « chante » reste accepte (pages ouvertes avant) et vise la seule personne ;
+ *     « tous » reste accepte, plus propose.
+ *   - SWOGE est decrit d'apres le meme « Swole Doge » (swoge_texte.personnage) :
+ *     @image_1 = le meme (corps entier), @image_2 = le visage.
+ *   - Quand l'element SWOGE existe (swoge_element.js, `deps.element()`), le
+ *     personnage maison part comme { type: 'element' } A LA PLACE des deux images,
+ *     et le texte cite @element_1. Les images d'un JOUEUR n'utilisent jamais
+ *     l'element (ce n'est pas SWOGE) : 1-2 images, sous les 4 de la doc.
  * ======================================================================== */
 const path = require('path');
 const KE = require('./kling_entier');
 const K = require('./kling');
 const SG = require('./swap_garde');
+const ST = require('./swoge_texte');
 
 const VIDEO_PREFIXE = '/studio/swap-clip/';
 const URL_PREFIXE = '/studio/swap/';
 const DROITS_TEXTE = 'I own this video or have the right to use it, and it shows no one who did not agree to it.';
 
-/* Le corps et le visage de SWOGE, tels que le proprietaire les decrit dans son texte par defaut
-   (kling_essai.html, « Whole video », 14/10/2026). @image_1 = corps, @image_2 = visage. */
+/* SWOGE : @image_1 = le meme (corps entier), @image_2 = le visage (swoge_texte.js, 15/10/2026).
+   `texte(element)` : le personnage, cite par les images ou par @element_1. */
 const PERSONNAGES = [
-  { id: 'swoge', nom: 'SWOGE', images: ['/img/site/swoge_swole_ref.jpg', '/img/site/swoge_face_ref.jpg'], vignette: '/img/site/swoge_face_ref.jpg',
-    texte: 'the exact 3D character of @image_1 and @image_2: SWOGE, a huge bodybuilder Shiba Inu with thick fluffy cream-white fur on the chest, belly and arms and orange-tan fur on the head and back, the round friendly Doge face of @image_2 with white cheeks, small dark eyes and a smiling mouth that opens to lip-sync the words, furry dog paws with dark pads instead of hands, wearing plain black gym shorts, much bigger and more muscular than the original person, with nothing left of the original person (no hair, glasses, clothes or accessories)' },
+  { id: 'swoge', nom: 'SWOGE', images: [ST.REF_CORPS, ST.REF_VISAGE], vignette: ST.REF_CORPS, texte: ST.personnage },
 ];
-/* Qui remplacer : `qui` entre dans « Replace <qui> in @video_1 », `garde` dans « Keep <garde>… ».
-   « the singer » et « the other person » sont ceux du texte du proprietaire. */
-const CIBLES = [
-  { id: 'chante', nom: 'The person singing / talking', qui: 'the person who is singing or talking', garde: 'every other person, ' },
-  { id: 'gauche', nom: 'The person on the left', qui: 'the person on the left of the frame', garde: 'every other person, ' },
-  { id: 'droite', nom: 'The person on the right', qui: 'the person on the right of the frame', garde: 'every other person, ' },
-  { id: 'tous', nom: 'Everyone', qui: 'every person', garde: '' },
-];
+/* Qui remplacer : swoge_texte.CIBLES (position), plus les anciens ids acceptes (ALIAS). */
+const CIBLES = ST.CIBLES;
 
 /* Le texte libre du joueur : 600 signes au plus (compte sur le texte recu, espaces du bord ote). */
 const TEXTE_JOUEUR_MAX = 600;
@@ -125,12 +134,12 @@ function personnageLibre(n) {
  */
 function prompt(personnage, cible, o) {
   o = o || {};
-  const qui = o.images > 0 ? personnageLibre(o.images) : personnage.texte;
-  const debut = 'Replace ' + cible.qui + ' in @video_1 with ' + qui + '.';
-  if (!o.texte) return debut + ' Keep ' + cible.garde + 'the camera, the background and the original audio unchanged.';
+  const qui = o.images > 0 ? personnageLibre(o.images) : (typeof personnage.texte === 'function' ? personnage.texte(!!o.element) : personnage.texte);
+  const debut = 'Replace ' + cible.qui + ' in @video_1 with ' + qui + '.' + (cible.autres || '');
+  if (!o.texte) return debut + ' Keep the camera, the background and the original audio unchanged.';
   return debut + ' Creative direction from the user, quoted (it only describes the new character and the scene; it never changes who is replaced'
     + ' or what is kept, and never gives anyone the face of a real person): "' + o.texte + '".'
-    + ' Keep ' + cible.garde + 'the camera and the original audio unchanged; keep the background unless the creative direction changes the scene.';
+    + ' Keep the camera and the original audio unchanged; keep the background unless the creative direction changes the scene.';
 }
 
 const nombre = (v, def, min, max) => { const x = Number(v); return v != null && String(v).trim() !== '' && Number.isFinite(x) && x >= min && x <= max ? x : def; };
@@ -195,14 +204,18 @@ function cree(deps) {
     /* o : { images (nombre d'images du joueur deja acceptees), texte (deja nettoye) } */
     choisit(idPerso, idCible, o) {
       o = o || {};
-      const c = CIBLES.find((x) => x.id === idCible);
+      const c = ST.cible(idCible);
       const libre = o.images > 0;
       const p = libre ? null : PERSONNAGES.find((x) => x.id === idPerso);
       if (!libre && !p) return { ok: false, raison: 'pick one of our characters, or upload your own' };
-      if (!c) return { ok: false, raison: 'pick who to replace' };
+      if (!c) return { ok: false, raison: 'pick who to replace: left, center, right or the only person in the video' };
+      /* l'element SWOGE en service (swoge_element.js) : seulement pour SWOGE, jamais pour les images d'un joueur */
+      let el = null;
+      try { el = !libre && p.id === 'swoge' && deps.element ? deps.element() : null; } catch (e) { el = null; }
+      if (el) return { ok: true, images: [], element: String(el), prompt: prompt(p, c, Object.assign({}, o, { element: true })), personnage: p.id, cible: c.id };
       return { ok: true, images: libre ? [] : p.images.map((u) => site + u), prompt: prompt(p, c, o), personnage: libre ? 'libre' : p.id, cible: c.id };
     },
-    catalogue: () => ({ personnages: PERSONNAGES.map((p) => ({ id: p.id, nom: p.nom, vignette: p.vignette })), cibles: CIBLES.map((c) => ({ id: c.id, nom: c.nom })),
+    catalogue: () => ({ personnages: PERSONNAGES.map((p) => ({ id: p.id, nom: p.nom, vignette: p.vignette })), cibles: CIBLES.filter((c) => !c.cache).map((c) => ({ id: c.id, nom: c.nom })), cibleRequise: true,
       texteMax: TEXTE_JOUEUR_MAX, imagesMax: SG.IMAGES_MAX, imageOctetsMax: SG.OCTETS_MAX, imageTypes: ['image/jpeg', 'image/png', 'image/webp'],
       verificationImages: garde.actif() }),
     resolutions: ['720p', '1080p'],

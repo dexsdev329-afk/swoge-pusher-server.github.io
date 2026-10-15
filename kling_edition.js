@@ -39,13 +39,16 @@ const VIDEO_PREFIXE = '/studio/kling-clip/';
    832×1248, rapport 1:1,5, dans les bornes O1 (>= 300 px, 1:2,5 a 2,5:1).
    L'ancienne (img/site/swoge_reference.jpg, costume rouge) reste celle des
    autres usages (studio, Telegram). */
-const REFERENCE_EDITION = '/img/site/swoge_swole_ref.jpg';
+/* 15/10/2026 : remplacee par le meme « Swole Doge » que le proprietaire a donne
+   comme reference PRIMAIRE (img/site/swoge_meme_ref.jpg, corps entier, 1170×1141 ;
+   swoge_texte.js). swoge_swole_ref.jpg reste sur le site, plus envoyee. */
+const REFERENCE_EDITION = require('./swoge_texte').REF_CORPS;
 /* Et le VISAGE, en seconde reference (image_2) : le premier vrai resultat du
    proprietaire (14/10/2026) avait la mauvaise tete — un shiba orange realiste,
    gueule grande ouverte, pas le visage de SWOGE. Le visage officiel
    (img/site/ia/swoge_face.webp, 256 px) agrandi a 768×768 (lanczos, JPEG q 2) :
    >= 300 px, rapport 1:1, dans les bornes O1. */
-const REFERENCE_VISAGE = '/img/site/swoge_face_ref.jpg';
+const REFERENCE_VISAGE = require('./swoge_texte').REF_VISAGE;
 
 /**
  * Largeur et hauteur de la premiere piste video d'un MP4 (moov > trak > tkhd),
@@ -68,7 +71,10 @@ function dimensionsMp4(buf) {
   return null;
 }
 
-function cree({ dossier, kling, urlPublique, journal, imageDefaut, imagesDefaut, maintenant, pollMs, maxMs }) {
+/* `element()` (15/10/2026, swoge_element.js) : l'id de l'element SWOGE en service, ou null. Quand
+   il existe et que le proprietaire n'a pas choisi d'image, l'element part A LA PLACE des deux
+   images par defaut et le texte cite @element_1 (swoge_texte.versElement). */
+function cree({ dossier, kling, urlPublique, journal, imageDefaut, imagesDefaut, maintenant, pollMs, maxMs, element }) {
   /* sans image fournie : les references par defaut, dans l'ordre (corps = image_1, visage = image_2) */
   const DEFAUT = Array.isArray(imagesDefaut) && imagesDefaut.length ? imagesDefaut.slice(0, K.EDITION_IMAGES_MAX) : [imageDefaut];
   const temps = () => (maintenant ? maintenant() : Date.now());
@@ -117,7 +123,9 @@ function cree({ dossier, kling, urlPublique, journal, imageDefaut, imagesDefaut,
    * Controles dans l'ordre : adresse, taille, MP4, longueur, cotes, une a la
    * fois, Kling branche ; puis kling.lanceEdition refait les siens (texte, image).
    */
-  async function lance({ addr, octets, image, prompt, resolution, audio }) {
+  /* `premiere` (15/10/2026, premiere_image.js) : { base64 } de l'image choisie, ajoutee en DERNIERE
+     refer_image avec sa phrase (un base_video ne prend ni first_frame ni last_frame, video-omni.md). */
+  async function lance({ addr, octets, image, prompt, resolution, audio, premiere }) {
     if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
     const buf = Buffer.isBuffer(octets) ? octets : Buffer.alloc(0);
     if (!buf.length) return { ok: false, code: 400, raison: 'choose an MP4 clip first' };
@@ -143,16 +151,25 @@ function cree({ dossier, kling, urlPublique, journal, imageDefaut, imagesDefaut,
     const job = { nom, addr, t: temps(), rid: null };
     EN_COURS.set(nom, job);
     const parDefaut = image == null || image === '';
+    let el = null;
+    try { el = parDefaut && element ? element() : null; } catch (e) { el = null; }
+    const q = Object.assign({ videoUrl: urlPublique(nom), resolution, audio, dureeS: d },
+      el ? { images: [], element: el, prompt: String(prompt || '').trim() ? require('./swoge_texte').versElement(prompt) : '' } : { prompt },
+      el ? {} : parDefaut ? { images: DEFAUT.slice() } : { image });
+    if (premiere && premiere.base64 && String(q.prompt || '').trim()) {
+      q.images = (q.images || [q.image]).concat([premiere.base64]); delete q.image;
+      q.prompt = String(q.prompt).trim() + require('./premiere_image').phraseVideo(q.images.length, true);
+    }
     let r;
     try {
-      r = await kling.lanceEdition(Object.assign({ videoUrl: urlPublique(nom), prompt, resolution, audio, dureeS: d }, parDefaut ? { images: DEFAUT } : { image }));
+      r = await kling.lanceEdition(q);
     } catch (e) { r = { ok: false, code: 502, raison: 'Kling refused: ' + (e && e.message) }; }
     if (!r || !r.ok) { efface(job); return r || { ok: false, code: 502, raison: 'Kling refused' }; }
     job.rid = r.id;
     note({ id: r.id, edition: true, modele: r.modele, dureeS: r.dureeS, resolution: r.resolution, audio: r.audio,
-           image: parDefaut ? 'swoge' : r.image, octets: buf.length, cotes: dim ? dim.largeur + 'x' + dim.hauteur : null, estimationUsd: r.estimationUsd });
+           image: el ? 'element' : parDefaut ? 'swoge' : r.image, element: el || undefined, premiere: premiere && premiere.base64 ? true : undefined, octets: buf.length, cotes: dim ? dim.largeur + 'x' + dim.hauteur : null, estimationUsd: r.estimationUsd });
     suit(job);
-    return Object.assign({}, r, { reference: parDefaut ? 'swoge' : 'upload' });
+    return Object.assign({}, r, { reference: el ? 'element' : parDefaut ? 'swoge' : 'upload' });
   }
 
   /** Le clip d'une edition EN COURS, par son nom (48 hexa) : rien d'autre ne sort. */

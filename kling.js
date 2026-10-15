@@ -66,6 +66,48 @@
  *           GET /tasks?external_task_ids= ; erreurs (error-codes.md) : 1302
  *           trop de requetes, 1303 concurrence du pack depassee (HTTP 429),
  *           a reessayer plus tard — rendus a l'appelant (`klingCode`, `http`).
+ *
+ * ---- L'ELEMENT SWOGE, KLING O1 (lu le 15/10/2026) ----
+ *   Doc : https://kling.ai/document-api/api/video/o1/elements.md
+ *   creer   POST /v1/general/advanced-custom-elements { element_name (<= 20),
+ *           element_description (<= 100), reference_type: 'image_refer',
+ *           element_image_list: { frontal_image: <url|base64>,
+ *           refer_images: [{ image_url: <url|base64> }, …] }, external_task_id }
+ *           « at least one frontal reference image (frontal_image), and 1 to 3
+ *           additional reference images (image_url) that differ from the front » ;
+ *           jpg/jpeg/png, <= 10 Mo, >= 300 px, rapport 1:2,5 a 2,5:1 ; base64 SANS
+ *           prefixe (meme note que image-generation.md).
+ *           → data { task_id, task_status }
+ *   suivre  GET /v1/general/advanced-custom-elements/<task_id> → data { task_status
+ *           (submitted | processing | succeed | failed), task_status_msg,
+ *           task_result: { elements: [{ element_id (entier dans l'exemple), status }] },
+ *           final_unit_deduction }
+ *   effacer POST /v1/general/delete-advanced-elements { element_id } — la table dit
+ *           « string » : envoye en chaine.
+ *   prix    AUCUNE ligne pour la creation d'un element dans pricing/base/video.md
+ *           ni image.md (lus le 15/10/2026) : ce que Kling deduit est lu dans
+ *           `final_unit_deduction` et garde.
+ *   usage   video-omni.md : contents[] { type: 'element', element_id: "string",
+ *           id: 'element_1' } ; « id … used to specify in prompt » et « Specify an
+ *           image, an Element, a video in the format of @xxx, such as @image_1,
+ *           @Zhang, @video_1 » : le texte cite @element_1. AMBIGU : l'exemple
+ *           « @Zhang » laisse penser qu'un element peut aussi se citer par son NOM,
+ *           et l'exemple de la doc avec un element ne le cite pas du tout. On cite
+ *           l'`id` (@element_1), seul usage que la doc rattache au champ ; le
+ *           premier essai du proprietaire le verifie (voir EXPLOITATION.md).
+ *           « With reference video: reference images + Elements <= 4 ».
+ *
+ * ---- L'IMAGE O1 A PLUSIEURS REFERENCES (lu le 15/10/2026) ----
+ *   Doc : https://kling.ai/document-api/api/image/o1/image-generation.md
+ *   creer   POST /v1/images/omni-image { model_name: 'kling-image-o1', prompt
+ *           (<= 2 500 ; une image se cite <<<image_1>>>), image_list: [{ image }]
+ *           (URL ou base64, <= 10 Mo, >= 300 px, 1:2,5 a 2,5:1), resolution
+ *           '1k'|'2k', n, aspect_ratio, external_task_id } → data { task_id }
+ *   suivre  GET /v1/images/omni-image/<task_id> → data { task_status,
+ *           task_status_msg, task_result: { images: [{ url }] } }
+ *   prix    (pricing/base/image.md) « Kling Image O1, 1K/2K : 8 Units ($0.028) / image ».
+ *   AMBIGU : la note du champ dit <<<image_1>>>, un exemple ecrit <<element_1>>
+ *   (deux chevrons) : on suit la note du champ.
  * ======================================================================== */
 const crypto = require('crypto');
 
@@ -88,6 +130,13 @@ const REF_IMAGE_RAPPORT_MAX = 2.5;
 /* « With a reference video + multi-image elements: the total number of reference
    images and multi-image elements must not exceed 4 » (video-omni.md, lu le 14/10/2026). */
 const EDITION_IMAGES_MAX = 4;
+/* L'element dans le texte : l'`id` de son entree dans contents (video-omni.md). */
+const ELEMENT_JETON = 'element_1';
+/* Les bornes d'une image d'element (elements.md, 15/10/2026). */
+const ELEMENT_IMAGE_MAX_OCTETS = 10 * 1024 * 1024;
+const ELEMENT_AUTRES = { min: 1, max: 3 };
+const ELEMENT_NOM_MAX = 20, ELEMENT_DESCRIPTION_MAX = 100;
+const IMAGE_O1_MODELE = 'kling-image-o1';
 
 /** Le prix estime d'une edition : la seconde entamee compte (le pire cas), ou null. */
 function prixEdition(resolution, dureeS) {
@@ -280,8 +329,13 @@ function cree(deps) {
     const dureeS = Number(q.dureeS);
     const estimationUsd = prixEdition(resolution, dureeS);
     if (estimationUsd === null) return { ok: false, code: 400, raison: 'the clip must last ' + EDITION_DUREE.min + ' to ' + EDITION_DUREE.max + ' s (Kling limit)' };
-    const brutes = Array.isArray(q.images) ? q.images : [q.image];
-    if (!brutes.length || brutes.length > EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: '1 to ' + EDITION_IMAGES_MAX + ' reference pictures (Kling limit with a video)' };
+    /* L'element SWOGE (15/10/2026) : un identifiant d'element Kling, envoye en chaine (« element_id": "string" »). */
+    const element = q.element == null || q.element === '' ? null : String(q.element);
+    if (element !== null && !/^[0-9A-Za-z_-]{1,40}$/.test(element)) return { ok: false, code: 400, raison: 'unknown Kling element id' };
+    const brutes = Array.isArray(q.images) ? q.images : (q.image == null && element ? [] : [q.image]);
+    const total = brutes.length + (element ? 1 : 0);
+    if (!total || total > EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: '1 to ' + EDITION_IMAGES_MAX + ' reference pictures and elements together (Kling limit with a video)' };
+    if (element && texte.indexOf('@' + ELEMENT_JETON) < 0) return { ok: false, code: 400, raison: 'the text must name the element as @' + ELEMENT_JETON };
     const refs = [];
     for (let i = 0; i < brutes.length; i++) {
       const r = referenceEdition(brutes[i]);
@@ -289,13 +343,14 @@ function cree(deps) {
       refs.push(r);
     }
     const externe = /^[0-9a-f]{24}$/.test(String(q.externe || '')) ? String(q.externe) : crypto.randomBytes(12).toString('hex');
-    const contents = [{ type: 'prompt', text: texte }].concat(refs.map((r, i) => ({ type: 'refer_image', url: r.image, id: 'image_' + (i + 1) })),
+    const contents = [{ type: 'prompt', text: texte }].concat(element ? [{ type: 'element', element_id: element, id: ELEMENT_JETON }] : [],
+      refs.map((r, i) => ({ type: 'refer_image', url: r.image, id: 'image_' + (i + 1) })),
       [{ type: 'base_video', url: videoUrl, id: 'video_1' }]);
     try {
       const d = await appel('/omni-video/' + EDITION_MODELE, { method: 'POST', body: JSON.stringify({ contents, settings: { resolution, audio }, options: { external_task_id: externe } }) });
       if (!d || !d.id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
       return { ok: true, id: String(d.id), externe, statut: d.status || 'submitted', modele: EDITION_MODELE, edition: true,
-               resolution, audio, dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, image: refs[0].source, images: refs.map((r) => r.source) };
+               resolution, audio, dureeS: Math.round(dureeS * 1000) / 1000, estimationUsd, image: refs.length ? refs[0].source : 'element', images: refs.map((r) => r.source), element };
     } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code, http: e.statut || null }; }
   }
 
@@ -377,12 +432,109 @@ function cree(deps) {
     }
   }
 
-  return { actif, lance, etat, etatExterne, lanceEdition, lanceImage, etatImage, image, video };
+  /* ---- L'IMAGE O1 A PLUSIEURS REFERENCES (omni-image, 15/10/2026) ----
+   * q : { prompt (cite <<<image_1>>>…), images: [URL https | base64 nu], format, resolution, n (1-9) }.
+   * La doc : « n: Value range: [1, 9] » ; le prix est par image (0,028 $ × n). */
+  async function lanceImageOmni(q) {
+    q = q || {};
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    const texte = String(q.prompt || '').trim();
+    if (!texte) return { ok: false, code: 400, raison: 'write what the picture shows' };
+    if (texte.length > TEXTE_MAX) return { ok: false, code: 400, raison: 'prompt too long (' + TEXTE_MAX + ' characters at most)' };
+    const images = Array.isArray(q.images) ? q.images.map(String) : [];
+    if (!images.length || images.length > 10) return { ok: false, code: 400, raison: '1 to 10 reference pictures' };
+    if (images.some((x) => !/^https:\/\//.test(x) && !/^[A-Za-z0-9+/=]+$/.test(x))) return { ok: false, code: 400, raison: 'a reference must be an https URL or raw base64' };
+    const corps = { model_name: IMAGE_O1_MODELE, prompt: texte, image_list: images.map((x) => ({ image: x })),
+      resolution: q.resolution === '1k' ? '1k' : '2k', n: Math.min(9, Math.max(1, Math.floor(Number(q.n) || 1))), aspect_ratio: IMAGE_FORMATS.includes(q.format) ? q.format : '2:3',
+      external_task_id: crypto.randomBytes(12).toString('hex') };
+    try {
+      const d = await appel('/v1/images/omni-image', { method: 'POST', body: JSON.stringify(corps) });
+      if (!d || !d.task_id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
+      return { ok: true, id: String(d.task_id), statut: d.task_status || 'submitted', modele: IMAGE_O1_MODELE, n: corps.n, estimationUsd: Math.round(IMAGE_PRIX_USD * corps.n * 1000) / 1000 };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code }; }
+  }
+
+  /** L'etat d'une image omni : { ok, statut, url? (la premiere), urls (toutes, n > 1), message? }. */
+  async function etatImageOmni(id) {
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(String(id || ''))) return { ok: false, code: 400, raison: 'unknown task' };
+    try {
+      const d = await appel('/v1/images/omni-image/' + encodeURIComponent(id), { method: 'GET' });
+      const ims = d && d.task_result && Array.isArray(d.task_result.images) ? d.task_result.images : [];
+      const urls = ims.filter((x) => x && /^https:\/\//.test(String(x.url))).map((x) => String(x.url)).slice(0, 9);
+      return { ok: true, id: String(d.task_id || id), statut: d.task_status, message: d.task_status_msg || null, url: urls[0] || null, urls };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling: ' + e.message }; }
+  }
+
+  /* ---- L'ELEMENT (elements.md, 15/10/2026) ----
+   * q : { nom, description, frontal, autres: [..] } — chaque image : URL https ou base64 nu,
+   * deja verifiee par l'appelant (referenceElement). Rend { ok, tache, externe } ou un refus. */
+  async function creeElement(q) {
+    q = q || {};
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    const nom = String(q.nom || '').trim(), description = String(q.description || '').trim();
+    if (!nom || nom.length > ELEMENT_NOM_MAX) return { ok: false, code: 400, raison: 'element name: 1 to ' + ELEMENT_NOM_MAX + ' characters' };
+    if (!description || description.length > ELEMENT_DESCRIPTION_MAX) return { ok: false, code: 400, raison: 'element description: 1 to ' + ELEMENT_DESCRIPTION_MAX + ' characters' };
+    const autres = Array.isArray(q.autres) ? q.autres.map(String) : [];
+    if (!q.frontal) return { ok: false, code: 400, raison: 'a frontal picture is needed' };
+    if (autres.length < ELEMENT_AUTRES.min || autres.length > ELEMENT_AUTRES.max) return { ok: false, code: 400, raison: ELEMENT_AUTRES.min + ' to ' + ELEMENT_AUTRES.max + ' other pictures besides the frontal one (Kling rule)' };
+    const externe = /^[0-9a-f]{24}$/.test(String(q.externe || '')) ? String(q.externe) : crypto.randomBytes(12).toString('hex');
+    const corps = { element_name: nom, element_description: description, reference_type: 'image_refer',
+      element_image_list: { frontal_image: String(q.frontal), refer_images: autres.map((x) => ({ image_url: x })) },
+      external_task_id: externe };
+    try {
+      const d = await appel('/v1/general/advanced-custom-elements', { method: 'POST', body: JSON.stringify(corps) });
+      if (!d || !d.task_id) return { ok: false, code: 502, raison: 'Kling returned no task id' };
+      return { ok: true, tache: String(d.task_id), externe, statut: d.task_status || 'submitted' };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code }; }
+  }
+
+  /** L'etat d'une creation d'element : { ok, statut, elementId (chaine) | null, message, deduction }. */
+  async function etatElement(tache) {
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    if (!/^[0-9A-Za-z_-]{1,64}$/.test(String(tache || ''))) return { ok: false, code: 400, raison: 'unknown task' };
+    try {
+      const d = await appel('/v1/general/advanced-custom-elements/' + encodeURIComponent(tache), { method: 'GET' });
+      const els = d && d.task_result && Array.isArray(d.task_result.elements) ? d.task_result.elements : [];
+      const el = els.find((x) => x && x.element_id != null && String(x.element_id) !== '') || null;
+      return { ok: true, statut: d && d.task_status, message: (d && d.task_status_msg) || null,
+               elementId: el ? String(el.element_id) : null, statutElement: el ? (el.status || null) : null,
+               deduction: d && d.final_unit_deduction != null ? String(d.final_unit_deduction).slice(0, 24) : null };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling: ' + e.message }; }
+  }
+
+  /** Efface un element : { ok } ou un refus. element_id en chaine (table de la doc). */
+  async function supprimeElement(elementId) {
+    if (!actif()) return { ok: false, code: 503, raison: 'Kling is not set up (KLING_API_KEY)' };
+    if (!/^[0-9A-Za-z_-]{1,40}$/.test(String(elementId || ''))) return { ok: false, code: 400, raison: 'unknown element' };
+    try {
+      const d = await appel('/v1/general/delete-advanced-elements', { method: 'POST', body: JSON.stringify({ element_id: String(elementId) }) });
+      return { ok: true, statut: (d && d.task_status) || null };
+    } catch (e) { return { ok: false, code: 502, raison: 'Kling refused: ' + e.message, klingCode: e.code == null ? null : e.code }; }
+  }
+
+  return { actif, lance, etat, etatExterne, lanceEdition, lanceImage, etatImage, image, video,
+           lanceImageOmni, etatImageOmni, creeElement, etatElement, supprimeElement };
 }
 
 const IMAGE_MODELES = ['kling-v3', 'kling-v2-1'];
 const IMAGE_FORMATS = ['16:9', '9:16', '1:1', '4:3', '3:4', '3:2', '2:3', '21:9'];
 const IMAGE_PRIX_USD = 0.028;
 
-module.exports = { cree, prixUsd, prixEdition, dimensionsImage, referenceEdition, EDITION_IMAGES_MAX, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
-  EDITION_MODELE, EDITION_PRIX, EDITION_DUREE, EDITION_COTE };
+/**
+ * Une image d'element verifiee AVANT tout envoi (elements.md : jpg/jpeg/png, <= 10 Mo,
+ * >= 300 px, 1:2,5 a 2,5:1) : un Buffer → { ok, base64 (sans prefixe), format, largeur, hauteur }.
+ */
+function referenceElement(octets) {
+  if (!Buffer.isBuffer(octets) || !octets.length) return { ok: false, raison: 'empty picture' };
+  if (octets.length > ELEMENT_IMAGE_MAX_OCTETS) return { ok: false, raison: 'picture too large (10 MB at most for a Kling element)' };
+  const dim = dimensionsImage(octets);
+  if (!dim) return { ok: false, raison: 'the picture must be a PNG or JPEG' };
+  const petit = Math.min(dim.largeur, dim.hauteur), grand = Math.max(dim.largeur, dim.hauteur);
+  if (petit < REF_IMAGE_COTE_MIN) return { ok: false, raison: 'the picture is ' + dim.largeur + '×' + dim.hauteur + ' px — ' + REF_IMAGE_COTE_MIN + ' px at least on each side' };
+  if (grand / petit > REF_IMAGE_RAPPORT_MAX) return { ok: false, raison: 'the picture is too narrow (between 1:2.5 and 2.5:1)' };
+  return { ok: true, base64: octets.toString('base64'), format: dim.format, largeur: dim.largeur, hauteur: dim.hauteur };
+}
+
+module.exports = { cree, prixUsd, prixEdition, dimensionsImage, referenceEdition, referenceElement, EDITION_IMAGES_MAX, MODELES, BASE, TEXTE_MAX, IMAGE_PRIX_USD,
+  EDITION_MODELE, EDITION_PRIX, EDITION_DUREE, EDITION_COTE, ELEMENT_JETON, ELEMENT_IMAGE_MAX_OCTETS, ELEMENT_AUTRES, ELEMENT_NOM_MAX, ELEMENT_DESCRIPTION_MAX, IMAGE_O1_MODELE };

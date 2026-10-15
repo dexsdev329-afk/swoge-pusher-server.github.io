@@ -162,7 +162,7 @@ async function connecte(port, w) {
   const l = await appel('/studio/kling/entier/' + id + '/lance', moi.H, { prompt: PROMPT, resolution: '720p', confirmeUsd: 1.764 });
   ok(l.statut === 200 && l.j.statut === 'en_cours' && l.j.morceaux.every((m) => m.statut === 'processing'), 'confirme : les 2 morceaux chez Kling');
   const envois = recus.filter((x) => /omni-video/.test(x.url)).map((x) => JSON.parse(x.o.body));
-  ok(envois.length === 2 && envois.every((b) => b.contents[0].text === PROMPT && b.contents[1].type === 'refer_image' && b.contents[1].url === 'https://site.example/img/site/swoge_swole_ref.jpg'
+  ok(envois.length === 2 && envois.every((b) => b.contents[0].text === PROMPT && b.contents[1].type === 'refer_image' && b.contents[1].url === 'https://site.example/img/site/swoge_meme_ref.jpg'
      && b.contents[1].id === 'image_1' && b.contents[2].type === 'refer_image' && b.contents[2].url === 'https://site.example/img/site/swoge_face_ref.jpg' && b.contents[2].id === 'image_2'
      && b.contents[3].id === 'video_1' && b.settings.audio === 'original' && b.settings.resolution === '720p'),
      'chaque envoi : le meme texte, le corps (image_1) et le visage (image_2) par URL, son d origine, 720p');

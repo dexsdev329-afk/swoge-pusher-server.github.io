@@ -2387,8 +2387,23 @@ const KLING_JOURNAL = require('path').join(cfg.DATA_DIR, 'kling_essais.jsonl');
    servi a Kling par un nom tire au hasard le temps de la tache, puis efface. La
    reference par defaut est l'image de SWOGE du site (en pied, JPEG 1024×1536,
    dans les bornes de la doc : >= 300 px, rapport 1:1,5), passee par son URL. */
+/* L'element SWOGE chez Kling (swoge_element.js, 15/10/2026) : vues choisies par le
+   proprietaire, element cree et suivi, son id ecrit dans DATA_DIR/swoge_element. Tant
+   qu'il n'existe pas, les editions envoient les deux images (rien ne change). */
+const swogeElement = require('./swoge_element').cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'swoge_element'), kling, site: SITE_URL,
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
+swogeElement.demarre();
+/* La premiere image d'une edition (premiere_image.js, 15/10/2026) : l'identite fixee sur une
+   image (Kling Image O1, 0,056 $ les 2 candidats) avant de payer la video. Proprietaire seulement. */
+const premiereImage = require('./premiere_image').cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'premiere_image'), kling, site: SITE_URL,
+  journal: (o) => { try { require('fs').appendFileSync(KLING_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
 const klingEditionMod = require('./kling_edition');
 const klingEdition = klingEditionMod.cree({
+  element: () => swogeElement.elementPret(),
   dossier: require('path').join(cfg.DATA_DIR, 'kling_edition'), kling,
   urlPublique: (nom) => MOI_URL + klingEditionMod.VIDEO_PREFIXE + nom,
   /* corps (image_1) et visage (image_2), 14/10/2026 */
@@ -2402,6 +2417,7 @@ const klingEdition = klingEditionMod.cree({
    l'abaisser) ; KLING_ENTIER_PARALLELE morceaux a la fois (2). */
 const klingEntierMod = require('./kling_entier');
 const klingEntier = klingEntierMod.cree({
+  element: () => swogeElement.elementPret(),
   dossier: require('path').join(cfg.DATA_DIR, 'kling_entier'), kling,
   urlPublique: (nom) => MOI_URL + klingEntierMod.VIDEO_PREFIXE + nom,
   /* corps (image_1) et visage (image_2), 14/10/2026 */
@@ -2420,6 +2436,7 @@ const swapMod = require('./swap');
 const SWAP_JOURNAL = require('path').join(cfg.DATA_DIR, 'swap_journal.jsonl');
 const swap = swapMod.cree({
   dossier: require('path').join(cfg.DATA_DIR, 'swap'), kling, site: SITE_URL, moi: MOI_URL,
+  element: () => swogeElement.elementPret(),
   credits: { soldeDurable: (q) => credits().soldeDurable(q), soldeUsd: (a) => credits().soldeUsd(a) },
   journal: (o) => { try { require('fs').appendFileSync(SWAP_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
 });
@@ -6858,7 +6875,85 @@ const server = http.createServer(async (req, res) => {
       let essais = [];
       try { essais = require('fs').readFileSync(KLING_JOURNAL, 'utf8').trim().split('\n').filter(Boolean).slice(-20).map((l) => JSON.parse(l)).reverse(); } catch (e) { essais = []; }
       return json(200, { ok: true, proprietaire: true, actif: kling.actif(), modeles: require('./kling').MODELES, essais, programme: klingTg.etat(),
-                         edition: klingEdition.vue(addr), wan: wan.vue(addr), entier: klingEntier.vue(addr) });
+                         edition: klingEdition.vue(addr), wan: wan.vue(addr), entier: klingEntier.vue(addr), swoge: swogeElement.vue() });
+    }
+    /* L'element SWOGE (swoge_element.js, 15/10/2026), proprietaire seulement (verifie plus haut) :
+       GET /studio/kling/swoge (l'etat ; avance le suivi d'un pas), POST …/prepare { vues: ['pied','profil'] }
+       (Kling Image O1, 0,028 $ l'image, plafond du jour), POST …/vue { slot, image: data-URL JPEG/PNG },
+       POST …/choisit { slot, id | 'site' | null }, POST …/element (creer ou recreer), POST …/supprime,
+       GET …/image/<id> (une vue prete, avec la session). */
+    /* La premiere image (premiere_image.js) : POST /studio/kling/premiere { video: data-URL MP4 | entier: <id>,
+       cible } (extrait l'image 0, lance 2 candidats), GET …/<id> (l'etat ; avance le suivi),
+       POST …/<id>/regenere, POST …/<id>/choisit { k | null }, GET …/<id>/image, GET …/<id>/candidat/<k>. */
+    if (path === '/studio/kling/premiere' || path.startsWith('/studio/kling/premiere/')) {
+      if (path === '/studio/kling/premiere') {
+        if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+        let q;
+        try { q = JSON.parse((await corps(req, klingEditionMod.CORPS_MAX)).toString('utf8') || '{}'); }
+        catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (clip ' + (klingEditionMod.OCTETS_MAX / 1048576) + ' MB at most)' }); }
+        if (!q || typeof q !== 'object') q = {};
+        let r;
+        try {
+          if (q.entier) {
+            const ch = klingEntier.cheminMorceau(String(q.entier), addr, 0);
+            r = ch ? await premiereImage.prepare(addr, { chemin: ch, cible: q.cible, depuis: 'entier', entier: String(q.entier) })
+                   : { ok: false, code: 404, raison: 'plan the whole video first (part 1 is not ready)' };
+          } else {
+            const d = /^data:[a-z0-9.+\/-]*;base64,/i.exec(String(q.video || ''));
+            const octets = d ? Buffer.from(String(q.video).slice(d[0].length), 'base64') : Buffer.alloc(0);
+            r = octets.length > klingEditionMod.OCTETS_MAX ? { ok: false, code: 413, raison: 'the clip is too large' } : await premiereImage.prepare(addr, { octets, cible: q.cible, depuis: 'clip' });
+          }
+        } catch (e) { console.error('[premiere] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+        return json(r.ok ? 200 : (r.code || 500), r);
+      }
+      const pm = /^\/studio\/kling\/premiere\/([0-9a-f]{24})(?:\/(regenere|choisit|image|candidat)(?:\/(\d{1,2}))?)?$/.exec(path);
+      if (!pm) return json(404, { ok: false, raison: 'unknown' });
+      const [, pid, pgeste, pk] = pm;
+      if (req.method === 'GET' && (pgeste === 'image' || pgeste === 'candidat')) {
+        const f = premiereImage.fichier(pid, addr, pgeste === 'image' ? null : pk);
+        if (!f) return json(404, { ok: false, raison: 'unknown picture' });
+        res.writeHead(200, Object.assign({ 'content-type': f.type, 'content-length': f.octets.length, 'cache-control': 'no-store' }, cors));
+        return res.end(f.octets);
+      }
+      if (!pgeste && req.method === 'GET') { await premiereImage.tour().catch(() => {}); const r = premiereImage.etat(pid, addr); return json(r.ok ? 200 : r.code, r); }
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      let q = {};
+      try { q = JSON.parse((await corps(req, 4096)).toString('utf8') || '{}'); } catch (e) { q = {}; }
+      if (!q || typeof q !== 'object') q = {};
+      let r;
+      if (pgeste === 'regenere') r = await premiereImage.regenere(pid, addr);
+      else if (pgeste === 'choisit') r = premiereImage.choisit(pid, addr, q.k === undefined ? null : q.k);
+      else r = { ok: false, code: 404, raison: 'unknown' };
+      return json(r.ok ? 200 : (r.code || 500), r);
+    }
+    if (path === '/studio/kling/swoge' || path.startsWith('/studio/kling/swoge/')) {
+      const sim = /^\/studio\/kling\/swoge\/image\/([0-9a-f]{12})$/.exec(path);
+      if (sim && req.method === 'GET') {
+        const f = swogeElement.image(sim[1]);
+        if (!f) return json(404, { ok: false, raison: 'unknown picture' });
+        res.writeHead(200, Object.assign({ 'content-type': f.type, 'content-length': f.octets.length, 'cache-control': 'no-store' }, cors));
+        return res.end(f.octets);
+      }
+      if (path === '/studio/kling/swoge' && req.method === 'GET') { await swogeElement.tour().catch(() => {}); return json(200, Object.assign({ ok: true }, swogeElement.vue())); }
+      if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+      const geste = path.slice('/studio/kling/swoge/'.length);
+      let q = {};
+      try { q = JSON.parse((await corps(req, 15 * 1024 * 1024)).toString('utf8') || '{}'); }
+      catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (10 MB picture at most)' }); }
+      if (!q || typeof q !== 'object') q = {};
+      let r;
+      try {
+        if (geste === 'prepare') r = await swogeElement.prepare({ vues: q.vues });
+        else if (geste === 'vue') {
+          const d = /^data:image\/(png|jpeg|jpg);base64,/i.exec(String(q.image || ''));
+          r = d ? swogeElement.televerse(q.slot, Buffer.from(String(q.image).slice(d[0].length), 'base64')) : { ok: false, code: 400, raison: 'the picture must be a JPEG or PNG' };
+        }
+        else if (geste === 'choisit') r = swogeElement.choisit(q.slot, q.id === undefined ? null : q.id);
+        else if (geste === 'element') r = await swogeElement.creeElement();
+        else if (geste === 'supprime') r = await swogeElement.supprime();
+        else r = { ok: false, code: 404, raison: 'unknown' };
+      } catch (e) { console.error('[swoge-element] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
+      return json(r.ok ? 200 : (r.code || 500), Object.assign({}, r, { etat: swogeElement.vue() }));
     }
     /* Une video entiere (kling_entier.js). POST /studio/kling/entier : le corps
        BRUT (video/mp4, 100 Mo au plus), lu seulement ici, apres AI_OWNER ; la
@@ -6895,7 +6990,15 @@ const server = http.createServer(async (req, res) => {
           try { q = JSON.parse((await corps(req, klingEditionMod.CORPS_MAX)).toString('utf8') || '{}'); }
           catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request (4 pictures of 6 MB at most)' }); }
           if (!q || typeof q !== 'object') q = {};
-          r = await klingEntier.lance(eid, addr, { images: q.images, prompt: q.prompt, resolution: q.resolution, confirmeUsd: q.confirmeUsd });
+          /* la premiere image choisie, de CETTE video entiere seulement (premiere_image.js) */
+          let premiere = null;
+          if (q.premiere) {
+            const c = premiereImage.choisie(String(q.premiere), addr);
+            if (!c.ok) return json(c.code || 400, { ok: false, raison: c.raison });
+            if (c.depuis !== 'entier' || c.entier !== eid) return json(400, { ok: false, raison: 'this first frame was made for another video — prepare it from this plan' });
+            premiere = c;
+          }
+          r = await klingEntier.lance(eid, addr, { images: q.images, prompt: q.prompt, resolution: q.resolution, confirmeUsd: q.confirmeUsd, premiere });
         } else if (geste === 'reessaie' && num != null) r = await klingEntier.relance(eid, addr, num);
         else if (geste === 'recolle') r = await klingEntier.recolle(eid, addr);
         else if (geste === 'abandonne') r = klingEntier.abandonne(eid, addr);
@@ -6938,8 +7041,15 @@ const server = http.createServer(async (req, res) => {
       if (!q || typeof q !== 'object') q = {};
       const d = /^data:[a-z0-9.+\/-]*;base64,/i.exec(String(q.video || ''));
       const octets = d ? Buffer.from(String(q.video).slice(d[0].length), 'base64') : Buffer.alloc(0);
+      let premiere = null;
+      if (q.premiere) {
+        const c = premiereImage.choisie(String(q.premiere), addr);
+        if (!c.ok) return json(c.code || 400, { ok: false, raison: c.raison });
+        if (c.depuis !== 'clip') return json(400, { ok: false, raison: 'this first frame was made for a whole video, not for this clip' });
+        premiere = c;
+      }
       let r;
-      try { r = await klingEdition.lance({ addr, octets, image: q.image, prompt: q.prompt, resolution: q.resolution, audio: q.audio }); }
+      try { r = await klingEdition.lance({ addr, octets, image: q.image, prompt: q.prompt, resolution: q.resolution, audio: q.audio, premiere }); }
       catch (e) { console.error('[kling-edition] ' + (e && e.stack || e)); r = { ok: false, code: 500, raison: 'server error' }; }
       return json(r.ok ? 200 : (r.code || 500), r);
     }

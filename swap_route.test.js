@@ -158,9 +158,9 @@ const suspendue = (port, chemin, entetes, octets) => new Promise((res) => {
 
   console.log('-- 1. sans session, sans la case, trop gros --');
   const g = await appel('/studio/swap');
-  ok(g.statut === 200 && g.j.personnages.length === 1 && g.j.personnages[0].id === 'swoge' && g.j.cibles.map((c) => c.id).join() === 'chante,gauche,droite,tous'
+  ok(g.statut === 200 && g.j.personnages.length === 1 && g.j.personnages[0].id === 'swoge' && g.j.cibles.map((c) => c.id).join() === 'gauche,centre,droite,seule' && g.j.cibleRequise === true
      && g.j.prixParSecondeUsd === 0.252 && g.j.octetsMax === 60 * 1048576 && g.j.dureeMaxS === 60 && g.j.resolution === '720p' && g.j.passe === null && g.j.connecte === false && g.j.actif === true,
-     'GET sans session : SWOGE, 4 cibles, 0,252 $/s, 60 Mo, 60 s, 720p');
+     'GET sans session : SWOGE, 4 cibles par position (requises), 0,252 $/s, 60 Mo, 60 s, 720p');
   ok(!/0\.126|plafondUsd|prixPire/.test(g.t) && !/AI_OWNER|owner/i.test(g.t), 'aucun cout maison ni plafond dans la reponse publique');
   ok((await appel('/studio/swap', { 'content-type': 'video/mp4', 'x-swap-rights': 'yes' }, null, 'POST', octets)).statut === 401, 'POST sans session : 401');
   const j1 = await connecte(port, J1), j2 = await connecte(port, J2), j3 = await connecte(port, J3), j4 = await connecte(port, J4), moi = await connecte(port, OWNER);
@@ -193,10 +193,10 @@ const suspendue = (port, chemin, entetes, octets) => new Promise((res) => {
   const l1 = await L(id1, j1.H);
   ok(l1.statut === 200 && l1.j.statut === 'en_cours' && await credit(j1.H) === 6.47, 'le bon prix : en cours, 3,53 $ reserves (credit 6,47 $)');
   const envois = envoisKling().map((x) => JSON.parse(x.o.body));
-  ok(envois.length === 2 && envois.every((b) => /^Replace the person who is singing or talking in @video_1 with the exact 3D character of @image_1 and @image_2/.test(b.contents[0].text)
-     && b.contents[1].url === 'https://site.example/img/site/swoge_swole_ref.jpg' && b.contents[1].id === 'image_1' && b.contents[2].url === 'https://site.example/img/site/swoge_face_ref.jpg'
+  ok(envois.length === 2 && envois.every((b) => /^Replace the only person in @video_1 with the exact SWOGE character of @image_1 \(full body\) and @image_2 \(face\)/.test(b.contents[0].text)
+     && b.contents[1].url === 'https://site.example/img/site/swoge_meme_ref.jpg' && b.contents[1].id === 'image_1' && b.contents[2].url === 'https://site.example/img/site/swoge_face_ref.jpg'
      && b.contents[2].id === 'image_2' && b.contents[3].id === 'video_1' && b.settings.audio === 'original' && b.settings.resolution === '720p'),
-     'Kling recoit le texte de la maison, le corps et le visage de SWOGE par URL, 720p, son d origine');
+     'Kling recoit le texte de la maison (l ancien id « chante » = la seule personne), le corps (le meme) et le visage de SWOGE par URL, 720p, son d origine');
   ok(luParKling.length === 2 && luParKling.every((x) => x.statut === 200 && new RegExp('^' + B.replace(/\./g, '\\.') + '/studio/swap-clip/[0-9a-f]{48}\\.mp4$').test(x.url)),
      'Kling lit chaque morceau a son URL publique /studio/swap-clip/, sans session');
 

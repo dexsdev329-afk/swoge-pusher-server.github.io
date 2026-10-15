@@ -71,6 +71,16 @@
  *   coupe ENTRE l'envoi et l'ecriture de l'id est retrouve par notre
  *   identifiant externe (external_task_ids) avant d'etre renvoye — jamais payé
  *   deux fois sans le savoir.
+ *
+ * ---- L'ELEMENT SWOGE (15 octobre 2026) ----
+ *   `deps.element()` (swoge_element.js) rend l'id de l'element SWOGE en service,
+ *   ou null. Proprietaire : quand ses images sont exactement celles de SWOGE par
+ *   defaut (liste vide, « swoge », « swoge-face »), l'element part A LA PLACE des
+ *   images et le texte cite @element_1 (swoge_texte.versElement). Public : c'est
+ *   `choisit` (swap.js) qui le decide, jamais avec les images d'un joueur.
+ *   L'id est FIGE dans la passe au lancement (P.element, ecrit sur le disque) :
+ *   une relance ou une reprise apres redemarrage envoie le meme.
+ *   « reference images + Elements <= 4 » avec une video (video-omni.md).
  * ======================================================================== */
 const fs = require('fs');
 const path = require('path');
@@ -78,6 +88,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { telechargeSur } = require('./telecharge_sur');
 const K = require('./kling');
+const ST = require('./swoge_texte');
 
 /* 9,5 s : 0,5 s de marge sous les 10 s de la doc (une coupure posee sur la
    grille des images peut allonger un morceau d'une image). */
@@ -433,7 +444,13 @@ function cree(deps) {
     const brutes = Array.isArray(q.images) ? q.images.filter((x) => x != null && x !== '').map((x) => (Object.prototype.hasOwnProperty.call(JETONS, x) ? JETONS[x] : x)) : [];
     const liste = brutes.length ? brutes : DEFAUT.slice();
     if (liste.some((x) => x == null)) return { ok: false, code: 400, raison: 'unknown default picture' };
-    return { ok: true, liste, texte, resolution: q.resolution === '1080p' ? '1080p' : '720p' };
+    const resolution = q.resolution === '1080p' ? '1080p' : '720p';
+    /* SWOGE par defaut seulement (aucune image a soi) : l'element, s'il existe, au lieu des images */
+    const seulementDefaut = liste.every((x) => DEFAUT.includes(x));
+    let el = null;
+    try { el = seulementDefaut && deps.element ? deps.element() : null; } catch (e) { el = null; }
+    if (el) return { ok: true, liste: [], element: String(el), texte: ST.versElement(texte), resolution };
+    return { ok: true, liste, texte, resolution };
   }
   /* Le choix d'un joueur (15/10/2026) : un personnage MAISON ou 1-2 images DEJA ACCEPTEES par la
      porte (swap_garde.js, par leur sha256), qui remplacer, un texte libre CITE dans le gabarit de
@@ -455,7 +472,7 @@ function cree(deps) {
     if (!PUB.resolutions.includes(resolution)) return { ok: false, code: 400, raison: 'pick ' + PUB.resolutions.join(' or ') };
     const c = PUB.choisit(q.personnage, q.cible, { images: imgs.length, texte: t.texte });
     if (!c || !c.ok) return { ok: false, code: 400, raison: (c && c.raison) || 'pick a character and who to replace' };
-    return { ok: true, liste: imgs.length ? imgs.map((x) => x.base64) : c.images.slice(), texte: c.prompt, resolution,
+    return { ok: true, liste: imgs.length ? imgs.map((x) => x.base64) : c.images.slice(), element: imgs.length ? null : (c.element || null), texte: c.prompt, resolution,
              choix: { personnage: c.personnage, cible: c.cible, resolution, imagesJoueur: imgs.length, texteJoueur: t.texte.length } };
   }
 
@@ -477,8 +494,11 @@ function cree(deps) {
     if (P.statut !== 'pret') return { ok: false, code: 409, raison: 'this edit is ' + P.statut + ', not waiting for a go' };
     const c = PUB ? choixPublic(q) : choixProprietaire(q);
     if (!c.ok) return c;
-    const liste = c.liste, texte = c.texte, resolution = c.resolution;
-    if (liste.length > K.EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: K.EDITION_IMAGES_MAX + ' reference pictures at most (Kling limit with a video)' };
+    const liste = c.liste, texte = c.texte, resolution = c.resolution, element = c.element || null;
+    /* la premiere image (proprietaire seulement, premiere_image.js, 15/10/2026) : une refer_image de plus */
+    const premiere = !PUB && q.premiere && q.premiere.base64 ? q.premiere : null;
+    if (liste.length + (element ? 1 : 0) + (premiere ? 1 : 0) > K.EDITION_IMAGES_MAX) return { ok: false, code: 400, raison: K.EDITION_IMAGES_MAX + ' reference pictures and elements at most (Kling limit with a video)' + (premiere ? ' — the first frame counts as one: remove a picture' : '') };
+    if (!liste.length && !element) return { ok: false, code: 400, raison: 'a reference picture is needed' };
     const refs = [];
     for (let i = 0; i < liste.length; i++) {
       const r = K.referenceEdition(liste[i]);
@@ -518,14 +538,20 @@ function cree(deps) {
       fs.writeFileSync(fic(P, nom), Buffer.from(r.image, 'base64'));
       return { type: 'fichier', nom, format: r.source };
     });
-    P.prompt = texte; P.resolution = resolution; P.prixConfirme = PUB ? aPayer : prix; P.tLance = temps();
+    P.prompt = texte; P.resolution = resolution; P.element = element;
+    P.premiere = null;
+    if (premiere) {
+      const nom = 'premiere.' + (premiere.format === 'png' ? 'png' : 'jpg');
+      fs.writeFileSync(fic(P, nom), Buffer.from(premiere.base64, 'base64'));
+      P.premiere = { nom, format: premiere.format === 'png' ? 'png' : 'jpeg' };
+    } P.prixConfirme = PUB ? aPayer : prix; P.tLance = temps();
     for (const s of P.segments) s.statut = 'attente';
     /* public : une place parmi `passesMax`, sinon la file (la reserve est deja prise) */
     if (PUB && occupees() >= PUB.passesMax) { P.statut = 'file'; P.tFile = temps(); }
     else P.statut = 'en_cours';
     ecrit(P);
     note({ entier: P.id, lance: true, morceaux: P.segments.length, resolution, images: P.images.map((x) => (x.type === 'url' ? (x.url === DEFAUT[0] ? 'swoge' : x.url === DEFAUT[1] ? 'swoge-face' : 'url') : x.format)), prixPire: prix, plafondUsd: PLAFOND, parallele: PAR,
-           ...(P.statut === 'file' ? { file: fileDAttente().length } : {}) });
+           ...(element ? { element } : {}), ...(P.premiere ? { premiere: true } : {}), ...(P.statut === 'file' ? { file: fileDAttente().length } : {}) });
     /* les premiers envois partent avant la reponse : la page voit tout de suite un refus de Kling */
     if (P.statut === 'en_cours') await pompe(P).catch((e) => console.error('[kling-entier] ' + e.message));
     return Object.assign({ ok: true }, vue1(P));
@@ -543,8 +569,14 @@ function cree(deps) {
     EN_VOL.add(s.externe);
     let r;
     try {
-      r = await kling.lanceEdition({ videoUrl: deps.urlPublique(s.fichier), images: references(P), prompt: P.prompt, resolution: P.resolution,
-                                     audio: 'original', dureeS: s.duree, externe: s.externe });
+      /* la premiere image : en DERNIERE refer_image ; « the first frame … » pour le morceau 1 seulement */
+      let images = references(P), texteMorceau = P.prompt;
+      if (P.premiere) {
+        images = images.concat([fs.readFileSync(fic(P, P.premiere.nom)).toString('base64')]);
+        texteMorceau = P.prompt + require('./premiere_image').phraseVideo(images.length, s.i === 0);
+      }
+      r = await kling.lanceEdition(Object.assign({ videoUrl: deps.urlPublique(s.fichier), images, prompt: texteMorceau, resolution: P.resolution,
+                                     audio: 'original', dureeS: s.duree, externe: s.externe }, P.element ? { element: P.element } : {}));
     } catch (e) { r = { ok: false, code: 502, raison: 'Kling refused: ' + (e && e.message) }; }
     EN_VOL.delete(s.externe);
     if (r && r.ok) {
@@ -552,7 +584,7 @@ function cree(deps) {
       P.depenseMaxUsd = arrondi3(P.depenseMaxUsd + (r.estimationUsd || 0));
       ecrit(P);
       note({ id: r.id, entier: P.id, morceau: s.i, edition: true, modele: r.modele, dureeS: r.dureeS, resolution: r.resolution, audio: r.audio,
-             images: (r.images || []).length, estimationUsd: r.estimationUsd, essai: s.essais });
+             images: (r.images || []).length, ...(r.element ? { element: r.element } : {}), estimationUsd: r.estimationUsd, essai: s.essais });
       return;
     }
     const code = r && r.klingCode != null ? Number(r.klingCode) : null;
@@ -886,7 +918,7 @@ function cree(deps) {
       message: s.message, essais: s.essais, estimationUsd: s.estimationUsd != null ? s.estimationUsd : K.prixEdition(P.resolution || '720p', s.duree),
       facturation: s.facturation, rejouable: rejouable(s) }));
     const v = { id: P.id, statut: P.statut, message: P.message, source: P.source, fps: P.fps, cotes: P.cotes, morceaux: segs, scenes: P.scenes != null ? P.scenes : null,
-             prixPire: P.prixPlan, plafondUsd: PLAFOND, parallele: PAR, resolution: P.resolution, prixConfirme: P.prixConfirme || null, depenseMaxUsd: P.depenseMaxUsd,
+             prixPire: P.prixPlan, element: P.element ? true : false, premiere: P.premiere ? true : false, plafondUsd: PLAFOND, parallele: PAR, resolution: P.resolution, prixConfirme: P.prixConfirme || null, depenseMaxUsd: P.depenseMaxUsd,
              video: P.statut === 'fini' && P.final ? (PUB ? PUB.urlVideo(P.id) : '/studio/kling/entier/' + P.id + '/video') : null, dureeFinale: P.dureeFinale || null,
              expire: P.statut === 'fini' ? Number(P.t) + GARDE_MS : null };
     if (!PUB) return v;
@@ -927,6 +959,16 @@ function cree(deps) {
   }
 
   /** Ce que la page lit : les bornes, la grille, le plafond, la passe en cours. */
+  /** Le morceau 1 coupe d'une passe PRETE, pour SON adresse (la premiere image, proprietaire). */
+  function cheminMorceau(id, addr, i) {
+    const P = ID.test(String(id || '')) ? PASSES.get(String(id)) : null;
+    if (!P || P.addr !== addr || PUB) return null;
+    const s = P.segments && P.segments[Number(i) || 0];
+    if (!s || !s.fichier) return null;
+    const f = fic(P, s.fichier);
+    return fs.existsSync(f) ? f : null;
+  }
+
   function vue(addr) {
     const mienne = [...PASSES.values()].filter((P) => P.addr === addr).sort((a, b) => b.t - a.t)[0];
     if (PUB) {
@@ -951,7 +993,7 @@ function cree(deps) {
 
   relit();
   /* les passes reprises au demarrage repartent au premier tour */
-  return { cree: cree_, lance, relance, recolle, abandonne, termine, reprendReserves, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES, public: !!PUB,
+  return { cree: cree_, lance, relance, cheminMorceau, recolle, abandonne, termine, reprendReserves, etat, resultat, fichier, vue, tour, demarre, arrete, PASSES, public: !!PUB,
            attend: async (id) => { const P = PASSES.get(id); if (P && P.travail) await P.travail; } };
 }
 

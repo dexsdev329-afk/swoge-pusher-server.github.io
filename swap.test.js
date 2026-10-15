@@ -106,13 +106,24 @@ async function attend(M, id, addr, statuts, max) {
     ok(r1.marge === 2 && r1.moMax === 60 && r1.dureeMaxS === 60 && r1.parallele === 2 && r1.plafondJourUsd === 50, 'hors bornes (marge < 1, > 100 Mo, < 3 s, > 8 passes, plafond negatif) : les defauts');
     const r2 = SW.reglages({ SWAP_MARGE: '3', SWAP_MO_MAX: '20', SWAP_DUREE_MAX_S: '30', SWAP_PARALLELE: '4', SWAP_PLAFOND_JOUR_USD: '0' });
     ok(r2.marge === 3 && r2.moMax === 20 && r2.dureeMaxS === 30 && r2.parallele === 4 && r2.plafondJourUsd === 0, 'dans les bornes : pris tels quels (0 $ par jour ferme le service)');
-    const p = SW.prompt(SW.PERSONNAGES[0], SW.CIBLES.find((c) => c.id === 'chante'));
-    ok(/^Replace the person who is singing or talking in @video_1 with the exact 3D character of @image_1 and @image_2: SWOGE, a huge bodybuilder Shiba Inu/.test(p) && /face of @image_2/.test(p)
-       && /Keep every other person, the camera, the background and the original audio unchanged\.$/.test(p), 'le texte de Kling : celui du proprietaire, la cible remplacee');
-    const pt = SW.prompt(SW.PERSONNAGES[0], SW.CIBLES.find((c) => c.id === 'tous'));
-    ok(/^Replace every person in @video_1/.test(pt) && /Keep the camera, the background/.test(pt) && pt.length <= K.TEXTE_MAX, 'tout le monde : « Keep the camera… », sous ' + K.TEXTE_MAX + ' signes');
-    ok(SW.CIBLES.map((c) => c.id).join() === 'chante,gauche,droite,tous' && SW.PERSONNAGES[0].images.join() === '/img/site/swoge_swole_ref.jpg,/img/site/swoge_face_ref.jpg',
-       'quatre cibles ; SWOGE = corps (image_1) puis visage (image_2)');
+    /* 15/10/2026 : la cible par POSITION (« the singer » a fait remplacer la mauvaise personne) et
+       SWOGE d apres le meme « Swole Doge » (swoge_texte.js) — le texte reste celui du proprietaire. */
+    const ST = require('./swoge_texte');
+    const p = SW.prompt(SW.PERSONNAGES[0], ST.cible('droite'));
+    ok(/^Replace ONLY the person on the RIGHT side of the frame in @video_1 with the exact SWOGE character of @image_1 \(full body\) and @image_2 \(face\): the Swole Doge/.test(p) && /Doge face of @image_2/.test(p)
+       && /The other people stay exactly as they are\. Keep the camera, the background and the original audio unchanged\.$/.test(p) && p === ST.texte('droite', false),
+       'le texte de Kling : celui du proprietaire (swoge_texte.texte), la cible a droite, « The other people stay exactly as they are »');
+    ok(/no bare human skin anywhere: chest, belly, arms and legs are all thick fur/.test(p) && /Furry dog paws with dark pads and small dark claws instead of human hands/.test(p)
+       && /Plain black gym shorts/.test(p) && /much bigger than the original person/.test(p) && /Nothing is kept from the replaced person/.test(p)
+       && /round friendly Doge face of @image_2 \(cream-white cheeks, small dark eyes, black nose, smile\), NOT a realistic wolf-like Shiba/.test(p)
+       && /small Doge head on a thick tall neck/.test(p) && /short thin legs/.test(p) && /cream-beige fur EVERYWHERE, one uniform colour/.test(p) && !/orange/i.test(p),
+       'le personnage : fourrure partout, aucune peau, pattes, short, plus grand, rien de la personne, visage Doge (pas un shiba realiste), proportions du meme, creme-beige uniforme (plus d orange)');
+    const ps = SW.prompt(SW.PERSONNAGES[0], ST.cible('chante'));
+    ok(/^Replace the only person in @video_1/.test(ps) && !/other people/.test(ps) && ps === SW.prompt(SW.PERSONNAGES[0], ST.cible('seule')), 'l ancien id « chante » : la seule personne, mot pour mot');
+    const pt = SW.prompt(SW.PERSONNAGES[0], ST.cible('tous'));
+    ok(/^Replace every person in @video_1/.test(pt) && /Keep the camera, the background/.test(pt) && pt.length <= K.TEXTE_MAX, 'tout le monde (accepte, plus propose) : « Keep the camera… », sous ' + K.TEXTE_MAX + ' signes');
+    ok(SW.CIBLES.filter((c) => !c.cache).map((c) => c.id).join() === 'gauche,centre,droite,seule' && SW.PERSONNAGES[0].images.join() === '/img/site/swoge_meme_ref.jpg,/img/site/swoge_face_ref.jpg',
+       'quatre cibles proposees (gauche, centre, droite, seule) ; SWOGE = le meme (image_1) puis le visage (image_2)');
   }
 
   if (!ffmpegOk) { console.log('ffmpeg absent : la suite reelle est sautee'); console.log('\nVERIFICATIONS : ' + n + (rates ? '  —  RATES : ' + rates + '/' + n : '  —  tout passe')); process.exit(rates ? 1 : 0); }
@@ -177,9 +188,9 @@ async function attend(M, id, addr, statuts, max) {
        'credit de 12 $ : 3,53 $ reserves (reserve DURABLE), reste ' + C1.soldeUsd(A) + ' $');
     const d = C1.durables()[0];
     ok(d.info.genre === 'swap' && d.info.id === id && d.addr === A, 'la reserve porte sa passe (genre swap, id)');
-    ok(F1.envois.length === 2 && F1.envois.every((q) => q.lu && q.resolution === '720p' && q.audio === 'original' && JSON.stringify(q.images) === JSON.stringify([SITE + '/img/site/swoge_swole_ref.jpg', SITE + '/img/site/swoge_face_ref.jpg'])
-       && q.prompt === SW.prompt(SW.PERSONNAGES[0], SW.CIBLES[0])), 'Kling recoit les 2 morceaux, 720p, son d origine, le corps et le visage de SWOGE par URL, le texte de la maison');
-    ok(lignes.some((x) => x.swap && x.paiement === 'reserve' && x.entier === id && x.prixUsd === 3.53 && x.personnage === 'swoge' && x.cible === 'chante'), 'journal : la reserve, le personnage, la cible');
+    ok(F1.envois.length === 2 && F1.envois.every((q) => q.lu && q.resolution === '720p' && q.audio === 'original' && JSON.stringify(q.images) === JSON.stringify([SITE + '/img/site/swoge_meme_ref.jpg', SITE + '/img/site/swoge_face_ref.jpg'])
+       && q.prompt === SW.prompt(SW.PERSONNAGES[0], require('./swoge_texte').cible('seule'))), 'Kling recoit les 2 morceaux, 720p, son d origine, le corps et le visage de SWOGE par URL, le texte de la maison');
+    ok(lignes.some((x) => x.swap && x.paiement === 'reserve' && x.entier === id && x.prixUsd === 3.53 && x.personnage === 'swoge' && x.cible === 'seule'), 'journal : la reserve, le personnage, la cible (l ancien id « chante » envoye par la page d avant : ecrit « seule »)');
   }
 
   console.log('\n-- 4. une passe par adresse ; la file --');
@@ -195,14 +206,14 @@ async function attend(M, id, addr, statuts, max) {
     const lb = await M2.lance(ids[B], B, { personnage: 'swoge', cible: 'droite', confirmeUsd: 3.53 });
     const lc = await M2.lance(ids[Cx], Cx, { personnage: 'swoge', cible: 'tous', confirmeUsd: 3.53 });
     ok(la.statut === 'en_cours' && lb.statut === 'file' && lb.file === 1 && lc.statut === 'file' && lc.file === 2, 'SWAP_PARALLELE=1 : A chez Kling, B 1er en file, C 2e');
-    ok(F2.envois.length === 2 && F2.envois.every((q) => /the person on the left of the frame/.test(q.prompt)) && proche(C2.soldeUsd(B), 6.47, 1e-9), 'seuls les morceaux de A partent ; B est deja reserve (place payee)');
+    ok(F2.envois.length === 2 && F2.envois.every((q) => /ONLY the person on the LEFT side of the frame/.test(q.prompt)) && proche(C2.soldeUsd(B), 6.47, 1e-9), 'seuls les morceaux de A partent ; B est deja reserve (place payee)');
     ok(M2.vue(B).enFile === 2 && M2.vue(B).occupees === 1, 'la page lit la file (2) et les places prises (1)');
     const ab = M2.abandonne(ids[Cx], Cx);
     ok(ab.ok && ab.statut === 'abandon' && proche(C2.soldeUsd(Cx), 10, 1e-9) && ab.paiement.renduUsd === 3.53, 'annuler dans la file : 3,53 $ rendus');
     F2.finit('succeeded'); t += 2000; await M2.tour();
     const ea = await attend(M2, ids[A], A, ['fini', 'incomplet']);
     await M2.tour();
-    ok(ea.statut === 'fini' && M2.etat(ids[B], B).statut === 'en_cours' && F2.envois.length === 4 && F2.envois.slice(2).every((q) => /on the right/.test(q.prompt)), 'A fini : B sort de la file et part chez Kling');
+    ok(ea.statut === 'fini' && M2.etat(ids[B], B).statut === 'en_cours' && F2.envois.length === 4 && F2.envois.slice(2).every((q) => /ONLY the person on the RIGHT side of the frame/.test(q.prompt)), 'A fini : B sort de la file et part chez Kling');
     ok(lignes.some((x) => x.swap && x.sortieFile && x.entier === ids[B]), 'journal : la sortie de file');
     PA = M2.PASSES.get(ids[A]); PB = M2.PASSES.get(ids[B]); PC = ids[Cx];
     ok(proche(C2.soldeUsd(A), 6.47, 1e-9) && ea.paiement.factureUsd === 3.53 && ea.paiement.renduUsd === 0, 'A regle : tout livre, 3,53 $ factures, rien a rendre');
