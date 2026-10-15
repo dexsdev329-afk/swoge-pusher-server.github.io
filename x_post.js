@@ -1575,15 +1575,51 @@ async function ecritTexte(faits, o, prendre) {
 
 // ------------------------------------------------------------ l image
 
+/* ---- L'IMAGE DE REFERENCE (15/10/2026) ----
+ * Demande du proprietaire : « pour notre X il utilise une image reference, prend celle-la ».
+ * Avant, chaque image partait d'un texte seul (/images/generations) et SWOGE changait de tete
+ * d'une image a l'autre. Desormais, si annonces/swoge_reference.png existe, on passe par
+ * /images/edits avec cette image : le SDK officiel (openai 7.34.0, resources/images.d.ts) dit
+ * « image: Uploadable | Array<Uploadable> », jusqu'a 16 images pour les modeles GPT image, et
+ * « input_fidelity: 'high' | 'low' » pour gpt-image-1 et gpt-image-1.5 (a omettre pour
+ * gpt-image-2). Corps multipart, memes reponses (data[0].b64_json, usage). X_REFERENCE=0 revient
+ * a l'ancien chemin, texte seul. */
+const REFERENCE_X = path.join(__dirname, 'annonces', 'swoge_reference.png');
+const PREFIXE_REFERENCE = 'The main character must be EXACTLY the character in the reference image: same Doge face, same cream-beige fur everywhere, same huge muscular proportions, furry dog paws. Only his clothes and pose change to fit the scene. ';
+function referenceX() {
+  if (process.env.X_REFERENCE === '0') return null;
+  try { return fs.readFileSync(REFERENCE_X); } catch (e) { return null; }
+}
+
 async function genereImage(prompt, prendre) {
   const e = env();
   const f = prendre || fetch;
-  const r = await f('https://api.openai.com/v1/images/generations', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + e.openai },
-    body: JSON.stringify({ model: e.modeleImage, prompt, size: '1536x1024', quality: e.qualite, n: 1, output_format: 'png' }),
-    signal: AbortSignal.timeout(180000),
-  });
+  const ref = referenceX();
+  let r;
+  if (ref) {
+    const fd = new FormData();
+    fd.append('model', e.modeleImage);
+    fd.append('prompt', PREFIXE_REFERENCE + prompt);
+    fd.append('size', '1536x1024');
+    fd.append('quality', e.qualite);
+    fd.append('n', '1');
+    fd.append('output_format', 'png');
+    if (/^gpt-image-1/.test(e.modeleImage)) fd.append('input_fidelity', 'high');
+    fd.append('image', new Blob([ref], { type: 'image/png' }), 'swoge_reference.png');
+    r = await f('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + e.openai },
+      body: fd,
+      signal: AbortSignal.timeout(180000),
+    });
+  } else {
+    r = await f('https://api.openai.com/v1/images/generations', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + e.openai },
+      body: JSON.stringify({ model: e.modeleImage, prompt, size: '1536x1024', quality: e.qualite, n: 1, output_format: 'png' }),
+      signal: AbortSignal.timeout(180000),
+    });
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error('image : HTTP ' + r.status + ' ' + ((j.error && j.error.message) || '').slice(0, 120));
   const b64 = j.data && j.data[0] && j.data[0].b64_json;

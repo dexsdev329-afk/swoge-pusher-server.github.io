@@ -36,6 +36,9 @@ for (const k of ['X_CONSUMER_KEY', 'X_CONSUMER_SECRET', 'X_ACCESS_TOKEN', 'X_ACC
 
 let n = 0;
 const ok = (c, m) => { assert.ok(c, m); n++; console.log('  ok   ' + m); };
+/* 15/10/2026 : les essais du calendrier comptent les images payees sur /images/generations ; ils tournent
+   sur le chemin texte seul. Le chemin avec l'image de reference a son propre essai (cherche « reference du proprietaire »). */
+process.env.X_REFERENCE = '0';
 const eq = (a, b, m) => { assert.strictEqual(a, b, `${m} (${a} vs ${b})`); n++; console.log('  ok   ' + m); };
 
 const x = require('./x_post');
@@ -205,7 +208,7 @@ const cfg = require('./config');
        (« two » vaut 2) : les mots sont ceux de l alphabet radio. */
     const MOTS = ['alfa', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliett', 'kilo'];
     const faux = async (url, o) => {
-      const u = String(url); const corps = o && o.body ? JSON.parse(o.body) : null;
+      const u = String(url); const corps = o && typeof o.body === 'string' ? JSON.parse(o.body) : null; /* 15/10 : l image part en FormData */
       appels.push({ u, corps, auth: (o && o.headers && (o.headers.authorization || o.headers['x-api-key'])) || '' });
       const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
       /* Le controle des pattes (vision) : avant la branche image, car les deux sont chez openai. */
@@ -556,7 +559,8 @@ const cfg = require('./config');
     /* genereImageVerifiee : regenere apres un refus, et renforce le prompt. */
     let nGen = 0; const prompts = [];
     const fauxGV = async (u, o) => {
-      const c = o && o.body ? JSON.parse(o.body) : null;
+      /* 15/10 : l'image part en multipart (FormData, /images/edits) quand la reference existe, en JSON sinon */
+      const c = o && o.body ? (typeof o.body === 'string' ? JSON.parse(o.body) : { prompt: o.body.get('prompt') }) : null;
       if (/chat\/completions/.test(String(u))) {
         /* le premier rendu a des mains, le second non */
         const mains = nGen <= 1;
@@ -576,6 +580,22 @@ const cfg = require('./config');
     let leve = false;
     try { await x.genereImageVerifiee('x', toujoursMains, 2); } catch (e) { leve = /mains humaines/.test(e.message); }
     ok(leve, 'deux refus de suite : on leve, aucune image a mains n est postee');
+
+    /* 15/10/2026 : l'image de reference du proprietaire (annonces/swoge_reference.png). Avec elle,
+       /images/edits en multipart : l'image jointe, input_fidelity high, le prompt prefixe. Sans
+       (X_REFERENCE=0), l'ancien chemin /images/generations en JSON. */
+    delete process.env.X_REFERENCE;
+    const vu = [];
+    const fauxRef = async (u, o) => { vu.push({ u: String(u), o }); return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: Buffer.from('PNG').toString('base64') }] }) }; };
+    await x.genereImage('a buff shiba at the beach', fauxRef);
+    const r0 = vu[0], fd = r0.o.body;
+    ok(/\/v1\/images\/edits$/.test(r0.u) && typeof fd === 'object' && typeof fd.get === 'function', 'avec la reference : /images/edits, corps multipart');
+    const img = fd.get('image');
+    ok(img && img.size > 100000 && fd.get('input_fidelity') === 'high' && fd.get('size') === '1536x1024', 'l image de reference est jointe (' + (img && img.size) + ' octets), fidelite haute, 1536x1024');
+    ok(/EXACTLY the character in the reference image/.test(fd.get('prompt')) && /at the beach/.test(fd.get('prompt')), 'le prompt dit de garder le personnage de la reference, puis la scene');
+    process.env.X_REFERENCE = '0'; vu.length = 0;
+    await x.genereImage('a buff shiba at the beach', fauxRef);
+    ok(/\/v1\/images\/generations$/.test(vu[0].u) && JSON.parse(vu[0].o.body).prompt === 'a buff shiba at the beach', 'X_REFERENCE=0 : texte seul, comme avant');
     delete process.env.OPENAI_API_KEY;
   }
 
@@ -1268,7 +1288,7 @@ const cfg = require('./config');
     const FAUTIF = { 3: (nom) => `${nom} now has live betting 🔥`, 7: (nom) => `${nom} has 777 players already 🚀`, 11: () => 'The dog is built different 🐕💪' };
     const RADIO = ['alfa', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliett', 'kilo', 'lima'];
     const faux = async (url, o) => {
-      const u = String(url); const corps = o && o.body ? JSON.parse(o.body) : null;
+      const u = String(url); const corps = o && typeof o.body === 'string' ? JSON.parse(o.body) : null; /* 15/10 : l image part en FormData */
       const rep = (statut, j) => ({ ok: statut < 300, status: statut, json: async () => j, text: async () => JSON.stringify(j) });
       if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false, "why": "paws"}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG').toString('base64') }] });
@@ -1387,7 +1407,7 @@ const cfg = require('./config');
     ok(c.produit === 'bet' && c.rang === 0, 'sans rang dans le journal, la rotation repart de SWOGE Bet');
     const appels = [];
     const faux = async (url, o) => {
-      const u = String(url); appels.push(u); const corps = o && o.body ? JSON.parse(o.body) : null;
+      const u = String(url); appels.push(u); const corps = o && typeof o.body === 'string' ? JSON.parse(o.body) : null; /* 15/10 : l image part en FormData */
       const rep = (statut, jj) => ({ ok: statut < 300, status: statut, json: async () => jj });
       if (/chat\/completions/.test(u)) return rep(200, { choices: [{ message: { content: '{"hands": false}' } }] });
       if (/openai/.test(u)) return rep(200, { data: [{ b64_json: Buffer.from('PNG').toString('base64') }] });
