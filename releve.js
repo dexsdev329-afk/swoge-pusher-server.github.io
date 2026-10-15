@@ -42,6 +42,18 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   /* Les moins de 4 min selon DexScreener (mesure seule, 28/09) et les portefeuilles juges. */
   const SA = d.sondeAge;
   if (SA) console.log('jeunes<4  ', SA.lignes.map((l) => `${l.nom} n=${l.n} ${l.partMontes ?? '—'}%`).join(' | ') + ` · ligne entiere n=${SA.ligneEntiere.n} ${SA.ligneEntiere.partMontes ?? '—'}%`);
+  /* Le signal du brief (15/10) : sa ligne a l echeance de reference, contre la reference ; la porte de « achat » ;
+     le plan de sortie du brief rejoue en ombre, apparie a la sortie en vigueur. */
+  const SG = d.smartSignal;
+  if (SG) {
+    for (const l of SG.lignes || []) {
+      const pb = l.planBrief;
+      console.log(`smart ${l.verdict === 'ACHETER' ? 'buy  ' : 'watch'}`, `n=${l.n || 0}/${SG.min} montes=${l.partMontes ?? '—'}% moy=${l.moyenne ?? '—'} strat=${l.strat ?? '—'} (7j n=${l.n7 ?? 0} ${l.partMontes7 ?? '—'}%)`
+        + ` · horizons ${(l.horizons || []).map((h) => `${h.h}m:${h.n ? h.partMontes + '%/' + h.n : '—'}`).join(' ')}`
+        + ` · plan brief ${pb ? `n=${pb.n} moy=${pb.moyenne}% gagnants=${pb.partGagnantes}% ecart/vigueur=${pb.ecartMoyen ?? '—'} (${pb.apparies})` : '—'}`);
+    }
+    console.log('smart     ', `mode ${SG.mode} · porte ${SG.porte && SG.porte.ouverte ? 'OUVERTE' : 'fermee : ' + ((SG.porte && SG.porte.raisons) || []).join(' ; ')} · en attente ${SG.enAttente} · ombres ${SG.ombres}`);
+  }
   const PFv = d.portefeuilles;
   if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};

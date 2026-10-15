@@ -6055,15 +6055,23 @@ function regleLesOmbres(marche) {
 const MISE_OMBRE = 30;              /* la taille d'une position, en dollars : c'est ce que le Banquier pose */
 const OMBRE_LIQ_MORTE = 200;        /* sous ce fond, il n'y a plus de marche du tout */
 function rendementVendable(r, liq) {
-  if (!isFinite(r)) return r;
-  if (typeof liq !== 'number' || !isFinite(liq) || liq < 0) return r;   /* non lue : on ne corrige pas */
-  if (liq < OMBRE_LIQ_MORTE) { compte('jalonFantome'); return OMBRE_DISPARUE; }
+  const d = vendableDetail(r, liq);
+  if (d.fantome) compte('jalonFantome');
+  if (d.rabote) compte('jalonRabote');
+  return d.v;
+}
+/* La meme arithmetique, sans compteur : les ombres du signal du brief
+   (`regleLesSmart`) la lisent sans toucher aux compteurs de la colonie. */
+function rendementVendablePur(r, liq) { return vendableDetail(r, liq).v; }
+function vendableDetail(r, liq) {
+  if (!isFinite(r)) return { v: r };
+  if (typeof liq !== 'number' || !isFinite(liq) || liq < 0) return { v: r };   /* non lue : on ne corrige pas */
+  if (liq < OMBRE_LIQ_MORTE) return { v: OMBRE_DISPARUE, fantome: true };
   const V = MISE_OMBRE * (1 + r / 100);
-  if (!(V > 0)) return r;
+  if (!(V > 0)) return { v: r };
   const rendu = V / (1 + 2 * V / liq);
   const rv = (rendu - MISE_OMBRE) / MISE_OMBRE * 100;
-  if (r - rv >= 10) compte('jalonRabote');
-  return Math.round(rv * 10) / 10;
+  return { v: Math.round(rv * 10) / 10, rabote: r - rv >= 10 };
 }
 
 /* ==========================================================================
@@ -9888,6 +9896,322 @@ function soumissions(qui) {
   return [...SOUMIS.vus.values()].filter((v) => !q || v.qui === q).sort((a, b) => b.t - a.t).slice(0, 10).map(etatSoumission);
 }
 
+/* ==========================================================================
+ * LE SIGNAL DU BRIEF (15/10/2026) : UNE SOURCE OBSERVEE, PAS UNE SOURCE D'ACHAT
+ *
+ * Le proprietaire a ecrit un brief d'analyste : des wallets a suivre (Sniper 1,
+ * 0x1ad70bc7, 0xb255c023…) et des regles ACHETER / SURVEILLER / EVITER. Le
+ * detecteur smart money (smart_money.js) les applique et nous envoie chaque
+ * verdict ACHETER ou SURVEILLER (`signalSmart`). Ses chiffres sont les SIENS
+ * (29 % de gagnants pour Sniper 1 sur ~100 jetons, etc.) : aucun n'a ete
+ * mesure par cette colonie. Donc, comme `OBS_VIEUX_PAR_TOUR` pour le plafond
+ * d'age : on le rend JUGEABLE avant de lui laisser acheter quoi que ce soit.
+ *
+ * COLONIE_SMART_SIGNAL :
+ *   observe (defaut)  chaque verdict laisse une OMBRE A PART (`E.smartSignal`),
+ *                     jugee aux memes echeances que les autres (5 a 120 min),
+ *                     au meme prix vendable, nette du meme cout de case — et
+ *                     RIEN d'autre : le jeton n'entre pas dans le tour, aucune
+ *                     ombre de la colonie, aucun trait, aucun agent, aucune
+ *                     ligne de `E.audit`, aucune place de secours prise aux
+ *                     autres ombres. Ce que la colonie achete ne change pas.
+ *   achat             un verdict ACHETER entre AUSSI dans le tour (origine
+ *                     « smart »), comme un jeton d'un flux : TOUS les gardes,
+ *                     la note, le Banquier, la mise et les sorties habituelles
+ *                     s'appliquent. Et seulement si la PORTE est ouverte (voir
+ *                     `smartPorte`) — sinon il reste observe, et c'est dit.
+ *   off               rien n'est garde.
+ *
+ * ---- LA PORTE : QUAND « ACHAT » A LE DROIT D'ACHETER ----
+ * Il DOIT rester « observe » tant que la ligne « smart signal: buy » n'a pas
+ * SMART_ACHAT_MIN_OBS = 100 observations a l'echeance de reference ET ne bat
+ * pas la reference « achete ou retenu » : part de montees au-dessus, et
+ * strategie rejouee positive. 100, c'est BANCS_ASSEZ (site : rejeux sur ce
+ * qu'on aurait achete avant de designer un jeu de regles) et
+ * QUOTA_JEUNE_MIN_OBS (une tranche d'age n'ouvre le quota des jeunes qu'a 100
+ * rejeux, strategie positive, et au moins autant de montees que la
+ * reference) : la meme barre que celle qui ouvre deja des achats ici. REEL_ASSEZ
+ * (5) compte des fermetures reelles appariees, pas des observations : trop
+ * peu pour juger une source. La porte est dans le code, pas seulement ici.
+ *
+ * ---- LE PLAN DE SORTIE DU BRIEF, EN OMBRE ----
+ * Les sorties de la colonie ne changent pas. Chaque ombre du signal rejoue,
+ * sur ses jalons, la sortie en vigueur ET le plan du brief (stop -30 %, ×2
+ * vendre 75 %, garder 25 % avec un stop suiveur large ; voir
+ * `smart_signaux.PLAN_BRIEF`) ; les deux sont gardes cote a cote, apparies.
+ * « Rien apres 3 a 4 h : sortir » n'est pas observable : les jalons s'arretent
+ * a 120 min (dit).
+ * ======================================================================== */
+const SS = require('./smart_signaux');
+const SMART_FILE_MAX = 50;            /* verdicts en attente d'un prix : CHOISI (quelques verdicts par jour attendus) */
+const SMART_PAR_TOUR = 4;             /* verdicts pris par tour : CHOISI, un appel DexScreener chacun */
+const SMART_LECTURES_PAR_TOUR = 4;    /* relectures de prix des ombres du signal, A PART du secours des ombres : CHOISI */
+const SMART_ACHAT_MIN_OBS = 100;      /* la porte de « achat » : voir plus haut */
+const SMART_RELEVES_MAX = 300;        /* ombres reglees gardees pour la page et le releve */
+const SMART_LIGNES = { ACHETER: 'smart signal: buy', SURVEILLER: 'smart signal: watch' };
+function smartMode() {
+  const v = String(process.env.COLONIE_SMART_SIGNAL || '').trim().toLowerCase();
+  return v === 'achat' ? 'achat' : v === 'off' ? 'off' : 'observe';
+}
+function smartEtat() {
+  if (!E.smartSignal || typeof E.smartSignal !== 'object') E.smartSignal = {};
+  const S = E.smartSignal;
+  for (const k of ['file', 'ombres', 'releves']) if (!Array.isArray(S[k])) S[k] = [];
+  for (const k of ['audit', 'audit7', 'horizons', 'plan', 'compteurs']) if (!S[k] || typeof S[k] !== 'object') S[k] = {};
+  return S;
+}
+function compteSmart(k, n) { const S = smartEtat(); S.compteurs[k] = (S.compteurs[k] || 0) + (n || 1); }
+
+/** Un verdict du detecteur (smart_signaux.pourLaColonie). Il est mis en file :
+ *  le tour suivant lui lit un prix et pose son ombre. Rend true s'il est pris. */
+function signalSmart(v) {
+  if (smartMode() === 'off') return false;
+  if (!v || !/^0x[0-9a-f]{40}$/.test(String(v.jeton || '').toLowerCase())) return false;
+  if (v.verdict !== 'ACHETER' && v.verdict !== 'SURVEILLER') return false;
+  const S = smartEtat();
+  const adr = String(v.jeton).toLowerCase();
+  /* le meme jeton au meme verdict : une ombre, pas une par veille */
+  if (S.file.some((x) => x.jeton === adr && x.verdict === v.verdict)
+      || S.ombres.some((o) => o.adr === adr && o.verdict === v.verdict)) { compteSmart('doublon'); return false; }
+  S.file.push({ jeton: adr, sym: v.sym ? String(v.sym).slice(0, 12) : null, verdict: v.verdict, t: Number(v.t) || Date.now(),
+                conditions: Array.isArray(v.conditions) ? v.conditions.slice(0, 20) : [],
+                wallets: Array.isArray(v.wallets) ? v.wallets.slice(0, 10) : [], inconnues: Array.isArray(v.inconnues) ? v.inconnues.slice(0, 20) : [] });
+  if (S.file.length > SMART_FILE_MAX) { S.file.splice(0, S.file.length - SMART_FILE_MAX); compteSmart('fileDebordee'); }
+  compteSmart('recus_' + v.verdict);
+  return true;
+}
+
+/** La porte de « achat » : la ligne ACHETER a-t-elle de quoi etre crue ? */
+function smartPorte() {
+  const l = smartLigne(SMART_LIGNES.ACHETER);
+  const ref = (auditComplet().find((x) => x.cle === 'achete ou retenu')) || null;
+  const raisons = [];
+  if (!l || l.n < SMART_ACHAT_MIN_OBS) raisons.push('needs ' + SMART_ACHAT_MIN_OBS + ' observations at ' + HORIZON_REF + ' min, has ' + (l ? l.n : 0));
+  if (!ref || ref.n < AUDIT_MIN_OBS) raisons.push('the reference (what we buy) has too few observations');
+  else if (l && l.n && !(l.partMontes > ref.partMontes)) raisons.push('rises ' + l.partMontes + '% vs ' + ref.partMontes + '% for what we buy');
+  if (l && l.n && !(l.nStrat > 0 && l.strat > 0)) raisons.push('the replayed exits are not positive');
+  return { ouverte: raisons.length === 0, raisons, min: SMART_ACHAT_MIN_OBS };
+}
+
+/** Pris dans `rassemble` : chaque verdict en file recoit un prix et une ombre.
+ *  En « observe », RIEN n'entre dans le tour. En « achat », un ACHETER entre
+ *  dans le tour si la porte est ouverte. */
+async function prendLesSignauxSmart(parAdresse) {
+  const mode = smartMode();
+  if (mode === 'off') return 0;
+  const S = smartEtat();
+  let pris = 0;
+  const porte = mode === 'achat' ? smartPorte() : null;
+  while (S.file.length && pris < SMART_PAR_TOUR) {
+    const v = S.file.shift();
+    pris++;
+    const deja = parAdresse.get(v.jeton) || null;
+    let t = deja;
+    /* « observe » : une lecture qui n'ecrit pas le cache commun (la meme
+       discipline que la sonde des jeunes) — une mesure ne change pas ce que
+       le tour lira. */
+    if (!t) {
+      if (mode === 'achat' && v.verdict === 'ACHETER' && porte && porte.ouverte) t = await jetonDepuisDex(v.jeton, 'smart');
+      else {
+        const d = await lisDex(v.jeton, { sansCache: true });
+        t = (d && d.vu && d.prix > 0) ? { addr: v.jeton, sym: (d.sym || v.sym || '?').toUpperCase().slice(0, 12), pool: d.pool || null, prix: d.prix,
+          liq: typeof d.liq === 'number' ? d.liq : null, mc: d.mc || 0, minutes: d.cree ? (Date.now() - d.cree) / 60000 : null, dex: d } : null;
+      }
+    }
+    if (!t || !(t.prix > 0)) { compteSmart('sansPrix'); continue; }
+    noteOmbreSmart(t, v);
+    if (mode === 'achat' && v.verdict === 'ACHETER' && !deja) {
+      if (porte && porte.ouverte) { t.smart = { verdict: v.verdict, t: v.t }; parAdresse.set(v.jeton, t); compteSmart('proposeAuTour'); }
+      else compteSmart('porteFermee');
+    }
+    await dors(250);
+  }
+  return pris;
+}
+
+/** L'ombre du signal : la meme forme qu'une ombre de la colonie, dans SA liste. */
+function noteOmbreSmart(t, v) {
+  const S = smartEtat();
+  const now = Date.now();
+  S.ombres.push({
+    adr: t.addr, sym: t.sym, pool: t.pool || null, prix0: t.prix, t: now, verdict: v.verdict, tVerdict: v.t,
+    /* le cout d'aller-retour de la case (age×mc), comme les ombres de la
+       colonie : la ligne se juge NETTE, comme la reference */
+    caseFrott: litTrait(CASE_ESPERANCE_TRAIT, t),
+    dexVu: !!(t.dex && t.dex.vu), mc0: Math.round(t.mc || 0), liq0: typeof t.liq === 'number' ? Math.round(t.liq) : null,
+    minutes0: typeof t.minutes === 'number' ? Math.round(t.minutes) : null,
+    wallets: (v.wallets || []).map((w) => ({ wallet: w.wallet, role: w.role, minutes: w.minutes })),
+    inconnues: v.inconnues || [], jalons: {},
+  });
+  compteSmart('ombres_' + v.verdict);
+}
+
+/** Les prix des ombres du signal que le tour n'a pas cotees : leurs PROPRES
+ *  relectures, jamais les places de `secoursOmbres`. */
+async function secoursSmart(marche) {
+  const S = smartEtat();
+  if (!S.ombres.length) return 0;
+  const now = Date.now();
+  let n = 0;
+  for (const o of S.ombres) {
+    if (n >= SMART_LECTURES_PAR_TOUR) break;
+    if (marche[o.adr] && marche[o.adr].prix > 0) continue;
+    const age = (now - o.t) / 60000;
+    if (!HORIZONS.some((h) => o.jalons[h] === undefined && jalonValable(h, age))) continue;
+    n++;
+    const x = await lisDex(o.adr, { sansCache: true });
+    if (x && x.vu && x.prix > 0) { marche[o.adr] = { prix: x.prix, liq: typeof x.liq === 'number' ? x.liq : null }; o.muets = 0; }
+    else o.muets = (o.muets || 0) + 1;
+    await dors(250);
+  }
+  return n;
+}
+
+/** La ligne d'audit du signal, au format de `E.audit` (n, s, montes,
+ *  effondres, nStrat, strat), et sa fenetre de 7 jours. */
+function noteSmartAudit(cle, r) {
+  const S = smartEtat();
+  const a = S.audit[cle] || (S.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
+  a.n++; a.s += r;
+  if (r >= 20) a.montes++;
+  if (r <= -30) a.effondres++;
+  const j = jourAudit(Date.now());
+  /* les jours UTC gardes : ceux de `purge7` */
+  const garde = new Set();
+  for (let i = 0; i < AUDIT7_JOURS; i++) garde.add(jourAudit(Date.now() - i * JOUR_MS));
+  for (const k in S.audit7) if (!garde.has(k)) delete S.audit7[k];
+  const J = S.audit7[j] || (S.audit7[j] = {});
+  const b = J[cle] || (J[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
+  b.n++; b.s += r;
+  if (r >= 20) b.montes++;
+  if (r <= -30) b.effondres++;
+}
+function noteSmartHorizon(cle, h, r) {
+  const S = smartEtat();
+  const H = S.horizons[cle] || (S.horizons[cle] = {});
+  const c = H[h] || (H[h] = { n: 0, s: 0, montes: 0 });
+  c.n++; c.s += r;
+  if (r >= 20) c.montes++;
+}
+/** Une ombre du signal part : sortie en vigueur et plan du brief, sur les
+ *  memes jalons, cote a cote. */
+function rejoueOmbreSmart(o) {
+  if (!o || o.rejouee) return;
+  o.rejouee = true;
+  const S = smartEtat();
+  const cle = SMART_LIGNES[o.verdict] || SMART_LIGNES.SURVEILLER;
+  if (!o.jalons || o.jalons[HORIZON_REF] === undefined) {
+    const a = S.audit[cle] || (S.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
+    a.sansLecture = (a.sansLecture || 0) + 1;
+  } else {
+    const rs = rejoue(o.jalons);
+    const rb = rejoue(o.jalons, SS.PLAN_BRIEF);
+    if (rs !== null) { const a = S.audit[cle]; a.nStrat = (a.nStrat || 0) + 1; a.strat = (a.strat || 0) + rs; }
+    if (rb !== null) {
+      const p = S.plan[cle] || (S.plan[cle] = { n: 0, s: 0, gagnants: 0, nApparie: 0, ecart: 0 });
+      p.n++; p.s += rb; if (rb > 0) p.gagnants++;
+      if (rs !== null) { p.nApparie++; p.ecart += rb - rs; }
+    }
+    o.rejeu = { vigueur: rs, brief: rb };
+  }
+  S.releves.unshift({ t: o.t, adr: o.adr, sym: o.sym, verdict: o.verdict, mc0: o.mc0, minutes0: o.minutes0, jalons: o.jalons,
+                      vigueur: o.rejeu ? o.rejeu.vigueur : null, brief: o.rejeu ? o.rejeu.brief : null, disparue: !!o.disparue,
+                      wallets: (o.wallets || []).map((w) => w.role) });
+  if (S.releves.length > SMART_RELEVES_MAX) S.releves.length = SMART_RELEVES_MAX;
+}
+/** Les ombres du signal a leurs echeances : la MEME arithmetique que
+ *  `regleLesOmbres` (jalon valable, prix vendable, piscine evaporee a -95 %,
+ *  net du cout de case a l'echeance de reference), sur SA liste, vers SA
+ *  ligne. Rien de la colonie n'est touche : ni ses compteurs, ni sa memoire. */
+function regleLesSmart(marche) {
+  const S = smartEtat();
+  if (!S.ombres.length) return 0;
+  const now = Date.now();
+  const dernier = HORIZONS[HORIZONS.length - 1];
+  let n = 0;
+  S.ombres = S.ombres.filter((o) => {
+    const age = (now - o.t) / 60000;
+    if (now - o.t > OMBRE_OUBLI_MS) { rejoueOmbreSmart(o); return false; }
+    const cle = SMART_LIGNES[o.verdict] || SMART_LIGNES.SURVEILLER;
+    const x = marche[o.adr];
+    if (!(x && x.prix > 0) && o.dexVu && (o.muets || 0) >= OMBRE_SILENCES && age >= HORIZON_REF && o.jalons[HORIZON_REF] === undefined) {
+      o.jalons[HORIZON_REF] = OMBRE_DISPARUE; o.disparue = true;
+      noteSmartAudit(cle, OMBRE_DISPARUE - coutCelluleDe(o));
+      noteSmartHorizon(cle, HORIZON_REF, OMBRE_DISPARUE);
+      n++;
+      rejoueOmbreSmart(o);
+      return false;
+    }
+    if (x && x.prix > 0) {
+      const brutR = (x.prix - o.prix0) / o.prix0 * 100;
+      if (!isFinite(brutR) || brutR > REND_MAX || brutR < REND_MIN) { compteSmart('aberrante'); rejoueOmbreSmart(o); return false; }
+      const r = rendementVendablePur(brutR, typeof x.liq === 'number' ? x.liq : null);
+      for (const h of HORIZONS) {
+        if (o.jalons[h] !== undefined || !jalonValable(h, age)) continue;
+        o.jalons[h] = Math.round(r * 10) / 10;
+        noteSmartHorizon(cle, h, r);
+        if (h === HORIZON_REF) { noteSmartAudit(cle, r - coutCelluleDe(o)); n++; }
+      }
+    }
+    if (age <= dernier + Math.max(5, dernier * 0.5)) return true;
+    rejoueOmbreSmart(o);
+    return false;
+  });
+  return n;
+}
+/** La ligne du signal au format d'`auditComplet` (cumul et 7 jours). */
+function smartLigne(cle) {
+  const S = smartEtat();
+  const a = S.audit[cle];
+  if (!a) return null;
+  const b = { n: 0, s: 0, montes: 0, effondres: 0 };
+  for (const j in S.audit7) { const x = S.audit7[j][cle]; if (x) { b.n += x.n; b.s += x.s; b.montes += x.montes; b.effondres += x.effondres; } }
+  return { cle, n: a.n, moyenne: a.n ? Math.round(a.s / a.n * 10) / 10 : null, montes: a.montes, effondres: a.effondres,
+           partMontes: a.n ? Math.round(a.montes / a.n * 100) : null,
+           nStrat: a.nStrat || 0, strat: a.nStrat ? Math.round(a.strat / a.nStrat * 10) / 10 : null, sansLecture: a.sansLecture || 0,
+           n7: b.n, partMontes7: b.n ? Math.round(b.montes / b.n * 100) : null, moyenne7: b.n ? Math.round(b.s / b.n * 10) / 10 : null };
+}
+/** Ce que /ai/colonie montre du signal (champ `smartSignal`). Des codes et des
+ *  chiffres, en anglais : la page est publique. */
+function smartVue() {
+  const S = smartEtat();
+  const ref = auditComplet().find((x) => x.cle === 'achete ou retenu') || null;
+  const lignes = Object.keys(SMART_LIGNES).map((v) => {
+    const cle = SMART_LIGNES[v], l = smartLigne(cle) || { cle, n: 0 };
+    const H = S.horizons[cle] || {};
+    const par = HORIZONS.map((h) => { const c = H[h]; return { h, n: c ? c.n : 0, partMontes: c && c.n ? Math.round(c.montes / c.n * 100) : null, moyenne: c && c.n ? Math.round(c.s / c.n * 10) / 10 : null }; });
+    const p = S.plan[cle];
+    return Object.assign(l, { verdict: v, horizons: par, assez: (l.n || 0) >= SMART_ACHAT_MIN_OBS,
+      planBrief: p ? { n: p.n, moyenne: Math.round(p.s / p.n * 10) / 10, partGagnantes: Math.round(p.gagnants / p.n * 100),
+                       apparies: p.nApparie, ecartMoyen: p.nApparie ? Math.round(p.ecart / p.nApparie * 10) / 10 : null } : null });
+  });
+  return { mode: smartMode(), porte: smartPorte(), min: SMART_ACHAT_MIN_OBS, horizonRef: HORIZON_REF,
+           reference: ref ? { n: ref.n, partMontes: ref.partMontes, moyenne: ref.moyenne, strat: ref.strat, n7: ref.n7, partMontes7: ref.partMontes7 } : null,
+           lignes, enAttente: S.file.length, ombres: S.ombres.length, compteurs: S.compteurs,
+           planBrief: 'stop -30%, at x2 sell 75%, keep 25% with a 100-pt trailing stop, out at the last read (120 min; the brief says 3-4 h)',
+           releves: S.releves.slice(0, 30) };
+}
+
+/** Ce que le detecteur demande a la colonie pour juger un jeton : ses lecteurs
+ *  et ses caches (DexScreener sans ecrire le cache commun, GoPlus et la LP v2
+ *  par leurs caches partages — un appel en vol est partage, jamais double). */
+async function faitsPourSmart(adr) {
+  const a = String(adr || '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(a)) return null;
+  const d = await lisDex(a, { sansCache: true });
+  if (!d || !d.vu) return { mc: null, liq: null, taxe: null };
+  const t = { addr: a, pool: d.pool || null };
+  await lisGoplus(t);
+  const g = t.g || {};
+  let lpPartLibre = null;
+  if (/^0x[0-9a-f]{40}$/i.test(String(d.pool || ''))) {
+    const lp = await litLp(t);
+    if (lp && lp.vu && typeof lp.brulee === 'number') lpPartLibre = Math.min(100, lp.brulee + (typeof g.lp === 'number' ? g.lp : 0));
+  }
+  return { mc: d.mc || null, liq: typeof d.liq === 'number' ? d.liq : null, sym: d.sym || null, ch_h6: typeof d.ch_h6 === 'number' ? d.ch_h6 : null,
+           taxe: g.taxeSue ? { achat: g.buyTax, vente: g.sellTax } : null, honeypot: g.have ? !!g.honeypot : null, lpPartLibre };
+}
+
 async function rassemble() {
   const parAdresse = new Map();
   for (const t of await lisPools()) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
@@ -9984,6 +10308,10 @@ async function rassemble() {
   /* Et ceux qu'on avait mis de cote, maintenant qu'ils ont eu le temps
      d'exister. C'est la seule source qui serve autre chose que du tout neuf. */
   for (const t of await reprises(parAdresse)) if (!parAdresse.has(t.addr)) parAdresse.set(t.addr, t);
+  /* Les verdicts du brief (15/10) : une ombre a part chacun ; en « achat » et
+     porte ouverte seulement, un ACHETER entre dans le tour. Voir
+     `prendLesSignauxSmart`. */
+  try { await prendLesSignauxSmart(parAdresse); } catch (e) { compteSmart('erreur'); }
   /* Quelle que soit la source, un jeton que pons connait porte ce que pons
      en sait. */
   return [...parAdresse.values()].map(annotePons).map(annotePads);
@@ -10083,6 +10411,10 @@ async function tour() {
     regleLesSuites(prix);
     regleLesOmbres(prix);
     const fermees = regle(prix);
+    /* Les ombres du signal du brief, sur une COPIE des prix : leurs relectures
+       ne doivent rien apporter aux positions ni aux ombres de la colonie. */
+    try { const marcheSmart = Object.assign({}, prix); await secoursSmart(marcheSmart); regleLesSmart(marcheSmart); }
+    catch (e) { compteSmart('erreur'); }
 
     /* ---- CE QU'ON NE REPAIE PAS ----
      * Les bannis sortent sans un appel. Les deja-juges dont rien n'a bouge
@@ -10494,6 +10826,10 @@ function vue() {
           actif: baseCourante() !== 0 }
       : null,
     audit: auditDesRefus(),
+    /* Le signal du brief (15/10) : sa ligne d'audit, a cote de la reference,
+       hors de `audit` (ce n'est pas un refus : la page la lirait comme une
+       regle). Voir `smartVue`. */
+    smartSignal: smartVue(),
     pousses: { pons: poussesPour('pons', PONS_PAR_TOUR), hood: poussesPour('hood', PADS_PAR_TOUR), secretpad: poussesPour('secretpad', PADS_PAR_TOUR) },
     traits: classementDesTraits().slice(0, 12),
     horizons: HORIZONS, horizonRef: HORIZON_REF,
@@ -10856,5 +11192,7 @@ module.exports = {
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
   SANS_ACHAT_DESSERRE,
+  signalSmart, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
+  SMART_ACHAT_MIN_OBS, SMART_LIGNES, SMART_PAR_TOUR,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc, _lisChaine: lisChaine,
 };

@@ -31,6 +31,8 @@ const fs = require('fs');
 const path = require('path');
 const K = require('./smart_calcul');
 const SRC = require('./smart_sources');
+const SL = require('./smart_listes');
+const SS = require('./smart_signaux');
 
 const PASSE_MS = 30 * 60e3;          // « toutes les 30 min » (demande du proprietaire)
 const VEILLE_MS = 5 * 60e3;          // 2 900 blocs : 1 appel sans adresse (200 wallets sur 30 000 blocs : 4,8 Mo en 348 ms, sonde du 13/10)
@@ -124,6 +126,25 @@ const HISTO_FILE_MAX = 3000;         // la marche s'arrete tant que 3 000 jetons
    candidats « effondres » : 3 au-dessus de 1 M$ au pic (astro 7,88 M$, AGI 4,06 M$,
    Magatard 1,96 M$), 6 en dessous. CHOISI : 10 k$. */
 const HISTO_LIQ_MIN_USD = 10000;
+/* ---- L'ANALYSTE DU BRIEF (15/10/2026) ----
+ * Les wallets du brief du proprietaire (smart_listes.js) sont VEILLES comme les
+ * smart : leurs achats d'un jeton ne depuis 24 h entrent dans `achats_smart`.
+ * L'achat d'un wallet « fort » ou « faible » declenche le VERDICT du brief
+ * (smart_signaux.js, deterministe) ; ACHETER et SURVEILLER partent au
+ * proprietaire par le meme chemin que les autres alertes (notifyPrive, memes
+ * modes SMART_MONEY), et a la colonie comme signal OBSERVE (deps.surVerdict).
+ * Ce qui est lu pour un jeton juge, et seulement pour lui : le recu de sa tx de
+ * lancement (achat du dev, NFT de liquidite), ses Transfer depuis le lancement
+ * (acheteurs de la 1re minute, ventes du dev, adresses partielles du brief),
+ * un multicall (part du dev, symbole), le code du detenteur de la liquidite,
+ * des horodatages ; la colonie (deps.faits) lit capitalisation, liquidite,
+ * taxe — ses lecteurs, ses caches. CHOISIS, aucune mesure : 3 jetons juges par
+ * veille au plus (~6 appels au noeud chacun, dans le budget de 60 de la
+ * veille, qui en use ~20 sur l'essai de bout en bout) ; les Transfer ne sont
+ * lus que pour un jeton de moins de 6 h (au-dela le brief dit EVITER). */
+const ANALYSTE_PAR_VEILLE = 3;
+const BLOCS_MINUTE = Math.round(HEURE_BLOCS / 60);   // ~600 blocs : la « premiere minute » du bundle
+const ANALYSTE_VUS_MAX = 20;
 
 // ------------------------------------------------------------ reglages
 
@@ -134,7 +155,10 @@ function config(env) {
   const h = String(e.SMART_MONEY_HEURE || HEURE_RAPPORT).trim();
   const heure = /^([01]?\d|2[0-3]):[0-5]\d$/.test(h) ? h : HEURE_RAPPORT;
   const url = String(e.SMART_RPC_URL || '').trim();
-  return { brut, mode, heure, rpcPropre: !!url, rpcUrl: url || null };
+  /* la mise fixe de l'analyste, pour l'impact (le brief : ~100 $ par jeton) */
+  const m = Number(e.SMART_MISE_USD);
+  const miseUsd = isFinite(m) && m > 0 ? m : SS.MISE_USD_DEFAUT;
+  return { brut, mode, heure, rpcPropre: !!url, rpcUrl: url || null, miseUsd };
 }
 
 function heureLocale(t) {
@@ -1000,10 +1024,16 @@ function cree(deps0) {
           if (await envoie('createur', 'createur:' + jeton, jeton, texte)) bilan.alertes++;
         }
       }
-      /* les achats des smart */
+      /* les achats des smart, et ceux des wallets du brief (15/10) : leurs
+         adresses ENTIERES seulement (un topic exige l'adresse entiere ; les
+         deux adresses partielles du brief sont reconnues plus tard, parmi les
+         acheteurs lus d'un jeton juge) */
       const smart = B.tous('SELECT adresse FROM wallets WHERE smart = 1 ORDER BY gagnants DESC LIMIT ' + SMART_VEILLE_MAX).map((x) => x.adresse);
-      if (smart.length) {
-        const { logs } = await RV.lisLogs({ topics: [K.TOPIC.TRANSFER, null, smart.map(K.pad32)] }, de, haut, PP);
+      const veilles = [...new Set(smart.concat(SL.adressesCompletes()))].slice(0, SMART_VEILLE_MAX);
+      const declencheurs = [];
+      const recusVeille = new Map();
+      if (veilles.length) {
+        const { logs } = await RV.lisLogs({ topics: [K.TOPIC.TRANSFER, null, veilles.map(K.pad32)] }, de, haut, PP);
         const recents = new Map(B.tous('SELECT * FROM creations WHERE t >= ?', [Math.floor(deps.horloge() / 1000) - NOUVEAU_S]).map((c) => [c.jeton, c]));
         const vises = logs.map(K.decode).filter((t) => t && recents.has(t.jeton));
         const rcs2 = await RV.recus([...new Set(vises.map((t) => t.tx))], P.sure);
@@ -1011,6 +1041,7 @@ function cree(deps0) {
         for (const t of vises) {
           const c = recents.get(t.jeton);
           const rc = rcs2.get(t.tx); if (!rc) continue;
+          recusVeille.set(t.tx, rc);
           const evts = (rc.logs || []).map(K.decode).filter(Boolean);
           const ini = evts.find((x) => x.genre === 'init' && x.pool === c.pool);
           const ps = ini ? K.piscineEth(ini, t.jeton) : await piscineConnue(c, t.jeton, PP);
@@ -1019,6 +1050,10 @@ function cree(deps0) {
             if (tr.sens !== 'achat' || tr.qui !== t.vers) continue;
             B.pose('achats_smart', { tx: tr.tx, wallet: tr.qui, jeton: t.jeton, bloc: tr.bloc, t: h2.get(tr.bloc) || null });
             bilan.achats++;
+            /* un ACHAT (jamais un simple transfert recu : les airdrops de spam du
+               brief n'ont pas d'echange, ils n'arrivent donc jamais ici) */
+            const w = SL.roleDe(tr.qui);
+            if (w && (w.signal === 'fort' || w.signal === 'faible')) declencheurs.push({ jeton: t.jeton, wallet: tr.qui, tx: tr.tx });
           }
         }
         const depuis = Math.floor(deps.horloge() / 1000) - K.ALERTE_FENETRE_S;
@@ -1031,6 +1066,9 @@ function cree(deps0) {
         }
       }
       B.meta('veille_bloc', haut);
+      /* l'analyste du brief, APRES que la veille est acquise : une panne ou un
+         budget epuise ici ne fait pas relire les blocs */
+      if (declencheurs.length) bilan.analyste = await analyste(declencheurs, P, PP, recusVeille);
       B.pose('passes', { genre: 'veille', debut: Math.floor(deps.horloge() / 1000), fin: Math.floor(deps.horloge() / 1000), statut: 'ok', appels: RV.etat.passe.appels, octets: RV.etat.passe.octets, gt: 0, ds: 0, jetons: 0, detail: bilan });
       await rapportSiHeure();
       B.sauve();
@@ -1056,6 +1094,163 @@ function cree(deps0) {
     const { logs } = await RV.lisLogs(f, c.bloc, c.bloc, P);
     const ini = logs.map(K.decode).find((x) => x && x.pool === c.pool);
     return ini ? K.piscineEth(ini, jeton) : null;
+  }
+
+  // ---------------------------------------------------------- l'analyste du brief (15/10)
+  const verdictsVus = [];
+  const lc = (x) => String(x || '').toLowerCase();
+  /** Qui tient la liquidite d'une piscine v4, lu dans la tx de lancement : le
+   *  ModifyLiquidity de la piscine nomme qui l'a ajoutee ; si ce contrat frappe
+   *  un NFT de position dans la meme tx, son destinataire la tient. Sonde du
+   *  15/10 (lancement de 0x2abd55…, tx 0x7c2b85c9…, lanceur 0xa37e4343… — Pons non verifie) : ajoutee par
+   *  0xe38a007e…, NFT #334 frappe vers 0x61209651…, un contrat. */
+  function lpDeLancement(rc, pool) {
+    const logs = (rc && rc.logs) || [];
+    const mod = logs.find((l) => lc(l.address) === K.ADR.POOL_MANAGER_V4 && lc(l.topics[0]) === TOPIC_MODIFY_V4 && lc(l.topics[1]) === lc(pool) && l.topics[2]);
+    if (!mod) return null;
+    const qui = K.adrDe(mod.topics[2]);
+    const nft = logs.find((l) => lc(l.address) === qui && lc(l.topics[0]) === K.TOPIC.TRANSFER && l.topics.length === 4 && K.adrDe(l.topics[1]) === K.ADR.ETH_NATIF);
+    return { ajoutePar: qui, proprietaire: nft ? K.adrDe(nft.topics[2]) : qui, nft: !!nft };
+  }
+  /** Les faits d'un jeton pour le verdict du brief. Chaque lecture qui echoue
+   *  laisse son champ a null : le verdict le lit « inconnu » (fail closed). */
+  async function faitsDe(jeton, P, PP, recusVeille) {
+    const maintenant = deps.horloge();
+    const f = { jeton, maintenant, miseUsd: C.miseUsd, achats: [], airdrop: false, dev: {} , sources: {} };
+    const cr = B.tous('SELECT * FROM creations WHERE jeton = ? ORDER BY bloc ASC', [jeton]);
+    const c = cr[0] || null;
+    f.lanceT = c && c.t ? c.t * 1000 : null;
+    const dev = c && c.verifie && (c.role === 'deployeur' || c.role === 'lanceur') ? c.createur : null;
+    f.devAdresse = dev;
+    /* rugger connu : un createur LU dont une liquidite a ete retiree (>= 90 %)
+       ou qui porte un drapeau ; un dev absent de la table n'est pas « connu » */
+    if (dev) {
+      const cc = B.un('SELECT retraits, drapeaux FROM createurs WHERE adresse = ?', [dev]);
+      f.rugger = !!(cc && ((cc.retraits || 0) > 0 || (cc.drapeaux || 0) > 0));
+    } else f.rugger = null;
+    /* les achats des wallets du brief, lus par la veille */
+    for (const a of B.tous('SELECT * FROM achats_smart WHERE jeton = ?', [jeton])) if (SL.roleDe(a.wallet)) f.achats.push({ wallet: a.wallet, t: a.t ? a.t * 1000 : null, tx: a.tx, bloc: a.bloc });
+    let ps = null;
+    if (c) {
+      const rc = (await RV.recus([c.tx], P.sure)).get(c.tx);
+      const evts = ((rc && rc.logs) || []).map(K.decode).filter(Boolean);
+      const ini = evts.find((x) => x.genre === 'init' && x.pool === c.pool);
+      ps = ini ? K.piscineEth(ini, jeton) : null;
+      if (ps && dev) {
+        /* le petit achat du dev au lancement (recette du « bon dev ») */
+        const ach = K.echanges({ jeton, piscines: [ps], evts }).filter((x) => x.sens === 'achat' && x.qui === dev);
+        f.dev.achatLancementEth = ach.length ? Number(ach.reduce((s, x) => s + x.eth, 0n) / 10n ** 12n) / 1e6 : 0;
+      }
+      if (ps && ps.version === 4) {
+        const lp = lpDeLancement(rc, c.pool);
+        if (lp) {
+          const code = (await RV.codes([lp.proprietaire])).get(lp.proprietaire);
+          const tenue = code == null ? null : (code === '0x' || /^0xef0100/i.test(code)) ? 'wallet' : 'contrat';
+          f.lp = { tenue, detail: lp };
+        }
+      }
+      /* le multiple depuis le lancement : sqrtP du lancement contre celui du
+         dernier echange lu par la veille sur cette piscine (Verified) */
+      if (ps && ini && ini.sqrtP) {
+        let dernier = null;
+        for (const rcv of (recusVeille || new Map()).values()) for (const e of (rcv.logs || []).map(K.decode)) if (e && e.genre === 'swap' && e.pool === ps.pool && e.sqrtP && (!dernier || e.bloc > dernier.bloc || (e.bloc === dernier.bloc && e.i > dernier.i))) dernier = e;
+        if (dernier) { f.multiple = SS.multipleSqrt(ini.sqrtP, dernier.sqrtP, ps.ethEst0); f.sources.multiple = 'chaine'; }
+      }
+    }
+    /* les Transfer depuis le lancement (jeton de moins de 6 h) */
+    const ageMin = f.lanceT ? (maintenant - f.lanceT) / 60000 : null;
+    if (c && ageMin !== null && ageMin <= SS.AGE_EVITER_MIN) {
+      const { logs } = await RV.lisLogs({ address: jeton, topics: [K.TOPIC.TRANSFER] }, c.bloc, PP.pointe, PP);
+      const trs = logs.map(K.decode).filter((x) => x && x.genre === 'transfer');
+      const exclus = [K.ADR.POOL_MANAGER_V4, c.pool, ps && ps.hook, jeton, K.ADR.ETH_NATIF, K.ADR.MORT, dev].filter(Boolean);
+      const premiere = SS.acheteursFenetre(trs, { exclus, blocDebut: c.bloc, blocFin: c.bloc + BLOCS_MINUTE });
+      f.premiereMinute = { n: premiere.length, acheteurs: premiere.slice(0, 40) };
+      /* les wallets du brief parmi TOUS les acheteurs (les adresses partielles
+         ne se reconnaissent qu'ici) */
+      const premierBloc = new Map();
+      const parTx = new Map();
+      for (const t of trs) { let m = parTx.get(t.tx); if (!m) { m = { bloc: t.bloc, n: new Map() }; parTx.set(t.tx, m); } m.n.set(t.de, (m.n.get(t.de) || 0n) - t.valeur); m.n.set(t.vers, (m.n.get(t.vers) || 0n) + t.valeur); }
+      const marche = new Set([K.ADR.POOL_MANAGER_V4, lc(c.pool)]);
+      let devVend = false; const devAchats = [];
+      for (const [tx, m] of parTx) {
+        for (const [a, nn] of m.n) if (nn > 0n && !exclus.includes(a) && SL.roleDe(a) && !premierBloc.has(a)) premierBloc.set(a, { bloc: m.bloc, tx });
+        if (dev && m.n.has(dev)) {
+          const marcheNet = [...marche].reduce((s, x) => s + (m.n.get(x) || 0n), 0n);
+          if (m.n.get(dev) < 0n && marcheNet > 0n) devVend = true;
+          if (m.n.get(dev) > 0n && marcheNet < 0n) devAchats.push(m.bloc);
+        }
+      }
+      f.devVend = dev ? devVend : null;
+      const deja = new Set(f.achats.map((a) => a.wallet));
+      const manque = [...premierBloc].filter(([a]) => !deja.has(a));
+      const blocs = manque.map(([, x]) => x.bloc).concat(devAchats);
+      const hs = blocs.length ? await RV.horodatages(blocs, P.sure) : new Map();
+      for (const [a, x] of manque) f.achats.push({ wallet: a, t: hs.get(x.bloc) ? hs.get(x.bloc) * 1000 : null, tx: x.tx, bloc: x.bloc });
+      /* les rachats du dev (sans reclamation lue, le brief ne les compte pas) */
+      f.dev.rachats = devAchats.map((b) => (hs.get(b) ? hs.get(b) * 1000 : null)).filter((x) => x !== null);
+    }
+    /* les reclamations de frais du dev : AUCUN evenement identifie sur la chaine
+       (non mesure) : null, et la regle « le dev rachete apres avoir reclame »
+       reste inconnue */
+    f.dev.claims = null;
+    /* la part du dev et le symbole : un multicall */
+    {
+      const appels = [{ to: jeton, fn: 'totalSupply' }, { to: jeton, fn: 'symbol' }];
+      if (dev) appels.push({ to: jeton, fn: 'balanceOf', args: [dev] });
+      const r = await RV.multicall(appels);
+      const offre = r[0], bal = dev ? r[2] : null;
+      f.symbole = r[1] || (B.un('SELECT symbole FROM jetons WHERE adresse = ?', [jeton]) || {}).symbole || null;
+      f.devPart = dev && offre && offre > 0n && bal != null ? Number((bal * 10000n) / offre) / 100 : null;
+    }
+    /* ce que la colonie lit deja : capitalisation, liquidite, taxe (ses
+       lecteurs et ses caches, pas un second client) */
+    if (typeof deps.faits === 'function') {
+      try {
+        const cf = await deps.faits(jeton);
+        if (cf) {
+          f.mcUsd = typeof cf.mc === 'number' && cf.mc > 0 ? cf.mc : null;
+          f.liqUsd = typeof cf.liq === 'number' ? cf.liq : null;
+          f.taxe = cf.taxe || null;
+          if (!f.lp && typeof cf.lpPartLibre === 'number') f.lp = { partLibre: cf.lpPartLibre };
+          if (f.multiple == null && typeof cf.ch_h6 === 'number' && ageMin !== null && ageMin <= 360) { f.multiple = Math.round((1 + cf.ch_h6 / 100) * 100) / 100; f.sources.multiple = 'DexScreener h6'; }
+          if (!f.symbole && cf.sym) f.symbole = cf.sym;
+          f.sources.colonie = true;
+        }
+      } catch (e) { note('analyste', 'faits de la colonie : ' + String((e && e.message) || e).slice(0, 80)); }
+    }
+    return f;
+  }
+  async function analyste(declencheurs, P, PP, recusVeille) {
+    const bilan = { evalues: 0, envoyes: 0, erreurs: 0, verdicts: {} };
+    const jetons = [...new Set(declencheurs.map((d) => d.jeton))];
+    if (jetons.length > ANALYSTE_PAR_VEILLE) bilan.reportes = jetons.length - ANALYSTE_PAR_VEILLE;
+    for (const jeton of jetons.slice(0, ANALYSTE_PAR_VEILLE)) {
+      try {
+        const faits = await faitsDe(jeton, P, PP, recusVeille);
+        const v = SS.verdict(faits);
+        bilan.evalues++;
+        bilan.verdicts[v.verdict] = (bilan.verdicts[v.verdict] || 0) + 1;
+        verdictsVus.push({ t: Math.floor(faits.maintenant / 1000), jeton, verdict: v.verdict, inconnues: v.inconnues });
+        if (verdictsVus.length > ANALYSTE_VUS_MAX) verdictsVus.shift();
+        note('analyste', `${jeton} ${v.verdict}${v.inconnues.length ? ' (inconnu : ' + v.inconnues.join(', ') + ')' : ''}`);
+        if (v.verdict === SS.VERDICTS.EVITER) continue;
+        /* a la colonie : un signal OBSERVE (ce qu'elle en fait est son affaire) */
+        if (typeof deps.surVerdict === 'function') { try { deps.surVerdict(SS.pourLaColonie(v, faits)); } catch (e) { note('analyste', 'colonie : ' + String((e && e.message) || e).slice(0, 60)); } }
+        /* au proprietaire, une fois par jeton et par verdict ; le texte n'est
+           redige (et le modele paye) que s'il part */
+        const cle = 'analyste:' + jeton + ':' + v.verdict;
+        if (B.un('SELECT id FROM alertes WHERE cle = ?', [cle])) continue;
+        const env = deps.env || process.env;
+        const r = await SS.redige(v, faits, { fetch: deps.prendre, cleAnthropic: env.ANTHROPIC_API_KEY || '', desactive: String(env.SMART_ANALYSTE_LLM || '').trim() === '0' });
+        if (await envoie('analyste', cle, jeton, r.texte)) bilan.envoyes++;
+        if (r.par === 'gabarit' && r.raison && r.raison !== 'sans cle') note('analyste', 'gabarit : ' + r.raison);
+      } catch (e) {
+        bilan.erreurs++;
+        note('analyste', (e.budget ? 'budget' : 'erreur') + ' sur ' + jeton + ' : ' + masque(e.message || e).slice(0, 120));
+        if (e.budget || e.abandon) break;
+      }
+    }
+    return bilan;
   }
 
   // ---------------------------------------------------------- le rapport quotidien
@@ -1162,6 +1357,9 @@ function cree(deps0) {
       historique: (() => { const c = {}; for (const r of B.tous('SELECT statut, count(*) n FROM historique GROUP BY statut')) c[r.statut] = r.n; const bas = B.meta('histo_bas');
         return { bas, fini: bas === 0, vus: Object.values(c).reduce((a2, b2) => a2 + b2, 0), parStatut: c }; })(),
       alertes: B.tous('SELECT id, t, genre, jeton, envoye FROM alertes ORDER BY id DESC LIMIT 10'),
+      /* l'analyste du brief (15/10) : des codes, aucun texte (le texte va au
+         proprietaire seul) ; les wallets suivis et les derniers verdicts */
+      analyste: { wallets: SL.WALLETS.length, mise_usd: C.miseUsd, par_veille: ANALYSTE_PAR_VEILLE, derniers: verdictsVus.slice(-ANALYSTE_VUS_MAX).reverse() },
       journal: journal.slice(-20),
     };
   }

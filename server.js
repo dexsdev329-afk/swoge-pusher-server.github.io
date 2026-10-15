@@ -11859,7 +11859,12 @@ server.listen(cfg.PORT, () => {
      (notifyPrive : TG_BACKUP_CHAT_ID, conversation privee verifiee), jamais
      sur le canal public. SMART_MONEY vide = rien (ni minuterie, ni requete,
      ni fichier). L'URL du noeud (SMART_RPC_URL) n'est jamais journalisee. */
-  smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER });
+  /* L'analyste du brief (15/10/2026, smart_signaux.js) : la colonie lui prete
+     ses lecteurs (capitalisation, liquidite, taxe : `faitsPourSmart`) et recoit
+     ses verdicts ACHETER/SURVEILLER comme un signal OBSERVE (`signalSmart`,
+     COLONIE_SMART_SIGNAL=observe par defaut : rien n'est achete). */
+  smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
+    faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v) });
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */

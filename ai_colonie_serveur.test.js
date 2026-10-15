@@ -8341,6 +8341,132 @@ async function portefeuillesAvantLeRegard() {
 }
 
 /* ==========================================================================
+ * LE SIGNAL DU BRIEF (15/10/2026) : OBSERVE, PUIS SEULEMENT APRES MESURE
+ *
+ * Le detecteur smart money applique le brief du proprietaire et envoie ses
+ * verdicts ACHETER / SURVEILLER a la colonie (`signalSmart`). Ce que l'essai
+ * tient, dans l'ordre ou ca coute de l'argent :
+ *   1. « observe » (le defaut) : le MEME tour, avec ou sans signal, achete les
+ *      memes jetons et refuse les memes ; le jeton signale a son ombre A PART,
+ *      aucune ombre, ligne d'audit ou ecriture de cache de la colonie ;
+ *   2. « achat », porte fermee (moins de 100 observations) : rien n'est achete,
+ *      et c'est compte ;
+ *   3. « achat », porte ouverte : un ACHETER entre dans le tour et peut etre
+ *      achete, mise et sorties habituelles — et un pot de miel signale ACHETER
+ *      reste refuse par ses gardes ;
+ *   4. l'ombre est jugee a l'echeance de reference, nette, sur SA ligne ; a son
+ *      depart, la sortie en vigueur ET le plan du brief sont rejoues cote a cote.
+ * ======================================================================== */
+async function signalDuBrief() {
+  const egal = (a, b, m) => ok(a === b || String(a) === String(b), m + ' (lu ' + a + ', attendu ' + b + ')');
+  console.log('\n-- le signal du brief, en observation : le tour ne change pas --');
+  const smartJ = () => jeton(40);
+  const verdictDe = (t, v) => ({ jeton: t.addr, sym: t.sym, verdict: v || 'ACHETER', t: Date.now(),
+    conditions: [{ cle: 'age_10_60', etat: 'ok', valeur: 20 }], wallets: [{ wallet: '0x7632bd8e72767ed67a724c564c42ceea98e81180', role: 'SNIPER_1', signal: 'fort', minutes: 2 }], inconnues: [] });
+  const resume = (E) => JSON.stringify({ pos: E.positions.map((p) => p.adr).sort(), cand: (E.candidats || []).map((c) => c.addr + ':' + (c.refus || 'ok')).sort() });
+  delete process.env.COLONIE_SMART_SIGNAL;
+  /* le tour SANS signal */
+  remise([jeton(0), jeton(1), smartJ()]);
+  poolsPageFiltre = [MONDE.jetons[0].addr, MONDE.jetons[1].addr];   /* le jeton signale n'est dans aucun flux */
+  await C.tour();
+  const sans = resume(C._etat());
+  /* le MEME tour, AVEC le signal */
+  remise([jeton(0), jeton(1), smartJ()]);
+  poolsPageFiltre = [MONDE.jetons[0].addr, MONDE.jetons[1].addr];
+  egal(C.smartMode(), 'observe', 'COLONIE_SMART_SIGNAL absent : « observe »');
+  ok(C.signalSmart(verdictDe(smartJ())) === true, 'le verdict ACHETER est pris en file');
+  ok(C.signalSmart(verdictDe(smartJ())) === false, 'le meme verdict deux fois : une seule ombre');
+  ok(C.signalSmart(verdictDe(smartJ(), 'EVITER')) === false && C.signalSmart({ jeton: 'pas une adresse', verdict: 'ACHETER' }) === false, 'EVITER et une adresse invalide sont refuses');
+  await C.tour();
+  const E = C._etat();
+  ok(resume(E) === sans && JSON.parse(sans).cand.length > 0, 'avec ou sans signal : memes positions, memes candidats, memes refus (' + sans + ')');
+  const adr = smartJ().addr;
+  ok(!E.positions.some((p) => p.adr === adr), 'le jeton signale n\'est PAS achete');
+  ok(!(E.ombres || []).some((o) => o.adr === adr), 'aucune ombre de la colonie pour lui');
+  ok(!C._cache.dex[adr], 'sa lecture DexScreener n\'a pas ecrit le cache commun');
+  ok(!Object.keys(E.audit || {}).some((k) => /smart/.test(k)), 'aucune ligne dans l\'audit de la colonie');
+  const S = E.smartSignal;
+  ok(S && S.ombres.length === 1 && S.ombres[0].adr === adr && S.ombres[0].verdict === 'ACHETER' && S.ombres[0].prix0 === 1, 'son ombre A PART, au prix lu (1), verdict ACHETER');
+  ok(envoyes.some((x) => /dexscreener/.test(x.url) && x.url.includes(adr)), 'une lecture DexScreener pour lui');
+  const vs = C.vue().smartSignal;
+  ok(vs && vs.mode === 'observe' && vs.ombres === 1 && vs.porte.ouverte === false && vs.lignes.length === 2, 'la vue : mode, ombre en cours, porte fermee, deux lignes (buy, watch)');
+  ok(!(C.vue().audit || []).some((x) => /smart/.test(x.cle)), 'et rien dans le champ `audit` (ce n\'est pas un refus)');
+  /* les faits que le detecteur demande a la colonie : ses lecteurs, sans ecrire le cache DexScreener */
+  const fp = await C.faitsPourSmart(MONDE.jetons[1].addr);
+  ok(fp && fp.mc === 60000 && fp.liq === 50000 && fp.taxe && fp.taxe.achat === 0 && fp.taxe.vente === 0 && fp.ch_h6 === 35,
+     'faitsPourSmart : capitalisation, liquidite, taxe GoPlus, variation h6 (' + JSON.stringify(fp) + ')');
+  ok((await C.faitsPourSmart('pas une adresse')) === null, 'faitsPourSmart : une adresse invalide ne lit rien');
+
+  console.log('\n-- « achat », porte fermee : rien n\'est achete --');
+  remise([jeton(0), smartJ()]);
+  poolsPageFiltre = [MONDE.jetons[0].addr];
+  process.env.COLONIE_SMART_SIGNAL = 'achat';
+  C.signalSmart(verdictDe(smartJ()));
+  await C.tour();
+  const E2 = C._etat();
+  ok(!E2.positions.some((p) => p.adr === adr), 'porte fermee (0 observation sur ' + C.SMART_ACHAT_MIN_OBS + ') : pas d\'achat');
+  egal(E2.smartSignal.compteurs.porteFermee, 1, 'et c\'est compte (porteFermee)');
+  ok(/needs 100 observations/.test(C.smartPorte().raisons.join()), 'la porte dit ce qui manque');
+  egal(E2.smartSignal.ombres.length, 1, 'l\'ombre est posee quand meme');
+
+  console.log('\n-- « achat », porte ouverte : il entre dans le tour, et les gardes tiennent --');
+  remise([jeton(0), smartJ(), jeton(41, { goplus: 'honeypot' })]);
+  poolsPageFiltre = [MONDE.jetons[0].addr];
+  const E3 = C._etat();
+  /* la ligne a assez d'observations et bat la reference */
+  E3.audit['achete ou retenu'] = { n: 100, s: 500, montes: 30, effondres: 10, nStrat: 100, strat: 200 };
+  E3.smartSignal = { audit: { 'smart signal: buy': { n: 120, s: 2400, montes: 60, effondres: 6, nStrat: 120, strat: 600 } } };
+  ok(C.smartPorte().ouverte === true, 'porte ouverte : 120 observations, 50 % de montees contre 30 %, strategie positive');
+  const miel = MONDE.jetons[2];
+  C.signalSmart(verdictDe(smartJ()));
+  C.signalSmart(verdictDe(miel));
+  C.signalSmart(verdictDe(jeton(42), 'SURVEILLER'));
+  await C.tour();
+  const p = E3.positions.find((x) => x.adr === adr);
+  ok(p && p.origine === 'smart', 'le jeton signale ACHETER est achete, origine « smart »');
+  ok(p && p.mise > 0 && p.mise === E3.positions.find((x) => x.adr === MONDE.jetons[0].addr).mise, 'avec la mise habituelle (' + (p && p.mise) + ' $, comme le jeton du flux)');
+  ok(!E3.positions.some((x) => x.adr === miel.addr), 'le pot de miel signale ACHETER : refuse par ses gardes');
+  ok(((E3.candidats || []).find((c) => c.addr === miel.addr) || {}).quiRefuse === 'warden', '... par le Warden');
+  ok(!E3.positions.some((x) => x.adr === jeton(42).addr), 'SURVEILLER n\'entre jamais dans le tour');
+  egal(E3.smartSignal.ombres.length, 2, 'deux ombres du signal (le jeton SURVEILLER, absent de DexScreener, n\'en a pas)');
+  delete process.env.COLONIE_SMART_SIGNAL;
+  poolsPageFiltre = null;
+
+  console.log('\n-- l\'ombre jugee a 30 min, puis rejouee : sortie en vigueur et plan du brief --');
+  remise(sains());
+  await C.tour();                  /* une colonie qui a deja vecu : audit, compteurs et ombres non vides */
+  const E4 = C._etat();
+  ok(E4.ombres.length > 0 && Object.keys(E4.compteurs || {}).length > 0, 'la colonie a des ombres et des compteurs avant');
+  const avant = JSON.stringify({ a: E4.audit, c: E4.compteurs, v: E4.variantes || null, b: E4.bancSerie || null, o: E4.ombres });
+  const X = '0x' + '5e'.repeat(20);
+  C.signalSmart(verdictDe({ addr: X, sym: 'SIG' }));
+  const S4 = E4.smartSignal;
+  S4.file = [];
+  S4.ombres.push({ adr: X, sym: 'SIG', prix0: 1, t: Date.now() - C.HORIZON_REF * 60000, verdict: 'ACHETER', caseFrott: null, dexVu: true, jalons: {} });
+  C.regleLesSmart({ [X]: { prix: 1.5, liq: 1e6 } });
+  const l = C.smartLigne('smart signal: buy');
+  ok(l && l.n === 1 && l.montes === 1 && Math.abs(l.moyenne - 49.9) < 0.2, 'a 30 min : +50 % (vendable +' + (l && l.moyenne) + ' %), une montee, sur SA ligne');
+  S4.ombres[0].t = Date.now() - 200 * 60000;
+  C.regleLesSmart({});
+  egal(S4.ombres.length, 0, 'apres sa derniere echeance, l\'ombre part');
+  const r = S4.releves[0];
+  ok(r && r.jalons[C.HORIZON_REF] === l.moyenne && r.brief === C.rejoue(r.jalons, require('./smart_signaux').PLAN_BRIEF) && r.vigueur === C.rejoue(r.jalons),
+     'rejouee sur son jalon (' + (r && r.jalons[C.HORIZON_REF]) + ' %) : plan du brief ' + (r && r.brief) + ' %, sortie en vigueur ' + (r && r.vigueur) + ' %');
+  /* le plan du brief, a la main : +120 % a 15 min vend 75 % a ×2 (+100), garde 25 % ;
+     le plus haut +150, le stop suiveur large (100 points) sort a +40 : 75 + 0,25 × 40 = 85 */
+  S4.ombres.push({ adr: X, sym: 'SIG', prix0: 1, t: Date.now() - 200 * 60000, verdict: 'ACHETER', jalons: { 5: 10, 15: 120, 30: 150, 60: 60, 120: 40 } });
+  C.regleLesSmart({});
+  const r2 = S4.releves[0];
+  ok(r2.brief === 85, 'plan du brief sur 10 → 120 → 150 → 60 → 40 : +85 % (75 encaisses a ×2, 25 % sortis a +40 par le stop suiveur), lu ' + r2.brief);
+  ok(r2.vigueur === C.rejoue(r2.jalons) && r2.vigueur !== r2.brief, 'et la sortie en vigueur sur les memes jalons : ' + r2.vigueur + ' %');
+  const pb = C.vue().smartSignal.lignes[0].planBrief;
+  ok(pb && pb.n === 2 && pb.apparies === 2, 'la vue apparie les deux sorties sur les memes ombres (n=' + (pb && pb.n) + ')');
+  ok(JSON.stringify({ a: E4.audit, c: E4.compteurs, v: E4.variantes || null, b: E4.bancSerie || null, o: E4.ombres }) === avant,
+     'rien de la colonie n\'a bouge : audit, compteurs, jeux concurrents, banc, ombres (' + E4.ombres.length + ' ombres)');
+  ok(C.rendementVendablePur(50, 1e6) === C.rendementVendable(50, 1e6) && C.rendementVendablePur(50, 100) === C.OMBRE_DISPARUE, 'la meme arithmetique du prix vendable, sans compteur');
+}
+
+/* ==========================================================================
  * LES MOINS DE 4 MINUTES : AVEC OU SANS LIEN PUBLIC ? (mesure seule)
  *
  * « too young: under 10 min » monte a 68 % contre 26 % pour ce qu'on achete,
@@ -8661,6 +8787,7 @@ async function baleineParTranche() {
   await sondeDesMoinsDeQuatre();
   await carnetNetDuCout();
   await banquePapierLitLaColonie();
+  await signalDuBrief();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));
