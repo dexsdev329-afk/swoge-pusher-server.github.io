@@ -3400,6 +3400,16 @@ const studioOpenai = require('./studio_openai');
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
 const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
 const studioVoix = require('./studio_voix');   /* le vocal du chat : transcription, repli serveur quand le navigateur ne sait pas */
+/* L'onglet Voice du Studio (16/10/2026) : voix off et musique ElevenLabs (studio_son.js), payees au
+   credit en dollars (reserve ordinaire, rendue a un echec), prix au bouton confirme ici, plafond du
+   jour, fichiers 48 h a la seule session. Eteint sans ELEVENLABS_API_KEY. */
+const studioSonMod = require('./studio_son');
+const STUDIO_SON_JOURNAL = require('path').join(cfg.DATA_DIR, 'studio_son_journal.jsonl');
+const studioSon = studioSonMod.cree({
+  dossier: require('path').join(cfg.DATA_DIR, 'studio_son'),
+  paie: studioSonMod.paieCredit(() => credits(), 'studio voice'),
+  journal: (o) => { try { require('fs').appendFileSync(STUDIO_SON_JOURNAL, JSON.stringify(Object.assign({ t: Date.now() }, o)) + '\n'); } catch (e) { /* jamais bloquant */ } },
+});
 /* ---- LE VERROU BIOMÉTRIQUE DU PORTEFEUILLE (Face ID / passkey, 06/10) ----
  * WebAuthn verifie par wallet_passkey.js. C'est un verrou de CONFORT : il ne
  * garde JAMAIS les fonds (toute transaction passe par la signature du
@@ -7259,6 +7269,52 @@ const server = http.createServer(async (req, res) => {
     }
     return json(r.ok ? 200 : (r.code || 500), r);
   }
+  /* ---- L'ONGLET VOICE (studio_son.js, 16/10/2026) ----
+   * GET /studio/son/catalogue : public (prix, bornes, voix de la bibliotheque ElevenLabs) ;
+   * GET /studio/son/mes : les resultats encore gardes de la SESSION ;
+   * POST /studio/son/voix { texte, voix, modele, langue, confirmeUsd } et
+   * POST /studio/son/musique { prompt, secondes, instrumental, confirmeUsd } : payes au credit en
+   * dollars de la session, le prix montre recompare ici ; GET /studio/son/fichier/<id> : le MP3,
+   * avec la session qui l'a paye seulement. Aucune adresse n'est lue dans le corps. */
+  if (path === '/studio/son/catalogue' || path === '/studio/son/mes' || path === '/studio/son/voix' || path === '/studio/son/musique'
+      || path.startsWith('/studio/son/fichier/')) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
+                   'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    if (path === '/studio/son/catalogue') {
+      let c;
+      try { c = await studioSon.catalogue(); } catch (e) { console.error('[studio son] ' + (e && e.stack || e)); c = { ok: false, actif: false, note: 'Voice and music are unavailable right now.' }; }
+      return json(200, c);
+    }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    if (path === '/studio/son/mes') return json(200, { ok: true, fichiers: studioSon.mes(addr) });
+    if (path.startsWith('/studio/son/fichier/')) {
+      if (req.method !== 'GET') return json(405, { ok: false, raison: 'GET only' });
+      const f = studioSon.fichier(path.slice('/studio/son/fichier/'.length), addr);
+      if (!f) return json(404, { ok: false, raison: 'this file is not here (files are kept 48 h, for the wallet that paid)' });
+      res.writeHead(200, Object.assign({ 'content-type': 'audio/mpeg', 'content-length': f.taille, 'cache-control': 'no-store, private',
+        'content-disposition': 'inline; filename="' + f.nom + '"' }, cors));
+      return require('fs').createReadStream(f.chemin).pipe(res);
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
+    let q;
+    try { q = JSON.parse((await corps(req, 64 * 1024)).toString('utf8') || '{}'); }
+    catch (e) { return json(413, { ok: false, raison: 'unreadable or too large request' }); }
+    if (!q || typeof q !== 'object') q = {};
+    let r;
+    try {
+      r = path === '/studio/son/voix'
+        ? await studioSon.voixOff({ addr, texte: q.texte, voix: q.voix, modele: q.modele, langue: q.langue, confirmeUsd: q.confirmeUsd })
+        : await studioSon.musique({ addr, prompt: q.prompt, secondes: q.secondes, instrumental: q.instrumental, confirmeUsd: q.confirmeUsd });
+    } catch (e) {
+      console.error('[studio son] ' + (e && e.stack || e));
+      r = { ok: false, code: 500, raison: 'server error — you were not charged' };
+    }
+    return json(r.ok ? 200 : (r.code || 500), r);
+  }
   if (path === '/studio/media/catalogue' || path === '/studio/media/image' || path === '/studio/media/video'
       || path.startsWith('/studio/media/video/')) {
     const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS',
@@ -7790,6 +7846,9 @@ const compteInterval = setInterval(() => broadcast(compte()), 60000);
 /* Les images de Studio rangees sur le volume : effacees apres STUDIO_FICHIERS_JOURS (7). */
 const studioFichiersInterval = setInterval(() => { const n = studioFichiers.menage(); if (n) console.log('[studio] ' + n + ' image(s) effacee(s)'); }, 60 * 60 * 1000);
 if (studioFichiersInterval.unref) studioFichiersInterval.unref();
+/* Les voix off et musiques du Studio (studio_son.js) : effacees apres 48 h. */
+const studioSonInterval = setInterval(() => { const n = studioSon.menage(); if (n) console.log('[studio son] ' + n + ' fichier(s) efface(s)'); }, 60 * 60 * 1000);
+if (studioSonInterval.unref) studioSonInterval.unref();
 
 /* Les fiches qui n'ont jamais rien fait quittent aussi la memoire. Elles ne
    sont deja plus ecrites sur le disque ; les garder en RAM laisserait quand
