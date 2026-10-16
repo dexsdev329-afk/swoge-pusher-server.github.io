@@ -211,6 +211,14 @@ function cree(deps0) {
   const viem = require('viem');
   const rythme = deps.rythme || nouveauRythme();
   for (const [k, v] of Object.entries(nouveauRythme())) if (rythme[k] === undefined) rythme[k] = v;
+  /* Le compte du jour : celui du rythme (partage, revue N9), ou un compte
+     PROPRE (`deps.jourPropre`) pour un client qui a son plafond a lui — les
+     lancements Pons toutes les 60 s (smart_lancements.js, 15/10) : la file
+     et l'espacement restent partages, seul le plafond du jour est separe,
+     pour que la passe et la veille ne soient pas affamees (mesure et choix :
+     EXPLOITATION.md, « Lancements Pons »). */
+  const jourPropre = deps.jourPropre ? { cle: null, http: 0, rpc: 0, octets: 0 } : null;
+  const jourDe = () => jourPropre || rythme.jour;
   /* appels = requetes HTTP ; rpc = appels JSON-RPC (un lot de 20 compte 20 : revue N9) */
   const etat = { appels: 0, rpc: 0, octets: 0, refus: 0, reculs: 0, coupesLourdes: 0, depuisCache: 0, cacheOctets: null, cachePlein: false, lmax: {}, passe: { appels: 0, rpc: 0, octets: 0 },
                  budget: { appels: deps.budgetAppels, octets: deps.budgetOctets } };
@@ -249,7 +257,7 @@ function cree(deps0) {
     const liste = Array.isArray(corps) ? corps : [corps];
     for (const c of liste) if (!METHODES.has(c.method)) throw new MethodeInterdite('methode refusee : ' + c.method);
     verifieBudgets();
-    const J = rythme.jour;
+    const J = jourDe();
     etat.appels++; etat.passe.appels++; J.http++;
     etat.rpc += liste.length; etat.passe.rpc += liste.length; J.rpc += liste.length;
     const t0 = deps.horloge();
@@ -278,7 +286,7 @@ function cree(deps0) {
   function verifieBudgets() {
     if (etat.passe.appels >= etat.budget.appels) throw new BudgetEpuise('appels', etat.budget.appels);
     if (etat.passe.octets >= etat.budget.octets) throw new BudgetEpuise('octets', etat.budget.octets);
-    const J = rythme.jour, cle = jourUtc(deps.horloge());
+    const J = jourDe(), cle = jourUtc(deps.horloge());
     if (J.cle !== cle) { J.cle = cle; J.http = 0; J.rpc = 0; J.octets = 0; }
     if (J.http >= deps.plafondJourHttp) throw new BudgetEpuise('du jour (requetes)', deps.plafondJourHttp);
     if (J.octets >= deps.plafondJourOctets) throw new BudgetEpuise('du jour (octets)', deps.plafondJourOctets);
@@ -571,7 +579,7 @@ function cree(deps0) {
   }
 
   return {
-    etat, appel, lot, lisLogs, recus, transactions, codes, horodatages, multicall, soldes, infosJeton, pointe,
+    etat, appel, lot, lisLogs, jour: () => Object.assign({}, jourDe()), recus, transactions, codes, horodatages, multicall, soldes, infosJeton, pointe,
     cacheLit, cacheEcrit, purgeVeille, masque, rythme,
     /** Remet les compteurs de passe a zero ; `b` borne CETTE passe seulement. */
     nouvellePasse(b) { etat.passe = { appels: 0, rpc: 0, octets: 0 }; etat.budget = { appels: (b && b.appels) || deps.budgetAppels, octets: (b && b.octets) || deps.budgetOctets }; },

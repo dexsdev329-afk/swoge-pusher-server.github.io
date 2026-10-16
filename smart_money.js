@@ -22,6 +22,10 @@
  * bloc et tx) de « Not verified » (prix d'une source exterieure, estimations).
  * On parle de WALLETS : rien n'est dit de la personne derriere.
  *
+ *  4. toutes les 60 s, les LANCEMENTS Pons et IGNITION lus sur la chaine
+ *     (smart_lancements.js, brief v2 du 15/10, apres JUDGEBOT) ; toutes les
+ *     2 min, les envois Relay des wallets Solana d'IGNITION.
+ *
  * SMART_MONEY : vide = ETEINT (aucune minuterie, aucune requete, aucun
  * fichier ; viem et sql.js ne sont meme pas charges) ; « observe » = lit,
  * calcule, garde les alertes sans les envoyer ; « 1 » = envoie au proprietaire.
@@ -33,6 +37,7 @@ const K = require('./smart_calcul');
 const SRC = require('./smart_sources');
 const SL = require('./smart_listes');
 const SS = require('./smart_signaux');
+const SLZ = require('./smart_lancements');
 
 const PASSE_MS = 30 * 60e3;          // « toutes les 30 min » (demande du proprietaire)
 const VEILLE_MS = 5 * 60e3;          // 2 900 blocs : 1 appel sans adresse (200 wallets sur 30 000 blocs : 4,8 Mo en 348 ms, sonde du 13/10)
@@ -196,7 +201,7 @@ function cree(deps0) {
   }, deps0 || {});
   const C = config(deps.env);
   const D = path.join(deps.dossier, 'smart_money');
-  let B = null, R = null, RV = null, S = null;
+  let B = null, R = null, RV = null, S = null, LZ = null;
   let enCours = null;
   const journal = [];
   /* tout ce qui est journalise ou servi passe par masque() : jamais l'URL du noeud (revue N5) */
@@ -217,11 +222,20 @@ function cree(deps0) {
     R = deps.rpc || SR.cree(opts);
     RV = deps.rpcVeille || deps.rpc || SR.cree(Object.assign({}, opts, { budgetAppels: VEILLE_APPELS, budgetOctets: VEILLE_OCTETS, prefixeHash: 'V' }));
     S = deps.sources || SRC.cree({ prendre: deps.prendre, horloge: deps.horloge, dors: deps.dors, dossier: D });
+    /* les lancements (15/10) : un troisieme client du noeud, dans la MEME file
+       (une requete en vol, le meme espacement), avec son budget de cycle et
+       son plafond du jour a lui (smart_lancements.js, EXPLOITATION.md) */
+    const RL = deps.rpcLancements || SR.cree(Object.assign({}, opts, { budgetAppels: SLZ.CYCLE_APPELS, budgetOctets: SLZ.CYCLE_OCTETS, prefixeHash: 'P', jourPropre: true,
+      plafondJourHttp: SLZ.JOUR_HTTP, plafondJourOctets: SLZ.JOUR_OCTETS, espaceLegerMs: SLZ.ESPACE_LEGER_MS }, deps.rpcOptions || {}));
+    LZ = SLZ.cree({ R: RL, B, envoie, note, horloge: deps.horloge, dors: deps.dors, prendre: deps.prendre, env: deps.env, explorer: deps.explorer,
+      faits: deps.faits, surSignal: deps.surSignalV2, exclu: (j) => (SOCLE.has(j) ? 'stablecoin or ETH' : (actionsCache && actionsCache.has(j)) ? 'tokenized stock' : null) });
     if (!instantane) instantane = construitVue();
   }
+  let actionsCache = null;      // le registre des actions, garde pour la copie (section 6 du brief v2 : « actions tokenisees »)
   async function actionsOfficielles() {
-    if (deps.actions) return deps.actions();
+    if (deps.actions) { actionsCache = await deps.actions(); return actionsCache; }
     const reg = await require('./actions_rh').cree({ fetch: deps.prendre }).registre();
+    actionsCache = reg.parAdr;
     return reg.parAdr;
   }
 
@@ -956,9 +970,14 @@ function cree(deps0) {
 
   // ---------------------------------------------------------- la veille
   let veilleEnCours = false;
+  /* les faits de marche de la colonie, lus UNE fois par jeton et par veille
+     (l'analyste du 1er brief et la copie du brief v2 lisent le meme jeton) */
+  let faitsMemo = new Map();
+  const faitsVeille = (j) => { if (typeof deps.faits !== 'function') return Promise.resolve(null); if (!faitsMemo.has(j)) faitsMemo.set(j, Promise.resolve().then(() => deps.faits(j))); return faitsMemo.get(j); };
   async function veille() {
     if (veilleEnCours) return { fait: 'deja' };
     veilleEnCours = true;
+    faitsMemo = new Map();
     try {
       await allume();
       RV.nouvellePasse();
@@ -1029,8 +1048,9 @@ function cree(deps0) {
          deux adresses partielles du brief sont reconnues plus tard, parmi les
          acheteurs lus d'un jeton juge) */
       const smart = B.tous('SELECT adresse FROM wallets WHERE smart = 1 ORDER BY gagnants DESC LIMIT ' + SMART_VEILLE_MAX).map((x) => x.adresse);
-      const veilles = [...new Set(smart.concat(SL.adressesCompletes()))].slice(0, SMART_VEILLE_MAX);
+      const veilles = [...new Set(smart.concat(SL.adressesVeille()))].slice(0, SMART_VEILLE_MAX);
       const declencheurs = [];
+      const copiesDex = [];      // les achats DEX des wallets a copier du brief v2 (section 4)
       const recusVeille = new Map();
       if (veilles.length) {
         const { logs } = await RV.lisLogs({ topics: [K.TOPIC.TRANSFER, null, veilles.map(K.pad32)] }, de, haut, PP);
@@ -1054,6 +1074,8 @@ function cree(deps0) {
                brief n'ont pas d'echange, ils n'arrivent donc jamais ici) */
             const w = SL.roleDe(tr.qui);
             if (w && (w.signal === 'fort' || w.signal === 'faible')) declencheurs.push({ jeton: t.jeton, wallet: tr.qui, tx: tr.tx });
+            const w2 = SL.roleV2(tr.qui);
+            if (w2 && w2.role === 'copie' && !copiesDex.some((x) => x.tx === tr.tx && x.wallet === tr.qui)) copiesDex.push({ jeton: t.jeton, wallet: tr.qui, tx: tr.tx, bloc: tr.bloc, eth: tr.eth, recu: rc, t: h2.get(tr.bloc) || null });
           }
         }
         const depuis = Math.floor(deps.horloge() / 1000) - K.ALERTE_FENETRE_S;
@@ -1069,6 +1091,14 @@ function cree(deps0) {
       /* l'analyste du brief, APRES que la veille est acquise : une panne ou un
          budget epuise ici ne fait pas relire les blocs */
       if (declencheurs.length) bilan.analyste = await analyste(declencheurs, P, PP, recusVeille);
+      /* la copie du brief v2 : filtres de la section 6 (tx.from, airdrop
+         multi-destinataires, seuils), puis alerte et signal OBSERVE */
+      if (copiesDex.length && LZ) {
+        try {
+          bilan.copie = await LZ.copieDex(copiesDex, { transactions: (h) => RV.transactions(h, P.sure), faits: faitsVeille,
+            ageMin: (j) => { const c = B.un('SELECT t FROM creations WHERE jeton = ? ORDER BY bloc ASC LIMIT 1', [j]); return c && c.t ? (deps.horloge() / 1000 - c.t) / 60 : null; } });
+        } catch (e) { note('copie', (e.budget ? 'budget' : 'erreur') + ' : ' + masque(e.message || e).slice(0, 120)); }
+      }
       B.pose('passes', { genre: 'veille', debut: Math.floor(deps.horloge() / 1000), fin: Math.floor(deps.horloge() / 1000), statut: 'ok', appels: RV.etat.passe.appels, octets: RV.etat.passe.octets, gt: 0, ds: 0, jetons: 0, detail: bilan });
       await rapportSiHeure();
       B.sauve();
@@ -1206,7 +1236,7 @@ function cree(deps0) {
        lecteurs et ses caches, pas un second client) */
     if (typeof deps.faits === 'function') {
       try {
-        const cf = await deps.faits(jeton);
+        const cf = await faitsVeille(jeton);
         if (cf) {
           f.mcUsd = typeof cf.mc === 'number' && cf.mc > 0 ? cf.mc : null;
           f.liqUsd = typeof cf.liq === 'number' ? cf.liq : null;
@@ -1360,6 +1390,8 @@ function cree(deps0) {
       /* l'analyste du brief (15/10) : des codes, aucun texte (le texte va au
          proprietaire seul) ; les wallets suivis et les derniers verdicts */
       analyste: { wallets: SL.WALLETS.length, mise_usd: C.miseUsd, par_veille: ANALYSTE_PAR_VEILLE, derniers: verdictsVus.slice(-ANALYSTE_VUS_MAX).reverse() },
+      /* les lancements Pons et IGNITION (15/10) : des compteurs, aucun texte */
+      lancements: LZ ? LZ.vue() : null,
       journal: journal.slice(-20),
     };
   }
@@ -1396,11 +1428,18 @@ function cree(deps0) {
     if (C.mode === 'off') return '[smart] ETEINT (SMART_MONEY vide) : aucune minuterie, aucune requete, aucun fichier';
     if (C.mode === 'inconnu') return `[smart] SMART_MONEY=${C.brut} inconnu (« observe » ou « 1 ») : RIEN ne tourne`;
     const base = `passe toutes les ${PASSE_MS / 60e3} min (GeckoTerminal + DexScreener sans cle, noeud ${C.rpcPropre ? 'SMART_RPC_URL' : 'public'} en lecture seule), veille toutes les ${VEILLE_MS / 60e3} min, rapport ${C.heure} ${FUSEAU}`;
-    return C.mode === 'observe' ? `[smart] OBSERVATION (SMART_MONEY=observe) : ${base} — n envoie rien` : `[smart] ALERTES au proprietaire seul (SMART_MONEY=1, notifyPrive) : ${base}`;
+    const z = SLZ.config(deps.env);
+    const lz = `, lancements Pons ${z.lancements ? 'toutes les ' + SLZ.CYCLE_MS / 1e3 + ' s' : 'ETEINTS (SMART_LANCEMENTS=0)'}, IGNITION ${z.ignition ? 'oui' : 'non'}, Relay ${z.relay ? 'un wallet toutes les ' + SLZ.RELAY_MS / 1e3 + ' s' : 'non'}, copie ${z.copie ? 'oui' : 'non'}, rebond ${z.rebond ? 'oui' : 'non'}, promo DexScreener ${z.dsOrders ? 'oui' : 'non'}`;
+    return C.mode === 'observe' ? `[smart] OBSERVATION (SMART_MONEY=observe) : ${base}${lz} — n envoie rien` : `[smart] ALERTES au proprietaire seul (SMART_MONEY=1, notifyPrive) : ${base}${lz}`;
   }
 
   return {
     config: C, passe, veille, ligneDemarrage, allume,
+    /** Un cycle des lancements (60 s) ; les envois Relay (2 min). */
+    lancements: async () => { await allume(); const r = await LZ.cycle(); instantane = construitVue(); return r; },
+    relay: async () => { await allume(); return LZ.relay(); },
+    /** Le prix d'un jeton sur sa courbe Pons suivie (ombres de la colonie). */
+    prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
     vue: () => (B ? (instantane || construitVue()) : { actif: C.mode === 'observe' || C.mode === 'envoi', pret: false, mode: C.mode }),
     jeton: (a) => detailJeton(String(a).toLowerCase()),
     wallet: (a) => detailWallet(String(a).toLowerCase()),
@@ -1432,9 +1471,12 @@ function planifie(deps) {
     const p = setTimeout(garde(I.passe, 'passe'), PREMIERE_PASSE_MS); if (p.unref) p.unref(); m.push(['t', p]);
     const a = setInterval(garde(I.passe, 'passe'), PASSE_MS); if (a.unref) a.unref(); m.push(['i', a]);
     const b = setInterval(garde(I.veille, 'veille'), VEILLE_MS); if (b.unref) b.unref(); m.push(['i', b]);
+    const z = SLZ.config((deps || {}).env);
+    if (z.lancements) { const c = setInterval(garde(I.lancements, 'lancements'), SLZ.CYCLE_MS); if (c.unref) c.unref(); m.push(['i', c]); }
+    if (z.relay) { const r = setInterval(garde(I.relay, 'relay'), SLZ.RELAY_MS); if (r.unref) r.unref(); m.push(['i', r]); }
   }
   return {
-    passe: () => I.passe(), veille: () => I.veille(), actif: true, instance: I,
+    passe: () => I.passe(), veille: () => I.veille(), lancements: () => I.lancements(), relay: () => I.relay(), actif: true, instance: I,
     /* synchrone : journal.draine coupe le processus 2 s apres SIGTERM */
     arrete() { for (const [k, x] of m) (k === 't' ? clearTimeout : clearInterval)(x); m.length = 0; try { I.sauve(); } catch (e) { /* rien */ } },
   };

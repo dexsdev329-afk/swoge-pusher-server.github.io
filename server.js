@@ -11926,8 +11926,14 @@ server.listen(cfg.PORT, () => {
      ses lecteurs (capitalisation, liquidite, taxe : `faitsPourSmart`) et recoit
      ses verdicts ACHETER/SURVEILLER comme un signal OBSERVE (`signalSmart`,
      COLONIE_SMART_SIGNAL=observe par defaut : rien n'est achete). */
+  /* Le brief v2 (15/10/2026, apres JUDGEBOT) : les lancements Pons et
+     IGNITION lus sur la chaine toutes les 60 s (smart_lancements.js). Leurs
+     signaux arrivent a la colonie par le meme `signalSmart`, avec leur SOURCE :
+     une ligne d'audit chacune, jamais un achat. Un jeton encore sur sa courbe
+     n'a pas de prix DexScreener : la colonie lit celui de la courbe suivie. */
   smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
-    faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v) });
+    faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v) });
+  aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */

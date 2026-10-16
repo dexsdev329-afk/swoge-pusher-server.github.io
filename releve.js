@@ -48,7 +48,8 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   if (SG) {
     for (const l of SG.lignes || []) {
       const pb = l.planBrief;
-      console.log(`smart ${l.verdict === 'ACHETER' ? 'buy  ' : 'watch'}`, `n=${l.n || 0}/${SG.min} montes=${l.partMontes ?? '—'}% moy=${l.moyenne ?? '—'} strat=${l.strat ?? '—'} (7j n=${l.n7 ?? 0} ${l.partMontes7 ?? '—'}%)`
+      /* les lignes du brief v2 (15/10 : lancements Pons, dev connu, IGNITION, copie, rebond) se lisent a leur cle */
+      console.log(l.source ? String(l.cle).padEnd(22) : `smart ${l.verdict === 'ACHETER' ? 'buy  ' : 'watch'}`, `n=${l.n || 0}/${SG.min} montes=${l.partMontes ?? '—'}% moy=${l.moyenne ?? '—'} strat=${l.strat ?? '—'} (7j n=${l.n7 ?? 0} ${l.partMontes7 ?? '—'}%)`
         + ` · horizons ${(l.horizons || []).map((h) => `${h.h}m:${h.n ? h.partMontes + '%/' + h.n : '—'}`).join(' ')}`
         + ` · plan brief ${pb ? `n=${pb.n} moy=${pb.moyenne}% gagnants=${pb.partGagnantes}% ecart/vigueur=${pb.ecartMoyen ?? '—'} (${pb.apparies})` : '—'}`);
     }

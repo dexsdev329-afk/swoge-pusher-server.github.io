@@ -8389,7 +8389,9 @@ async function signalDuBrief() {
   ok(S && S.ombres.length === 1 && S.ombres[0].adr === adr && S.ombres[0].verdict === 'ACHETER' && S.ombres[0].prix0 === 1, 'son ombre A PART, au prix lu (1), verdict ACHETER');
   ok(envoyes.some((x) => /dexscreener/.test(x.url) && x.url.includes(adr)), 'une lecture DexScreener pour lui');
   const vs = C.vue().smartSignal;
-  ok(vs && vs.mode === 'observe' && vs.ombres === 1 && vs.porte.ouverte === false && vs.lignes.length === 2, 'la vue : mode, ombre en cours, porte fermee, deux lignes (buy, watch)');
+  /* deux lignes du 1er brief (buy, watch), puis celles des sources du brief v2 (15/10) : la vue les montre toutes, celles du 1er brief d'abord */
+  ok(vs && vs.mode === 'observe' && vs.ombres === 1 && vs.porte.ouverte === false && vs.lignes[0].cle === 'smart signal: buy' && vs.lignes[1].cle === 'smart signal: watch'
+     && vs.lignes.slice(2).every((x) => x.source), 'la vue : mode, ombre en cours, porte fermee, les deux lignes du brief (buy, watch) d\'abord, puis ' + (vs.lignes.length - 2) + ' lignes du brief v2');
   ok(!(C.vue().audit || []).some((x) => /smart/.test(x.cle)), 'et rien dans le champ `audit` (ce n\'est pas un refus)');
   /* les faits que le detecteur demande a la colonie : ses lecteurs, sans ecrire le cache DexScreener */
   const fp = await C.faitsPourSmart(MONDE.jetons[1].addr);
@@ -8464,6 +8466,59 @@ async function signalDuBrief() {
   ok(JSON.stringify({ a: E4.audit, c: E4.compteurs, v: E4.variantes || null, b: E4.bancSerie || null, o: E4.ombres }) === avant,
      'rien de la colonie n\'a bouge : audit, compteurs, jeux concurrents, banc, ombres (' + E4.ombres.length + ' ombres)');
   ok(C.rendementVendablePur(50, 1e6) === C.rendementVendable(50, 1e6) && C.rendementVendablePur(50, 100) === C.OMBRE_DISPARUE, 'la meme arithmetique du prix vendable, sans compteur');
+}
+
+/* ==========================================================================
+ * LES SOURCES DU BRIEF V2 (15/10/2026, apres JUDGEBOT) : OBSERVEES, JAMAIS ACHETEES
+ *
+ * Lancements Pons, dev connu, IGNITION, copie, rebond (smart_lancements.js)
+ * arrivent par le meme `signalSmart`, avec leur SOURCE. Ce que l'essai tient :
+ *   1. meme en « achat » et porte OUVERTE, un ACHETER d'une source v2 n'entre
+ *      jamais dans le tour : rien n'est achete ;
+ *   2. un jeton encore sur sa courbe (absent de DexScreener) a son ombre au
+ *      prix de la courbe (`fournisseurPrixCourbe`), et elle se juge sur la
+ *      ligne de SA source, nette des frais d'aller-retour de la courbe ;
+ *   3. le jaune de toutes les sources partage une ligne ; une source inconnue
+ *      est refusee ; le meme jeton de deux sources : deux ombres.
+ * ======================================================================== */
+async function signauxDuBriefV2() {
+  const egal = (a, b, m) => ok(a === b || String(a) === String(b), m + ' (lu ' + a + ', attendu ' + b + ')');
+  console.log('\n-- les sources du brief v2 : observees, jamais achetees --');
+  const surCourbe = jeton(44), dex = jeton(0);
+  remise([dex]);                                   /* le jeton sur la courbe n'est PAS dans le monde DexScreener */
+  poolsPageFiltre = [dex.addr];
+  const E = C._etat();
+  E.audit['achete ou retenu'] = { n: 100, s: 500, montes: 30, effondres: 10, nStrat: 100, strat: 200 };
+  E.smartSignal = { audit: { 'smart signal: buy': { n: 120, s: 2400, montes: 60, effondres: 6, nStrat: 120, strat: 600 } } };
+  process.env.COLONIE_SMART_SIGNAL = 'achat';
+  ok(C.smartPorte().ouverte === true, 'porte du 1er brief ouverte (120 observations, 50 % contre 30 %)');
+  const demandes = [];
+  C.fournisseurPrixCourbe((a) => { demandes.push(a); return a === surCourbe.addr ? { prix: 2, liq: null } : null; });
+  const v = (t, src, verdict, o) => Object.assign({ jeton: t.addr, sym: t.sym, verdict: verdict || 'ACHETER', source: src, t: Date.now(), conditions: [], wallets: [], inconnues: [] }, o || {});
+  ok(C.signalSmart(v(surCourbe, 'dev', 'ACHETER', { courbe: true, fraisPct: 6 })) === true, 'un ACHETER « dev connu » sur la courbe : pris en file');
+  ok(C.signalSmart(v(surCourbe, 'dev', 'ACHETER', { courbe: true, fraisPct: 6 })) === false, 'le meme, de la meme source : une seule ombre');
+  ok(C.signalSmart(v(surCourbe, 'copie', 'SURVEILLER', { courbe: true, fraisPct: 6 })) === true, 'le meme jeton, d\'une autre source : pris aussi');
+  ok(C.signalSmart(v(dex, 'lancement', 'ACHETER')) === true, 'un ACHETER « lancement » d\'un jeton deja sur DexScreener : pris');
+  ok(C.signalSmart(v(dex, 'inconnue', 'ACHETER')) === false, 'une source inconnue : refusee');
+  await C.tour();
+  ok(!E.positions.some((p) => p.adr === surCourbe.addr || p.origine === 'smart'), 'porte ouverte, mode « achat » : AUCUN jeton d\'une source v2 n\'est achete');
+  egal(E.smartSignal.compteurs.proposeAuTour || 0, 0, 'aucun propose au tour');
+  const oc = E.smartSignal.ombres.find((o) => o.adr === surCourbe.addr && o.source === 'dev');
+  ok(oc && oc.courbe === true && oc.prix0 === 2 && oc.frais === 6, 'l\'ombre du jeton sur la courbe : prix de la courbe (2), frais d\'aller-retour 6 points');
+  ok(demandes.includes(surCourbe.addr), 'le prix vient du detecteur (la courbe suivie)');
+  /* l'echeance de reference : +50 % sur la courbe */
+  oc.t = Date.now() - C.HORIZON_REF * 60000;
+  C.regleLesSmart({ [surCourbe.addr]: { prix: 3, liq: null } });
+  const l = C.smartLigne('smart launch: known dev');
+  ok(l && l.n === 1 && Math.abs(l.moyenne - 44) < 0.6, 'sur SA ligne « smart launch: known dev » : +50 % moins 6 points de frais = ' + (l && l.moyenne) + ' %');
+  ok(!C.smartLigne('smart signal: buy') || C.smartLigne('smart signal: buy').n === 120, 'la ligne du 1er brief n\'a pas bouge');
+  const vs = C.vue().smartSignal;
+  const cles = vs.lignes.map((x) => x.cle);
+  ok(['smart launch: pons', 'smart launch: known dev', 'smart launch: ignition', 'smart copy: wallet', 'smart rebound', 'smart v2: watch'].every((k) => cles.includes(k)), 'la vue montre une ligne par source, et la ligne jaune commune (' + cles.join(', ') + ')');
+  egal(C.smartLigneDe({ verdict: 'SURVEILLER', source: 'copie' }), 'smart v2: watch', 'le jaune d\'une source v2 va sur la ligne commune');
+  C.fournisseurPrixCourbe(null);
+  delete process.env.COLONIE_SMART_SIGNAL;
+  poolsPageFiltre = null;
 }
 
 /* ==========================================================================
@@ -8788,6 +8843,7 @@ async function baleineParTranche() {
   await carnetNetDuCout();
   await banquePapierLitLaColonie();
   await signalDuBrief();
+  await signauxDuBriefV2();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

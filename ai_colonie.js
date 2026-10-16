@@ -9949,6 +9949,28 @@ const SMART_LECTURES_PAR_TOUR = 4;    /* relectures de prix des ombres du signal
 const SMART_ACHAT_MIN_OBS = 100;      /* la porte de « achat » : voir plus haut */
 const SMART_RELEVES_MAX = 300;        /* ombres reglees gardees pour la page et le releve */
 const SMART_LIGNES = { ACHETER: 'smart signal: buy', SURVEILLER: 'smart signal: watch' };
+/* ---- LES SOURCES DU BRIEF V2 (15/10/2026, apres JUDGEBOT) ----
+ * Lancements Pons lus sur la chaine, devs connus, IGNITION, copie de wallets,
+ * rebond (smart_lancements.js). Chacune a SA ligne pour son vert (🟢), et tout
+ * leur jaune (🟡) partage une ligne : ainsi chaque source se juge un jour
+ * contre « achete ou retenu », comme « smart signal: buy ». Elles n'entrent
+ * JAMAIS dans le tour, quel que soit COLONIE_SMART_SIGNAL : seule la ligne du
+ * 1er brief a une porte (`smartPorte`), et rien ici ne l'ouvre pour elles.
+ * Un jeton encore sur sa COURBE Pons n'a pas de prix DexScreener : son ombre
+ * prend le prix du dernier echange de la courbe (`fournisseurPrixCourbe`, lu
+ * par le detecteur), et se juge NETTE des frais d'aller-retour de la courbe
+ * (`fraisPct`, 6 points, sonde du 15/10). */
+const SMART_LIGNES_V2 = { lancement: 'smart launch: pons', dev: 'smart launch: known dev', ignition: 'smart launch: ignition', copie: 'smart copy: wallet', rebond: 'smart rebound' };
+const SMART_V2_WATCH = 'smart v2: watch';
+function smartLigneDe(v) {
+  if (v && v.source && SMART_LIGNES_V2[v.source]) return v.verdict === 'ACHETER' ? SMART_LIGNES_V2[v.source] : SMART_V2_WATCH;
+  return SMART_LIGNES[v && v.verdict] || SMART_LIGNES.SURVEILLER;
+}
+let prixCourbeSmart = null;
+/** Le detecteur donne le prix d'un jeton sur sa courbe suivie : (adr) ->
+ *  { prix (USD), liq: null } | null. */
+function fournisseurPrixCourbe(fn) { prixCourbeSmart = typeof fn === 'function' ? fn : null; }
+function prixSurCourbe(adr) { try { const p = prixCourbeSmart ? prixCourbeSmart(adr) : null; return p && p.prix > 0 ? p : null; } catch (e) { return null; } }
 function smartMode() {
   const v = String(process.env.COLONIE_SMART_SIGNAL || '').trim().toLowerCase();
   return v === 'achat' ? 'achat' : v === 'off' ? 'off' : 'observe';
@@ -9968,16 +9990,19 @@ function signalSmart(v) {
   if (smartMode() === 'off') return false;
   if (!v || !/^0x[0-9a-f]{40}$/.test(String(v.jeton || '').toLowerCase())) return false;
   if (v.verdict !== 'ACHETER' && v.verdict !== 'SURVEILLER') return false;
+  const source = v.source && SMART_LIGNES_V2[v.source] ? v.source : null;
+  if (v.source && !source) return false;
   const S = smartEtat();
   const adr = String(v.jeton).toLowerCase();
-  /* le meme jeton au meme verdict : une ombre, pas une par veille */
-  if (S.file.some((x) => x.jeton === adr && x.verdict === v.verdict)
-      || S.ombres.some((o) => o.adr === adr && o.verdict === v.verdict)) { compteSmart('doublon'); return false; }
+  /* le meme jeton au meme verdict et de la meme source : une ombre, pas une par veille */
+  if (S.file.some((x) => x.jeton === adr && x.verdict === v.verdict && (x.source || null) === source)
+      || S.ombres.some((o) => o.adr === adr && o.verdict === v.verdict && (o.source || null) === source)) { compteSmart('doublon'); return false; }
   S.file.push({ jeton: adr, sym: v.sym ? String(v.sym).slice(0, 12) : null, verdict: v.verdict, t: Number(v.t) || Date.now(),
+                source, courbe: !!(source && v.courbe), fraisPct: source && typeof v.fraisPct === 'number' && v.fraisPct >= 0 && v.fraisPct < 50 ? v.fraisPct : 0,
                 conditions: Array.isArray(v.conditions) ? v.conditions.slice(0, 20) : [],
                 wallets: Array.isArray(v.wallets) ? v.wallets.slice(0, 10) : [], inconnues: Array.isArray(v.inconnues) ? v.inconnues.slice(0, 20) : [] });
   if (S.file.length > SMART_FILE_MAX) { S.file.splice(0, S.file.length - SMART_FILE_MAX); compteSmart('fileDebordee'); }
-  compteSmart('recus_' + v.verdict);
+  compteSmart('recus_' + v.verdict + (source ? '_' + source : ''));
   return true;
 }
 
@@ -10011,16 +10036,18 @@ async function prendLesSignauxSmart(parAdresse) {
        discipline que la sonde des jeunes) — une mesure ne change pas ce que
        le tour lira. */
     if (!t) {
-      if (mode === 'achat' && v.verdict === 'ACHETER' && porte && porte.ouverte) t = await jetonDepuisDex(v.jeton, 'smart');
+      if (mode === 'achat' && !v.source && v.verdict === 'ACHETER' && porte && porte.ouverte) t = await jetonDepuisDex(v.jeton, 'smart');
       else {
         const d = await lisDex(v.jeton, { sansCache: true });
         t = (d && d.vu && d.prix > 0) ? { addr: v.jeton, sym: (d.sym || v.sym || '?').toUpperCase().slice(0, 12), pool: d.pool || null, prix: d.prix,
           liq: typeof d.liq === 'number' ? d.liq : null, mc: d.mc || 0, minutes: d.cree ? (Date.now() - d.cree) / 60000 : null, dex: d } : null;
+        /* sur la courbe Pons : pas de DexScreener, le prix du dernier echange */
+        if (!t && v.courbe) { const c = prixSurCourbe(v.jeton); if (c) t = { addr: v.jeton, sym: (v.sym || '?').toUpperCase().slice(0, 12), pool: null, prix: c.prix, liq: null, mc: 0, minutes: null, dex: null, surCourbe: true }; }
       }
     }
     if (!t || !(t.prix > 0)) { compteSmart('sansPrix'); continue; }
     noteOmbreSmart(t, v);
-    if (mode === 'achat' && v.verdict === 'ACHETER' && !deja) {
+    if (mode === 'achat' && !v.source && v.verdict === 'ACHETER' && !deja) {
       if (porte && porte.ouverte) { t.smart = { verdict: v.verdict, t: v.t }; parAdresse.set(v.jeton, t); compteSmart('proposeAuTour'); }
       else compteSmart('porteFermee');
     }
@@ -10035,6 +10062,7 @@ function noteOmbreSmart(t, v) {
   const now = Date.now();
   S.ombres.push({
     adr: t.addr, sym: t.sym, pool: t.pool || null, prix0: t.prix, t: now, verdict: v.verdict, tVerdict: v.t,
+    source: v.source || null, courbe: !!t.surCourbe, frais: t.surCourbe ? (v.fraisPct || 0) : 0,
     /* le cout d'aller-retour de la case (age×mc), comme les ombres de la
        colonie : la ligne se juge NETTE, comme la reference */
     caseFrott: litTrait(CASE_ESPERANCE_TRAIT, t),
@@ -10043,7 +10071,7 @@ function noteOmbreSmart(t, v) {
     wallets: (v.wallets || []).map((w) => ({ wallet: w.wallet, role: w.role, minutes: w.minutes })),
     inconnues: v.inconnues || [], jalons: {},
   });
-  compteSmart('ombres_' + v.verdict);
+  compteSmart('ombres_' + v.verdict + (v.source ? '_' + v.source : ''));
 }
 
 /** Les prix des ombres du signal que le tour n'a pas cotees : leurs PROPRES
@@ -10061,6 +10089,7 @@ async function secoursSmart(marche) {
     n++;
     const x = await lisDex(o.adr, { sansCache: true });
     if (x && x.vu && x.prix > 0) { marche[o.adr] = { prix: x.prix, liq: typeof x.liq === 'number' ? x.liq : null }; o.muets = 0; }
+    else if (o.courbe && prixSurCourbe(o.adr)) { const c = prixSurCourbe(o.adr); marche[o.adr] = { prix: c.prix, liq: null }; o.muets = 0; }
     else o.muets = (o.muets || 0) + 1;
     await dors(250);
   }
@@ -10099,7 +10128,7 @@ function rejoueOmbreSmart(o) {
   if (!o || o.rejouee) return;
   o.rejouee = true;
   const S = smartEtat();
-  const cle = SMART_LIGNES[o.verdict] || SMART_LIGNES.SURVEILLER;
+  const cle = smartLigneDe(o);
   if (!o.jalons || o.jalons[HORIZON_REF] === undefined) {
     const a = S.audit[cle] || (S.audit[cle] = { n: 0, s: 0, montes: 0, effondres: 0 });
     a.sansLecture = (a.sansLecture || 0) + 1;
@@ -10114,7 +10143,7 @@ function rejoueOmbreSmart(o) {
     }
     o.rejeu = { vigueur: rs, brief: rb };
   }
-  S.releves.unshift({ t: o.t, adr: o.adr, sym: o.sym, verdict: o.verdict, mc0: o.mc0, minutes0: o.minutes0, jalons: o.jalons,
+  S.releves.unshift({ t: o.t, adr: o.adr, sym: o.sym, verdict: o.verdict, source: o.source || null, courbe: !!o.courbe, mc0: o.mc0, minutes0: o.minutes0, jalons: o.jalons,
                       vigueur: o.rejeu ? o.rejeu.vigueur : null, brief: o.rejeu ? o.rejeu.brief : null, disparue: !!o.disparue,
                       wallets: (o.wallets || []).map((w) => w.role) });
   if (S.releves.length > SMART_RELEVES_MAX) S.releves.length = SMART_RELEVES_MAX;
@@ -10132,7 +10161,7 @@ function regleLesSmart(marche) {
   S.ombres = S.ombres.filter((o) => {
     const age = (now - o.t) / 60000;
     if (now - o.t > OMBRE_OUBLI_MS) { rejoueOmbreSmart(o); return false; }
-    const cle = SMART_LIGNES[o.verdict] || SMART_LIGNES.SURVEILLER;
+    const cle = smartLigneDe(o);
     const x = marche[o.adr];
     if (!(x && x.prix > 0) && o.dexVu && (o.muets || 0) >= OMBRE_SILENCES && age >= HORIZON_REF && o.jalons[HORIZON_REF] === undefined) {
       o.jalons[HORIZON_REF] = OMBRE_DISPARUE; o.disparue = true;
@@ -10150,7 +10179,7 @@ function regleLesSmart(marche) {
         if (o.jalons[h] !== undefined || !jalonValable(h, age)) continue;
         o.jalons[h] = Math.round(r * 10) / 10;
         noteSmartHorizon(cle, h, r);
-        if (h === HORIZON_REF) { noteSmartAudit(cle, r - coutCelluleDe(o)); n++; }
+        if (h === HORIZON_REF) { noteSmartAudit(cle, r - coutCelluleDe(o) - (o.frais || 0)); n++; }
       }
     }
     if (age <= dernier + Math.max(5, dernier * 0.5)) return true;
@@ -10176,12 +10205,14 @@ function smartLigne(cle) {
 function smartVue() {
   const S = smartEtat();
   const ref = auditComplet().find((x) => x.cle === 'achete ou retenu') || null;
-  const lignes = Object.keys(SMART_LIGNES).map((v) => {
-    const cle = SMART_LIGNES[v], l = smartLigne(cle) || { cle, n: 0 };
+  const cles = Object.keys(SMART_LIGNES).map((v) => [v, SMART_LIGNES[v], null])
+    .concat(Object.keys(SMART_LIGNES_V2).map((src) => ['ACHETER', SMART_LIGNES_V2[src], src])).concat([['SURVEILLER', SMART_V2_WATCH, 'v2']]);
+  const lignes = cles.map(([v, cle, src]) => {
+    const l = smartLigne(cle) || { cle, n: 0 };
     const H = S.horizons[cle] || {};
     const par = HORIZONS.map((h) => { const c = H[h]; return { h, n: c ? c.n : 0, partMontes: c && c.n ? Math.round(c.montes / c.n * 100) : null, moyenne: c && c.n ? Math.round(c.s / c.n * 10) / 10 : null }; });
     const p = S.plan[cle];
-    return Object.assign(l, { verdict: v, horizons: par, assez: (l.n || 0) >= SMART_ACHAT_MIN_OBS,
+    return Object.assign(l, { verdict: v, source: src, horizons: par, assez: (l.n || 0) >= SMART_ACHAT_MIN_OBS,
       planBrief: p ? { n: p.n, moyenne: Math.round(p.s / p.n * 10) / 10, partGagnantes: Math.round(p.gagnants / p.n * 100),
                        apparies: p.nApparie, ecartMoyen: p.nApparie ? Math.round(p.ecart / p.nApparie * 10) / 10 : null } : null });
   });
@@ -11192,7 +11223,7 @@ module.exports = {
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
   SANS_ACHAT_DESSERRE,
-  signalSmart, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
+  signalSmart, fournisseurPrixCourbe, smartLigneDe, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
   SMART_ACHAT_MIN_OBS, SMART_LIGNES, SMART_PAR_TOUR,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc, _lisChaine: lisChaine,
 };
