@@ -482,7 +482,9 @@ function cree(deps) {
           const cap = coteEth ? SP.capCourbeUsd(dernier, OFFRE_PONS, ethUsd()) : null;
           const usd = coteEth && ethUsd() ? SP.versEth(e.cote) * ethUsd() : null;
           const ageMin = (e.bloc - k2.bloc) * S_PAR_BLOC / 60;
-          const fc = SP.filtreCopie({ wallet: e.destinataire, txFrom: tx && tx.from, listeMemeTx: SP.listeMemeTx(memes), usd, capUsd: cap, ageMin, exclusJeton: null, marche: !(s && s.gradue) && !ec.gradue });
+          /* la liquidite d'une courbe : son ETH net × ETH/USD (regle du 16/10, jeunes jetons) */
+          const liqUsd = coteEth && s && ethUsd() ? SP.versEth(BigInt(s.net || '0')) * ethUsd() : null;
+          const fc = SP.filtreCopie({ wallet: e.destinataire, txFrom: tx && tx.from, listeMemeTx: SP.listeMemeTx(memes), usd, capUsd: cap, ageMin, liqUsd, createur: k2.deployer, exclusJeton: null, marche: !(s && s.gradue) && !ec.gradue });
           if (!fc.garde) { bilan.ignores[fc.raison] = (bilan.ignores[fc.raison] || 0) + 1; continue; }
           bilan.copies++;
           await copie({ jeton: k2.jeton, wallet: e.destinataire, voix: fc.voix, nom: fc.nom, usd, capUsd: cap, ageMin, inconnues: fc.inconnues, courbe: e.courbe, coteEth, tx: e.tx,
@@ -579,7 +581,7 @@ function cree(deps) {
       const usd = ethUsd() && x.eth != null ? SP.versEth(BigInt(x.eth)) * ethUsd() : null;
       const exclu = typeof deps.exclu === 'function' ? deps.exclu(x.jeton) : null;
       const ageMin = ctx.ageMin ? ctx.ageMin(x.jeton) : null;
-      const fc = SP.filtreCopie({ wallet: x.wallet, txFrom: tx && tx.from, listeMemeTx: SP.listeMemeTx(memes), usd, capUsd: fa && typeof fa.mc === 'number' ? fa.mc : null, ageMin,
+      const fc = SP.filtreCopie({ wallet: x.wallet, txFrom: tx && tx.from, listeMemeTx: SP.listeMemeTx(memes), usd, capUsd: fa && typeof fa.mc === 'number' ? fa.mc : null, ageMin, liqUsd: fa && typeof fa.liq === 'number' ? fa.liq : null,
         exclusJeton: exclu, marche: fa ? (typeof fa.liq === 'number' ? fa.liq > 0 : true) : true });
       if (!fc.garde) { bilan.ignores[fc.raison] = (bilan.ignores[fc.raison] || 0) + 1; continue; }
       bilan.gardes++;

@@ -187,6 +187,15 @@ function instance(w, o) {
     ok(s1({ ageMin: 5, capUsd: 34999 }).garde && s1({ ageMin: 60, capUsd: 20000 }).garde, 'Sniper 1 a 5 et 60 min sous 35 k$ : garde');
     ok(!s1({ ageMin: 4.9 }).garde && !s1({ ageMin: 61 }).garde && !s1({ capUsd: 35000 }).garde, 'Sniper 1 a 4,9 min, 61 min, ou a 35 k$ : ignore');
     ok(c({}).inconnues.length === 0 && c({ usd: null }).garde && c({ usd: null }).inconnues.includes('usd'), 'un prix inconnu ne filtre pas mais se DIT (inconnue)');
+    /* regles du proprietaire du 16/10 */
+    const BAGGR = '0x64327b3d69740cca74f19d9ed78dc5f4094dcb0c';
+    ok(/serial launcher/.test(c({ createur: BAGGR }).raison) && c({ createur: A('d1') }).garde, 'createur de BAGGR : lanceur en serie, pas suivi ; un autre createur : garde');
+    ok(/under 5 min with under \$5000 liquidity/.test(s1({ ageMin: 4, capUsd: 20000, liqUsd: 4999 }).raison) && /under 5 min/.test(c({ ageMin: 3, liqUsd: null }).raison),
+       'moins de 5 min et moins de 5 000 $ de liquidite (ou liquidite non lue) : pas d alerte, meme pour Sniper 1');
+    ok(c({ ageMin: 3, liqUsd: 5000 }).garde && c({ ageMin: 5, liqUsd: 100 }).garde, '3 min avec 5 000 $ : garde ; 5 min avec 100 $ : la regle ne s applique plus');
+    { const jb = SP.jugeLancement({ lancement: { plateforme: 'pons', deployer: BAGGR, cote: SP.ADR.ETH }, tx: { from: BAGGR, to: SP.ADR.ENTREE_PONS, value: '0x0' }, achatDevEth: 3, exemptions: 5,
+        meta: { logo: 'https://x.example/a.png', socials: ['https://x.com/a'] }, taxe: 0 });
+      ok(jb.alerte === false && jb.verdict === 'rouge' && jb.risqueCode.cle === 'lanceur_serie', 'un lancement du createur de BAGGR, meme avec 3 ETH du dev : aucune alerte, rouge, « lanceur en serie »'); }
     egal(SP.voix([{ voix: 'groupe1' }, { voix: 'groupe1' }, { voix: SNIPER }]), 2, 'groupe {0x3add, 0xc08a, 0x2091} : une seule voix');
     egal(SP.listeMemeTx([SNIPER, '0x1ad70bc7ac98539dada8f97360d353687f6c29d6', A('12')]), 2, 'destinataires de la liste dans une meme tx : 2');
     /* section 7 */
@@ -272,8 +281,8 @@ function instance(w, o) {
     ok(!JSON.stringify(r.I.vue()).includes('Pas un conseil'), 'la vue publique ne porte aucun texte d’alerte');
     /* 16/10 : la meme alerte, ouverte aux joueurs (smart_public.js) — en anglais, par gabarit, et mesuree depuis le prix de la courbe */
     const vp = r.I.alertesPubliques(0), ap = vp.alertes[0] || {}, fp = ap.fiche || {};
-    ok(vp.actif && vp.alertes.length === 1 && ap.categorie === 'dev' && ap.verdict === 'vert' && fp.titre === 'Known dev launch (CrawlScan)' && fp.symbole === 'JUDGEBOT', 'public : JUDGEBOT, 🟢 « Known dev launch (CrawlScan) », categorie « dev »');
-    ok(fp.qui && fp.qui[0] && fp.qui[0].nom === 'Known dev CrawlScan' && fp.qui[0].adresse === '0x58ea497c16422a344a50785f6f23ca92082e2e03' && fp.qui[0].detail === 'dev buy 0.028 ETH', 'public : qui = le dev connu, son adresse ENTIERE, son achat lu sur la courbe');
+    ok(vp.actif && vp.alertes.length === 1 && ap.categorie === 'dev' && ap.verdict === 'vert' && fp.titre === 'Known dev launch (Known dev #1)' && fp.symbole === 'JUDGEBOT', 'public : JUDGEBOT, 🟢 « Known dev launch (Known dev #1) » (nom neutre, 16/10), categorie « dev »');
+    ok(fp.qui && fp.qui[0] && fp.qui[0].nom === 'Known dev #1' && fp.qui[0].adresse === null && !JSON.stringify(vp).includes('58ea497c') && fp.qui[0].detail === 'dev buy 0.028 ETH', 'public : qui = le dev connu sous un nom neutre, SANS adresse nulle part dans le flux (16/10), son achat lu sur la courbe');
     ok(/^\d+ s old · curve 0\.\d{3} \/ 4\.20 ETH \(\d+%\)$/.test(fp.etat || '') && fp.promo === 'no paid profile · no ads · no boosts', 'public : age et courbe, promo DexScreener, en anglais : ' + fp.etat);
     ok(fp.liens && fp.liens.dexscreener === 'https://dexscreener.com/robinhood/' + J && fp.liens.explorer === 'https://robinhoodchain.blockscout.com/token/' + J && /Not financial advice\.$/.test(ap.texte || ''), 'public : liens DexScreener et explorateur, « Not financial advice. »');
     ok(ap.mesure && ap.mesure.ref && ap.mesure.ref.source === 'curve' && pc && Math.abs(ap.mesure.ref.prix / pc.prix - 1) < 0.5, 'public : le prix de reference est celui de la courbe, sans appel DexScreener');
@@ -447,7 +456,8 @@ function instance(w, o) {
     s2.B.meta('lance_bloc', C0 - 1);
     w2.achat(A('ea'), SP.ADR.ENTREE_PONS, SNIPER, 0.05, C0 + 1000, { jetons: 10n ** 25n });    // ~1,7 min
     const [b2] = await muet(() => s2.LZ.cycle());
-    ok(Object.keys(b2.ignores).some((k) => /Sniper 1: token age outside 5-60/.test(k)) && !s2.envoyes.some((x) => x.genre === 'copie'), 'Sniper 1 a 1,7 min : hors de sa fenetre (5-60 min), ignore');
+    /* depuis le 16/10, la regle « moins de 5 min et moins de 5 000 $ de liquidite » passe AVANT la fenetre de Sniper 1 : l'intention reste « trop tot = ignore » */
+    ok(Object.keys(b2.ignores).some((k) => /Sniper 1: token age outside 5-60|token under 5 min with under \$5000 liquidity/.test(k)) && !s2.envoyes.some((x) => x.genre === 'copie'), 'Sniper 1 a 1,7 min : trop tot, ignore [' + Object.keys(b2.ignores).join(' | ') + ']');
     /* une courbe que le cycle n'a pas vue naitre : l'usine la confirme, ou pas */
     const w3 = monde(); const D0 = w3.pointe - 20000;
     w3.lance({ jeton: A('c3'), courbe: A('eb'), dep: A('fb'), bloc: D0, devAchat: 0.1 });

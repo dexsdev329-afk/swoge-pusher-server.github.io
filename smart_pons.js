@@ -109,6 +109,13 @@ const ACHAT_MIN_USD = 50;
 const PART_CAP_MIN_PCT = 0.02;
 const CAP_MAX_USD = 1e6;
 // section 7 (brief)
+/* Regle du proprietaire du 16/10 : « ne signale pas les jetons de moins de 5
+   minutes avec moins de 5 000 $ de liquidite, meme si Sniper 1 achete ». Pour
+   une copie : age < 5 min ET liquidite < 5 000 $ = pas d'alerte. Liquidite non
+   lue sur un jeton de moins de 5 min : refus aussi (fail closed). Sur la courbe
+   Pons, la liquidite est l'ETH net de la courbe × ETH/USD. */
+const JEUNE_MIN = 5;
+const JEUNE_LIQ_MIN_USD = 5000;
 const CHUTE_MIN_PCT = 50;
 const REBOND_MIN_PCT = 20;
 const LIQ_REBOND_MIN_USD = 8000;
@@ -260,6 +267,13 @@ function jugeLancement(f) {
   let achat = fini(f.achatDevEth) ? f.achatDevEth : null;
   let achatSource = achat === null ? null : 'curve Buy';
   if (achat === null && tx && tx.value != null && coteEth) { achat = Math.max(0, versEth(BigInt(tx.value)) - DROIT_LANCEMENT_ETH); achatSource = 'tx.value'; }
+  const serie = qui.map((a) => L.lanceurSerie(a)).find(Boolean) || null;
+  if (serie) {
+    /* regle du proprietaire du 16/10 : ne pas suivre, quoi qu'en disent les autres signaux */
+    return { alerte: false, verdict: 'rouge', source: SOURCES.LANCEMENT, signaux: [], mauvais: [{ cle: 'lanceur_serie', val: serie.nom, texte: 'lanceur en série sans traction (' + serie.nom + ')' }],
+      attention: [], inconnues: [], risque: 'lanceur en série sans traction (' + serie.nom + ') : ne pas suivre', risqueCode: { cle: 'lanceur_serie', val: serie.nom },
+      devConnu: null, achatDevEth: null, achatSource: null, coteEth, lanceurSerie: serie.nom };
+  }
   const dc = qui.map((a) => L.devConnu(a)).find(Boolean) || null;
   if (dc) signaux.push({ cle: 'dev_connu', val: dc.groupe, texte: 'dev connu : ' + dc.groupe });
   if (l.plateforme === 'ignition') signaux.push({ cle: 'usine_ignition', texte: 'usine IGNITION ' + l.usine.slice(0, 10) + '…' });
@@ -340,6 +354,8 @@ function filtreCopie(a) {
   if ((a.listeMemeTx || 0) >= 2) return { garde: false, raison: 'one tx to ' + a.listeMemeTx + ' listed wallets: airdrop' };
   if (a.exclusJeton) return { garde: false, raison: a.exclusJeton };
   if (a.marche === false) return { garde: false, raison: 'no market and no active curve' };
+  if (a.createur && L.lanceurSerie(a.createur)) return { garde: false, raison: 'serial launcher, not followed' };
+  if (fini(a.ageMin) && a.ageMin < JEUNE_MIN && !(fini(a.liqUsd) && a.liqUsd >= JEUNE_LIQ_MIN_USD)) return { garde: false, raison: 'token under ' + JEUNE_MIN + ' min with under $' + JEUNE_LIQ_MIN_USD + ' liquidity' };
   const inconnues = [];
   if (fini(a.usd)) { if (a.usd < ACHAT_MIN_USD) return { garde: false, raison: 'buy under $' + ACHAT_MIN_USD }; } else inconnues.push('usd');
   if (fini(a.capUsd)) {
@@ -474,7 +490,7 @@ function pourLaColonie(o) {
 module.exports = {
   TOPIC, SELECTEUR, ADR, SOURCES, BLOCS_2MIN, T2_ACHETEURS, T2_ETH, DEV_GROS_ETH, PLATEFORME_DEV_MIN_ETH, ACHAT_MINUSCULE_ETH, EXEMPTIONS_MIN, LOGO_SNIPER,
   TAXE_MAX, FRAIS_COURBE_AR_PCT, DROIT_LANCEMENT_ETH, ACHAT_MIN_USD, PART_CAP_MIN_PCT, CAP_MAX_USD, CHUTE_MIN_PCT, REBOND_MIN_PCT, LIQ_REBOND_MIN_USD,
-  STOP_SOUS_CREUX_PCT, PROMO_RECENTE_MS, PLAN_V2, PLAN_V2_TEXTE, EMOJI,
+  STOP_SOUS_CREUX_PCT, PROMO_RECENTE_MS, JEUNE_MIN, JEUNE_LIQ_MIN_USD, PLAN_V2, PLAN_V2_TEXTE, EMOJI,
   decodeLancementPons, decodeLancementIgnition, decodeCourbe, chaineAbi, decodeSocials, lienX, hoteDe, ethUsdDepuisSlot0,
   etatCourbe, capCourbeUsd, jugeLancement, jugeT2, filtreCopie, voix, listeMemeTx, suitRebond, promo, promoTexte, texteAlerte, plan, pourLaColonie,
   versEth, dureeTexte, usdTexte,

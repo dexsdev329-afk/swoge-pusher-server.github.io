@@ -126,22 +126,35 @@ const arrondi = (x, d) => (fini(x) ? Math.round(x * 10 ** (d || 1)) / 10 ** (d |
 const ROLE_NOM = { SNIPER_1: 'Sniper 1', SNIPER_1_LIE: 'Sniper 1 (linked wallet)', SUIVRE: 'Tracked wallet', GROUPE_A_TESTER: 'Group under test',
   BOT_RAPIDE: 'Fast bot', SNIPER_PERDANT: 'First-block sniper', BUNDLE: 'Launch-team wallet', DEV_IGNITION: 'IGNITION dev' };
 const ROLE_QUI = { deployer: 'Deployer', tx_from: 'Sender', creator: 'Known creator', buyer: 'Wallet', smart: 'Smart wallet (owner’s rule)', ignition_wallet: 'IGNITION team wallet' };
-/** Le nom court PUBLIC d'une adresse : construit sur son role dans les listes
- *  du proprietaire, jamais recopie de la note francaise. */
+/* 16/10, decision du proprietaire : des noms NEUTRES et AUCUNE adresse de
+   wallet ou de dev dans le public (« Known dev #1 », « Smart wallet A ») : sa
+   liste privee ne se lit pas dans le flux. Le numero et la lettre sont STABLES
+   (ordre des listes), pour qu'un joueur puisse suivre « Smart wallet A » d'une
+   alerte a l'autre sans savoir qui c'est. Seule l'adresse du JETON reste. */
+const DEV_NUM = new Map(L.BRIEF2.DEVS.map((g, i) => [g.groupe, i + 1]));
+const SUIVIS = [...new Set(L.WALLETS.filter((w) => w.adresse && (w.signal === 'fort' || w.signal === 'faible')).map((w) => w.adresse)
+  .concat(L.BRIEF2.COPIE.map((w) => w.adresse)))];
+function lettre(i) { let t = ''; i += 1; while (i > 0) { const r = (i - 1) % 26; t = String.fromCharCode(65 + r) + t; i = Math.floor((i - 1) / 26); } return t; }
+const SUIVI_LETTRE = new Map(SUIVIS.map((a, i) => [a, lettre(i)]));
+function devNeutre(groupe) { return 'Known dev #' + (DEV_NUM.get(groupe) || '?'); }
+/** Le nom court PUBLIC d'une adresse : neutre, construit sur son role, jamais
+ *  le nom de la liste du proprietaire. */
 function nomPublic(a, role) {
   const dc = L.devConnu(a);
-  if (dc) return 'Known dev ' + (sur(dc.groupe, 24) || '');
+  if (dc) return devNeutre(dc.groupe);
   if (a === L.BRIEF2.IGNITION.wallet) return 'IGNITION team wallet';
+  if (SUIVI_LETTRE.has(a)) return 'Smart wallet ' + SUIVI_LETTRE.get(a);
   const v2 = L.roleV2(a);
-  if (v2 && v2.role === 'copie') return /^Sniper 1/.test(v2.nom) ? 'Sniper 1' : /^Groupe/.test(v2.nom) ? 'Copied group' : 'Copied wallet';
+  if (v2 && v2.role === 'copie') return 'Smart wallet';
   const v1 = L.roleDe(a);
-  if (v1 && ROLE_NOM[v1.role]) return ROLE_NOM[v1.role];
+  if (v1 && (v1.signal === 'fort' || v1.signal === 'faible')) return 'Smart wallet';
+  if (v1 && ROLE_NOM[v1.role] && !/^(SNIPER_1|SUIVRE|GROUPE)/.test(v1.role)) return ROLE_NOM[v1.role];
   return ROLE_QUI[role] || 'Wallet';
 }
 
 // ------------------------------------------------------------ les gabarits (anglais)
 const SIGNAL_TITRE = {
-  dev_connu: (v) => 'Known dev launch' + (sur(v, 24) ? ' (' + sur(v, 24) + ')' : ''),
+  dev_connu: (v) => 'Known dev launch' + (v ? ' (' + devNeutre(v) + ')' : ''),
   usine_ignition: () => 'Launch on an IGNITION factory',
   wallet_ignition: () => 'Launch by the IGNITION team wallet',
   finance_relay: () => 'Launch by a wallet funded from IGNITION Solana wallets',
@@ -158,7 +171,7 @@ function titre(t) {
     case 'sortie': return 'EXIT: the dev is selling';
     case 'ignition_usine': return 'IGNITION launch on their factory';
     case 'ignition_contrat': return 'IGNITION wallet deployed a new ' + (v ? 'token' : 'contract');
-    case 'copie': return (v && v.nom ? v.nom : 'Tracked wallet') + ' buys' + (v && v.courbe ? ' on the curve' : '');
+    case 'copie': return (v && v.nom ? sur(v.nom, 32) || 'Smart wallet' : 'Smart wallet') + ' buys' + (v && v.courbe ? ' on the curve' : '');
     case 'rebond': return 'Bounce: -' + (fini(v && v.chute) ? Math.round(v.chute) : '?') + '% from the high, +' + (fini(v && v.rebond) ? Math.round(v.rebond) : '?') + '% from the low';
     case 'analyste': return v === SS.VERDICTS.ACHETER ? 'Analyst: entry setup met' : 'Analyst: watch';
     case 'createur': return 'Known creator launched a new token';
@@ -277,7 +290,7 @@ function construitFiche(jeton, pub, o) {
     courbe: p.courbe ? { eth: num(p.courbe.eth), seuil_eth: num(p.courbe.seuilEth), gradue: !!p.courbe.gradue } : null,
     cap_usd: num(p.capUsd) !== null ? Math.round(p.capUsd) : null, cap_source: p.capSource === 'curve' ? 'curve' : num(p.capUsd) !== null ? 'dex' : null,
     qui: (Array.isArray(p.qui) ? p.qui : []).map((q) => ({ a: adr(q && q.adresse), q })).filter((x) => x.a).slice(0, 6)
-      .map(({ a, q }) => ({ nom: nomPublic(a, q.role), adresse: a, detail: quiDetail(q) || null })),
+      .map(({ a, q }) => ({ nom: nomPublic(a, q.role), adresse: null, detail: quiDetail(q) || null })),
     promo: promoTexte(p.promo, (o && o.maintenant) || Date.now()),
     risque: risque(p.risque),
     plan: plan(p.plan),
@@ -289,7 +302,7 @@ function construitFiche(jeton, pub, o) {
 /** Le texte Telegram (HTML) et le texte brut, depuis la fiche SEULE. */
 function textes(f) {
   const nom = f.symbole ? '$' + f.symbole.replace(/^\$/, '') : (f.jeton ? f.jeton.slice(0, 8) + '…' : '?');
-  const qui = f.qui.length ? f.qui.map((q) => q.nom + ' ' + q.adresse + (q.detail ? ' (' + q.detail + ')' : '')).join('; ') : 'no tracked wallet or known dev';
+  const qui = f.qui.length ? f.qui.map((q) => q.nom + (q.adresse ? ' ' + q.adresse : '') + (q.detail ? ' (' + q.detail + ')' : '')).join('; ') : 'no tracked wallet or known dev';
   const p = f.plan;
   const corps = [
     ['Age and state', f.etat], ['Who', qui], ['DexScreener promo', f.promo], ['Main risk', f.risque],

@@ -209,6 +209,15 @@ const BRIEF2 = {
     ['0x9bf265c742d96aacf1083ef24c9110240af0bea9', '0x2a4d34cd09a36f59ae3bedc0880cd5da929321d7', '0x53e68553ca08f512423628d64c01b0a14dfcda99'],
   ],
   GROUPES_PREFIXES_BRIEF: [['0x9bf265c7', '0x2a4d34cd', '0x53e68553']],
+  /* Regle du proprietaire du 16/10 (son autre bot) : « meme createur que BAGGR
+     = lanceur en serie sans traction, ne pas suivre ». Sonde du 16/10 :
+     0x64327b3d… est un CONTRAT (nonce 12) ; il figure dans 2 journaux de la
+     fabrique Runitup 0xa37e… sur ~9,5 M blocs (BAGGR inclus). Ses lancements
+     ne declenchent aucune alerte (ni lancement, ni copie sur sa courbe) ; ils
+     sont COMPTES (bilan.ignores) pour rester jugeables. */
+  LANCEURS_SERIE: [
+    { adresse: '0x64327b3d69740cca74f19d9ed78dc5f4094dcb0c', nom: 'BAGGR creator', source: 'regle du proprietaire du 16/10 : lanceur en serie sans traction, ne pas suivre' },
+  ],
   /* Section 5 : ne compte PAS (bots rapides, snipers de la 1re minute, equipes). */
   EXCLUS: ['0x2fd1887e5d99014cb0b8884f06560ed20d65003d', '0x9bf265c742d96aacf1083ef24c9110240af0bea9', '0x2a4d34cd09a36f59ae3bedc0880cd5da929321d7',
     '0x53e68553ca08f512423628d64c01b0a14dfcda99', '0x5b7e7cdf20193286bc9109f92ba7d12819968225', '0x7f7c73aad4d210ec65bccb341df090cd63d49aaa',
@@ -255,6 +264,9 @@ const BRIEF2 = {
 
 const COPIE_PAR = new Map(BRIEF2.COPIE.map((w) => [w.adresse, w]));
 const EXCLUS_V2 = new Set(BRIEF2.EXCLUS);
+const SERIE_PAR = new Map(BRIEF2.LANCEURS_SERIE.map((w) => [w.adresse, w]));
+/** Un lanceur en serie a ne pas suivre (regle du proprietaire du 16/10), ou null. */
+function lanceurSerie(a) { return a ? SERIE_PAR.get(String(a).toLowerCase()) || null : null; }
 const DEV_PAR = new Map(); for (const g of BRIEF2.DEVS) for (const a of g.adresses) DEV_PAR.set(a, g);
 const GROUPE_PAR = new Map(); BRIEF2.GROUPES.forEach((g, i) => { for (const a of g) GROUPE_PAR.set(a, 'groupe' + (i + 1)); });
 
@@ -274,4 +286,4 @@ function devConnu(adr) { return DEV_PAR.get(norm(adr)) || null; }
 function adressesVeille() { return [...new Set(adressesCompletes().concat(BRIEF2.COPIE.map((w) => w.adresse)))]; }
 
 module.exports = { SOURCE, ROLES, WALLETS, PREFIXE_LONGUEUR, roleDe, adressesCompletes, duRole, estAdresse,
-  SOURCE_V2, BRIEF2, roleV2, devConnu, adressesVeille };
+  SOURCE_V2, BRIEF2, roleV2, devConnu, adressesVeille, lanceurSerie };

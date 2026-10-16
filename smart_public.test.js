@@ -104,8 +104,8 @@ const PUB = (o) => Object.assign({ categorie: 'dev', verdict: 'vert', titre: { c
   {
     const f = P.construitFiche(J1, PUB({ texte: 'TEXTE PRIVE secret', note: 'SMART_RPC_URL=https://noeud-prive.example/CLE', cle: 'sk-ant-xyz', modele: 'MODELE-NOTE' }), { explorer: 'https://robinhoodchain.blockscout.com', maintenant: Date.now() });
     const t = P.textes(f);
-    ok(t.html.startsWith('🟢 <b>Known dev launch (CrawlScan) — $JUDGEBOT</b>'), 'titre : verdict, gabarit, symbole');
-    ok(t.html.includes('<code>' + J1 + '</code>') && t.html.includes('Known dev CrawlScan ' + DEV + ' (dev buy 0.028 ETH)'), 'adresse ENTIERE du jeton ; qui : nom court et adresse entiere');
+    ok(t.html.startsWith('🟢 <b>Known dev launch (Known dev #1) — $JUDGEBOT</b>') && !/CrawlScan/.test(t.html), 'titre : verdict, gabarit, symbole ; le dev connu sous un nom NEUTRE (16/10)');
+    ok(t.html.includes('<code>' + J1 + '</code>') && t.html.includes('Known dev #1 (dev buy 0.028 ETH)') && !t.html.includes(DEV), 'adresse ENTIERE du jeton ; qui : nom neutre, AUCUNE adresse de dev (decision du proprietaire, 16/10)');
     ok(/• Age and state: 30 s old · curve 0\.023 \/ 4\.20 ETH \(1%\)/.test(t.html), 'age et etat de la courbe');
     ok(/• DexScreener promo: no paid profile · no ads · no boosts/.test(t.html) && /• Main risk: Most launches fall 60-90% after their first peak\./.test(t.html), 'promo et risque principal');
     ok(/• Plan: entry small fixed stake; stop 30% trailing stop; target sell 75% at 2x, keep 25% for a rare 10x/.test(t.html), 'plan : entree, stop, objectif');
@@ -132,7 +132,10 @@ const PUB = (o) => Object.assign({ categorie: 'dev', verdict: 'vert', titre: { c
     const titres = [['lancement', { cle: 'dev_2eth', val: 2.5 }], ['lancement', { cle: 'plateforme', val: { nom: 'FOMOPAD', eth: 1.2 } }], ['lancement', { cle: 'relais' }], ['t2', { acheteurs: 22, eth: 1.6 }], ['sortie'], ['ignition_usine'], ['ignition_contrat', true],
       ['copie', { nom: 'Sniper 1', courbe: true }], ['rebond', { chute: 62, rebond: 25 }], ['analyste', 'SURVEILLER'], ['createur'], ['smart', { n: 2, min: 12 }]];
     ok(titres.every(([c, v]) => { const x = P.titre({ cle: c, val: v }); return x && x !== 'Smart money alert' && !FR.test(x); }), 'chaque titre a son gabarit anglais : ' + titres.map(([c, v]) => P.titre({ cle: c, val: v })).join(' | '));
-    ok(P.nomPublic(SNIPER, 'buyer') === 'Sniper 1' && P.nomPublic('0x1ad70bc7ac98539dada8f97360d353687f6c29d6') === 'Copied wallet' && P.nomPublic('0x381d02f5578a1d5872d095006fcc2dfeacb7b60c') === 'Sniper 1 (linked wallet)' && P.nomPublic(A('99'), 'deployer') === 'Deployer', 'noms courts : construits sur le role, jamais la note francaise des listes');
+    { /* 16/10 : noms NEUTRES et stables, jamais le nom de la liste du proprietaire */
+      const n1 = P.nomPublic(SNIPER, 'buyer'), n2 = P.nomPublic('0x1ad70bc7ac98539dada8f97360d353687f6c29d6'), n3 = P.nomPublic('0x381d02f5578a1d5872d095006fcc2dfeacb7b60c');
+      ok([n1, n2, n3].every((n) => /^Smart wallet [A-Z]+$/.test(n)) && new Set([n1, n2, n3]).size === 3 && P.nomPublic(SNIPER, 'buyer') === n1 && P.nomPublic(A('99'), 'deployer') === 'Deployer'
+        && ![n1, n2, n3].some((n) => /Sniper|Tracked|0x/.test(n)), 'noms courts neutres, distincts et stables (' + [n1, n2, n3].join(', ') + '), jamais le nom de la liste ; un inconnu reste « Deployer »'); }
   }
 
   // ================================================== 3. canal : plafond horaire et delai

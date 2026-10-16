@@ -214,7 +214,7 @@ function scene(o) {
     const a = v.alertes[0] || {};
     egal(v.alertes.length, 1, 'une alerte dans le flux public');
     ok(a.categorie === 'analyste' && a.verdict === 'vert' && a.fiche && a.fiche.titre === 'Analyst: entry setup met' && a.fiche.symbole === 'NEWT', 'categorie analyste, 🟢, titre anglais, symbole lu sur la chaine');
-    ok(a.fiche && a.fiche.qui.length === 1 && a.fiche.qui[0].nom === 'Sniper 1' && a.fiche.qui[0].adresse === SNIPER && /2 min ago/.test(a.fiche.qui[0].detail || ''), 'qui : « Sniper 1 », son adresse entiere, il y a 2 min');
+    ok(a.fiche && a.fiche.qui.length === 1 && /^Smart wallet [A-Z]+$/.test(a.fiche.qui[0].nom) && a.fiche.qui[0].adresse === null && !JSON.stringify(v).includes(SNIPER.slice(2, 12)) && /2 min ago/.test(a.fiche.qui[0].detail || ''), 'qui : nom neutre « ' + (a.fiche && a.fiche.qui[0] && a.fiche.qui[0].nom) + ' », AUCUNE adresse (16/10), il y a 2 min');
     ok(a.fiche && a.fiche.plan.entree === 'small fixed stake (~$100)' && a.fiche.plan.stop === '-30%', 'le plan du brief, en anglais');
     egal(s.chats.length, 1, 'le canal public recoit le meme texte');
     const tout = JSON.stringify(v) + (s.chats[0] || {}).t;
