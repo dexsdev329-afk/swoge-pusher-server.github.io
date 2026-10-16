@@ -40,7 +40,11 @@ const egal = (a, b, m) => ok(a === b || String(a) === String(b), `${m} (lu ${a},
   B.pose('historique', { adresse: '0xcc', bloc: 57852996, pool: '0xdd', version: 2, statut: 'candidat', fdv: 21800, liq: 12944 });
   const hh = B.un('SELECT * FROM historique WHERE adresse = ?', ['0xcc']);
   egal(hh && hh.statut + ':' + hh.bloc + ':' + hh.liq, 'candidat:57852996:12944', 'table historique (migration v3) : statut, bloc de naissance, liquidite');
-  egal(SB.MIGRATIONS.length, 3, 'trois versions de schema (v3 : historique)');
+  /* 16/10 : le journal public (v4), une ligne par cle, sa mesure a cote */
+  B.pose('publiques', { t: 1, publie_t: 1, cle: 'lancement:0xcc', genre: 'lancement', categorie: 'pons', verdict: 'vert', jeton: '0xcc', ref_prix: 0.000012, mesures: '{}' });
+  const pq = B.un('SELECT * FROM publiques WHERE cle = ?', ['lancement:0xcc']);
+  egal(pq && pq.categorie + ':' + pq.ref_prix + ':' + pq.fini, 'pons:0.000012:0', 'table publiques (migration v4) : categorie, prix de reference, mesure en cours');
+  egal(SB.MIGRATIONS.length, 4, 'quatre versions de schema (v3 : historique, v4 : journal public)');
   B.meta('rotation', 3);
   egal(B.meta('rotation'), 3, 'meta : aller-retour');
   egal(B.meta('absent'), null, 'meta absente : null');

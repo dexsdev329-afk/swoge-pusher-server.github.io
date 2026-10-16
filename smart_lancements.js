@@ -32,6 +32,7 @@
 
 const SP = require('./smart_pons');
 const L = require('./smart_listes');
+const SPUB = require('./smart_public');
 
 const CYCLE_MS = 60e3;                 // brief : « toutes les 60 s »
 const CONFIRMATIONS = 20;              // = smart_money.CONFIRMATIONS (~2 s ; les repliques reculent de 3 blocs au plus, sonde du 13/10)
@@ -189,9 +190,13 @@ function cree(deps) {
   }
 
   // ---------------------------------------------------------- les alertes
+  /* `a.pub` (16/10) : les CHAMPS du journal public (smart_public.js) — categorie,
+     titre, qui, risque et plan en CODES ; l'anglais se construit la-bas par
+     gabarit. Le texte francais ci-dessous reste celui du proprietaire. */
   async function alerte(genre, cle, jeton, a) {
     const texte = SP.texteAlerte(Object.assign({ explorer: deps.explorer }, a), maintenant());
-    const ok = await deps.envoie(genre, cle, jeton, texte);
+    const pub = a.pub ? Object.assign({ verdict: a.verdict, symbole: a.symbole, ageMin: a.ageMin, courbe: a.courbe, capUsd: a.capUsd, promo: a.promo }, a.pub) : null;
+    const ok = await deps.envoie(genre, cle, jeton, texte, pub);
     etat.alertes++;
     return { ok, texte };
   }
@@ -246,6 +251,21 @@ function cree(deps) {
     for (const s of (j && j.signaux) || []) if (s.cle !== 'dev_connu') q.push(s.texte);
     return q;
   }
+  /* qui, pour le public : des adresses et des montants, les noms se font la-bas */
+  function quiPublic(l, tx, j) {
+    const dep = l.deployer || l.createur;
+    const q = [];
+    if (dep) q.push({ adresse: dep, role: 'deployer', eth: j && j.achatDevEth != null ? j.achatDevEth : null });
+    if (tx && tx.from && tx.from !== dep) q.push({ adresse: tx.from, role: 'tx_from' });
+    return q;
+  }
+  /* la categorie publique d'une source (smart_pons.SOURCES) */
+  const catDe = (src) => ({ [SP.SOURCES.DEV]: 'dev', [SP.SOURCES.IGNITION]: 'ignition', [SP.SOURCES.COPIE]: 'copie', [SP.SOURCES.REBOND]: 'rebond' })[src] || 'pons';
+  /* le prix USD d'un jeton au dernier echange de sa courbe (meme calcul que prixCourbe) */
+  const prixUsdDe = (dernier, coteEth) => {
+    if (!coteEth || !dernier || !ethUsd()) return null;
+    try { const c = BigInt(dernier.cote), j = BigInt(dernier.jetons); return j > 0n ? Number((c * 10n ** 12n) / j) / 1e12 * ethUsd() : null; } catch (e) { return null; }
+  };
   const titre = (j) => {
     const s = j.signaux[0];
     if (!s) return 'LANCEMENT — ' + ((j.attention[0] && j.attention[0].texte) || '?');
@@ -345,6 +365,8 @@ function cree(deps) {
             verdict: j.verdict, titre: titre(j), symbole: m.symbole, jeton: l.jeton, ageMin: age,
             courbe: { eth: l.cote === SP.ADR.ETH ? SP.versEth(ec.achete) : null, seuilEth, gradue: ec.gradue },
             qui: quiTexte(l, f.tx, j), promo, risque: j.risque, plan: SP.plan(j.verdict), lienX: SP.lienX(m.socials),
+            pub: { categorie: catDe(j.source), titre: { cle: 'lancement', val: j.signaux[0] ? { cle: j.signaux[0].cle, val: j.signaux[0].val } : { cle: (j.attention[0] || {}).cle } },
+              qui: quiPublic(l, f.tx, j), risque: j.risqueCode, plan: { cle: j.verdict }, capSource: 'curve', prixUsd: prixUsdDe(ec.dernierPrix, l.cote === SP.ADR.ETH) },
           });
           if (r.ok) bilan.alertes++;
           s.alerte = j.verdict; s.suivre = true; s.symbole = m.symbole || null; s.lienX = SP.lienX(m.socials); s.source = j.source; s.taxe = f.taxe;
@@ -364,6 +386,7 @@ function cree(deps) {
           const r = await alerte('ignition', 'ignition:' + l.jeton, l.jeton, {
             verdict: j.verdict === 'vert' ? 'jaune' : j.verdict, titre: 'IGNITION — lancement sur leur usine', symbole: meta && meta.symbole, jeton: l.jeton, ageMin: Math.max(0, (a - l.bloc) * S_PAR_BLOC / 60),
             courbe: null, qui: quiTexte(l, txCourt(tx), j), promo, risque: j.risque, plan: SP.plan('jaune'), lienX: meta && SP.lienX(meta.socials),
+            pub: { categorie: 'ignition', titre: { cle: 'ignition_usine' }, qui: quiPublic(l, txCourt(tx), j), risque: j.risqueCode, plan: { cle: 'jaune' } },
           });
           if (r.ok) bilan.alertes++;
           signal({ jeton: l.jeton, symbole: meta && meta.symbole, verdict: 'jaune', source: SP.SOURCES.IGNITION, courbe: false, inconnues: j.inconnues,
@@ -401,7 +424,9 @@ function cree(deps) {
           if (venteNeuve && s.suivre) {
             const r = await alerte('sortie', 'sortie:' + s.jeton, s.jeton, { verdict: 'rouge', titre: 'SORTIR — le dev vend', symbole: s.symbole, jeton: s.jeton,
               ageMin: (a - s.bloc) * S_PAR_BLOC / 60, courbe: { eth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.net)) : null, seuilEth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.seuil)) : null, gradue: s.gradue },
-              qui: ['deployer ' + court(s.deployer)], promo: undefined, risque: 'le dev ou ses wallets vendent : sortir', plan: SP.plan('rouge', { sortie: true }), lienX: s.lienX });
+              qui: ['deployer ' + court(s.deployer)], promo: undefined, risque: 'le dev ou ses wallets vendent : sortir', plan: SP.plan('rouge', { sortie: true }), lienX: s.lienX,
+              pub: { categorie: catDe(s.source), titre: { cle: 'sortie' }, qui: [{ adresse: s.deployer, role: 'deployer' }], risque: { cle: 'dev_vend' }, plan: { cle: 'rouge', val: { sortie: true } },
+                capSource: 'curve', prixUsd: prixUsdDe(s.dernier, s.cote === SP.ADR.ETH) } });
             if (r.ok) bilan.alertes++;
           }
         }
@@ -430,7 +455,10 @@ function cree(deps) {
             symbole: (meta && meta.symbole) || s.symbole, jeton: s.jeton, ageMin: 2,
             courbe: { eth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.net)) : null, seuilEth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.seuil)) : null, gradue: s.gradue },
             qui: quiTexte({ plateforme: 'pons', deployer: s.deployer }, s.tx, null), promo, risque: s.ventesDev > 0 ? 'le dev vend : sortir' : j.mauvais.length ? j.mauvais[0].texte : 'la plupart rechutent de 60 à 90 % après leur premier pic (brief)',
-            plan: SP.plan(verdict, { sortie: s.ventesDev > 0 }), lienX: meta && SP.lienX(meta.socials) });
+            plan: SP.plan(verdict, { sortie: s.ventesDev > 0 }), lienX: meta && SP.lienX(meta.socials),
+            pub: { categorie: catDe(deja ? s.source : SP.SOURCES.LANCEMENT), titre: { cle: 't2', val: { acheteurs: s.t2.acheteurs, eth: s.t2.eth } }, qui: [{ adresse: s.deployer, role: 'deployer' }],
+              risque: s.ventesDev > 0 ? { cle: 'dev_vend' } : j.mauvais.length ? { cle: j.mauvais[0].cle, val: j.mauvais[0].val } : { cle: 'rechute' },
+              plan: { cle: verdict, val: { sortie: s.ventesDev > 0 } }, capSource: 'curve', prixUsd: prixUsdDe(s.dernier, s.cote === SP.ADR.ETH) } });
           if (r.ok) bilan.alertes++;
           if (!envoyer) bilan.t2Seuls = (bilan.t2Seuls || 0) + 1;
           if (!deja) { s.suivre = true; s.alerte = verdict; s.symbole = meta && meta.symbole; s.lienX = meta && SP.lienX(meta.socials); s.source = SP.SOURCES.LANCEMENT; }
@@ -521,6 +549,9 @@ function cree(deps) {
       courbe: c.courbe ? c.etatCourbe : null, capUsd: c.capUsd, capSource: c.courbe ? 'courbe, prix du dernier échange' : 'DexScreener, non vérifié',
       qui: [c.nom + ' (' + court(c.wallet) + ')' + (c.usd != null ? ' pour ' + SP.usdTexte(c.usd) : '') + (c.ageMin != null ? ', ' + SP.dureeTexte(c.ageMin) + ' après le lancement' : '')],
       promo, risque: inconnu ? 'non lu : ' + c.inconnues.join(', ') : 'la plupart rechutent de 60 à 90 % après leur premier pic (brief)', plan: SP.plan(verdict), lienX: meta.socials ? SP.lienX(meta.socials) : null,
+      pub: { categorie: 'copie', titre: { cle: 'copie', val: { nom: SPUB.nomPublic(lc(c.wallet), 'buyer'), courbe: !!c.courbe } }, qui: [{ adresse: c.wallet, role: 'buyer', usd: c.usd, apresLancementMin: c.ageMin }],
+        risque: inconnu ? { cle: 'inconnues', val: c.inconnues } : { cle: 'rechute' }, plan: { cle: verdict }, capSource: c.courbe ? 'curve' : 'dex',
+        prixUsd: c.courbe && typeof c.capUsd === 'number' && c.capUsd > 0 ? c.capUsd / Number(OFFRE_PONS / 10n ** 18n) : null },
     });
     if (r.ok && bilan) bilan.alertes++;
     signal({ jeton: c.jeton, symbole: meta.symbole, verdict, source: SP.SOURCES.COPIE, courbe: !!c.courbe, inconnues: c.inconnues,
@@ -578,7 +609,8 @@ function cree(deps) {
       const sym = SP.chaineAbi(rs[2 * i + 1] && rs[2 * i + 1].result);
       const r = await alerte('ignition', 'ignition:contrat:' + adrs[i], adrs[i], { verdict: 'jaune', titre: 'IGNITION — ' + (sym ? 'nouveau jeton' : 'nouveau contrat') + ' déployé par son wallet',
         symbole: sym, jeton: adrs[i], ageMin: 0, courbe: null, qui: ['wallet IGNITION ' + court(L.BRIEF2.IGNITION.wallet) + ', nonce ' + (vu + i)], promo: sym ? await promoDe(adrs[i]) : undefined,
-        risque: sym ? 'jeton sans marché tant qu’aucune piscine n’est née' : 'un contrat n’est pas un jeton (pas de symbol())', plan: SP.plan('jaune'), lienX: null });
+        risque: sym ? 'jeton sans marché tant qu’aucune piscine n’est née' : 'un contrat n’est pas un jeton (pas de symbol())', plan: SP.plan('jaune'), lienX: null,
+        pub: { categorie: 'ignition', titre: { cle: 'ignition_contrat', val: !!sym }, qui: [{ adresse: L.BRIEF2.IGNITION.wallet, role: 'ignition_wallet' }], risque: { cle: sym ? 'sans_marche' : 'pas_jeton' }, plan: { cle: 'jaune' } } });
       if (r.ok) bilan.alertes++;
       if (sym) signal({ jeton: adrs[i], symbole: sym, verdict: 'jaune', source: SP.SOURCES.IGNITION, courbe: false, inconnues: ['marche'], wallets: [{ wallet: L.BRIEF2.IGNITION.wallet, role: 'IGNITION' }] });
     }
@@ -606,7 +638,9 @@ function cree(deps) {
         const promo = await promoDe(j);
         const a = await alerte('rebond', 'rebond:' + j, j, { verdict: 'vert', titre: 'REBOND — −' + r.signal.chutePct + ' % depuis le plus haut, +' + r.signal.rebondPct + ' % depuis le creux',
           symbole: x.symbole, jeton: j, ageMin: (now - x.t) / 60000, courbe: null, capUsd: r.signal.prix, capSource: 'DexScreener, non vérifié', qui: ['surveillé depuis une alerte'], promo,
-          risque: 'un rebond peut repartir sous le creux : stop juste dessous', plan: SP.plan('vert', { prix: 'capitalisation ~' + SP.usdTexte(r.signal.prix), stop: 'capitalisation ' + SP.usdTexte(r.signal.stop) + ' (5 % sous le creux)' }), lienX: null });
+          risque: 'un rebond peut repartir sous le creux : stop juste dessous', plan: SP.plan('vert', { prix: 'capitalisation ~' + SP.usdTexte(r.signal.prix), stop: 'capitalisation ' + SP.usdTexte(r.signal.stop) + ' (5 % sous le creux)' }), lienX: null,
+          pub: { categorie: 'rebond', titre: { cle: 'rebond', val: { chute: r.signal.chutePct, rebond: r.signal.rebondPct } }, qui: [], risque: { cle: 'rebond' },
+            plan: { cle: 'vert', val: { prixCap: r.signal.prix, stopCap: r.signal.stop } }, capSource: 'dex' } });
         if (a.ok && bilan) bilan.alertes++;
         signal({ jeton: j, symbole: x.symbole, verdict: 'vert', source: SP.SOURCES.REBOND, courbe: false, conditions: [{ cle: 'rebond', etat: 'ok', valeur: r.signal }], inconnues: [], wallets: [] });
       }

@@ -17,7 +17,11 @@
  *  3. sans les faits de la colonie (capitalisation, taxe inconnues) : jamais
  *     ACHETER — SURVEILLER ;
  *  4. un airdrop (recu sans echange) et un bot seul : aucun verdict ;
- *  5. SMART_MONEY=observe : le verdict est garde, rien n'est envoye.
+ *  5. SMART_MONEY=observe : le verdict est garde, rien n'est envoye (ni au
+ *     public) ;
+ *  6. (16/10) le PUBLIC : en mode 1, le verdict part aussi au flux public et au
+ *     canal, en anglais, par gabarit ; le texte que le MODELE a redige pour le
+ *     proprietaire n'y entre jamais, ni la cle ; SMART_PUBLIC=0 : rien.
  */
 const fs = require('fs');
 const os = require('os');
@@ -102,16 +106,18 @@ function scene(o) {
     if (u.startsWith(R.URL_DEFAUT)) return F.prendre(u, init);
     if (u.startsWith(SRC.GT)) return reponse(S.reponses.gt(u));
     if (u.startsWith(SRC.DS)) return reponse(S.reponses.ds(u));
+    /* un modele simule (section 6) : sa reponse porte une marque qu'aucun texte public ne doit porter */
+    if (o.modele && u.startsWith('https://api.anthropic.com/')) return { ok: true, status: 200, json: async () => ({ content: [{ type: 'text', text: o.modele }] }) };
     autres.push(u); throw new Error('requete inattendue : ' + u);
   };
-  const prives = [], publics = [], colonie = [], faitsDemandes = [];
-  const tg = { notifyPrive: async (t) => { prives.push(t); return true; }, notify: async (t) => { publics.push(t); return true; } };
+  const prives = [], publics = [], colonie = [], faitsDemandes = [], chats = [];
+  const tg = { notifyPrive: async (t) => { prives.push(t); return true; }, notify: async (t) => { publics.push(t); return true; }, notifyChat: async (c, t) => { chats.push({ c, t }); return true; } };
   const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-analyste-'));
   const faits = o.sansColonie ? undefined : async (a) => { faitsDemandes.push(a); return { mc: 20000, liq: 8000, taxe: { achat: 0, vente: 0 }, ch_h6: 40, sym: 'NEWT' }; };
-  const I = M.cree({ env: { SMART_MONEY: o.mode || '1', SMART_MONEY_HEURE: '23:59' }, prendre, horloge: () => T.now, dors: async (ms) => { T.now += ms; },
+  const I = M.cree({ env: Object.assign({ SMART_MONEY: o.mode || '1', SMART_MONEY_HEURE: '23:59' }, o.env || {}), prendre, horloge: () => T.now, dors: async (ms) => { T.now += ms; },
     dossier, tg, actions: S.actions, explorer: 'https://robinhoodchain.blockscout.com', faits, surVerdict: (v) => colonie.push(v) });
   return {
-    I, F, prives, publics, colonie, faitsDemandes, autres,
+    I, F, prives, publics, colonie, faitsDemandes, autres, chats,
     async deuxVeilles() {
       await muet(() => I.veille());                                     // la naissance
       etat.pointe = POINTE2; T.now = MONDE.horodatage(POINTE2) * 1000;
@@ -193,6 +199,32 @@ function scene(o) {
     egal(s.prives.length, 0, 'rien envoye');
     egal(s.I.base().tous("SELECT * FROM alertes WHERE genre = 'analyste' AND envoye = 0").length, 1, 'le verdict est garde (envoye = 0)');
     egal(s.colonie.length, 1, 'la colonie le recoit quand meme (elle l\'observe)');
+    egal(s.I.base().tous('SELECT * FROM publiques').length + s.chats.length, 0, 'observe : rien au public, ni flux ni canal');
+    egal(s.I.alertesPubliques(0).actif, false, 'et la route publique dit « off »');
+  }
+  // ================================================== 6. le public
+  console.log('-- 6. le public : la fiche anglaise, jamais le texte du modele --');
+  {
+    const MARQUE = 'MODELE-NOTE-INTERNE-7731';
+    const modele = '🟢 ACHETER — NEWT\nNote du modele ' + MARQUE + ', a ne jamais publier.\nPas un conseil financier.';
+    const s = scene({ modele, env: { ANTHROPIC_API_KEY: 'sk-ant-CLE-SECRETE', SMART_PUBLIC_TG_CHAT: '-1001234567890' } });
+    await s.deuxVeilles();
+    ok((s.prives[0] || '').includes(MARQUE), 'le proprietaire recoit le texte redige par le modele (inchange)');
+    const v = s.I.alertesPubliques(0);
+    const a = v.alertes[0] || {};
+    egal(v.alertes.length, 1, 'une alerte dans le flux public');
+    ok(a.categorie === 'analyste' && a.verdict === 'vert' && a.fiche && a.fiche.titre === 'Analyst: entry setup met' && a.fiche.symbole === 'NEWT', 'categorie analyste, 🟢, titre anglais, symbole lu sur la chaine');
+    ok(a.fiche && a.fiche.qui.length === 1 && a.fiche.qui[0].nom === 'Sniper 1' && a.fiche.qui[0].adresse === SNIPER && /2 min ago/.test(a.fiche.qui[0].detail || ''), 'qui : « Sniper 1 », son adresse entiere, il y a 2 min');
+    ok(a.fiche && a.fiche.plan.entree === 'small fixed stake (~$100)' && a.fiche.plan.stop === '-30%', 'le plan du brief, en anglais');
+    egal(s.chats.length, 1, 'le canal public recoit le meme texte');
+    const tout = JSON.stringify(v) + (s.chats[0] || {}).t;
+    ok(!tout.includes(MARQUE) && !/CLE-SECRETE|sk-ant/.test(tout), 'ni le texte du modele, ni la cle, ni dans la route ni dans le canal');
+    ok(!/[éèêàùç]|Pas un conseil|ACHETER|SURVEILLER/.test(tout), 'aucun mot francais public');
+    ok(/Not financial advice\.$/.test((s.chats[0] || {}).t || '') && /Not financial advice\.$/.test(a.texte || ''), 'le canal et le flux finissent par « Not financial advice. »');
+    egal(s.publics.length, 0, 'le canal des annonces de gains (notify) n\'est jamais touche');
+    const s0 = scene({ modele, env: { ANTHROPIC_API_KEY: 'sk-ant-CLE-SECRETE', SMART_PUBLIC: '0', SMART_PUBLIC_TG_CHAT: '-1001234567890' } });
+    await s0.deuxVeilles();
+    ok(s0.prives.length === 1 && s0.I.base().tous('SELECT * FROM publiques').length === 0 && s0.chats.length === 0, 'SMART_PUBLIC=0 : le proprietaire seul, rien au public');
   }
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + (n + rates) : 'tout passe : ' + n + ' verifications'));
   process.exitCode = rates ? 1 : 0;

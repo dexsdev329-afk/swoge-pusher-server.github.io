@@ -261,31 +261,31 @@ function jugeLancement(f) {
   let achatSource = achat === null ? null : 'curve Buy';
   if (achat === null && tx && tx.value != null && coteEth) { achat = Math.max(0, versEth(BigInt(tx.value)) - DROIT_LANCEMENT_ETH); achatSource = 'tx.value'; }
   const dc = qui.map((a) => L.devConnu(a)).find(Boolean) || null;
-  if (dc) signaux.push({ cle: 'dev_connu', texte: 'dev connu : ' + dc.groupe });
+  if (dc) signaux.push({ cle: 'dev_connu', val: dc.groupe, texte: 'dev connu : ' + dc.groupe });
   if (l.plateforme === 'ignition') signaux.push({ cle: 'usine_ignition', texte: 'usine IGNITION ' + l.usine.slice(0, 10) + '…' });
   if (qui.includes(L.BRIEF2.IGNITION.wallet) || qui.includes(ADR.DEV_IGNITION_V1)) signaux.push({ cle: 'wallet_ignition', texte: 'wallet de l’équipe IGNITION' });
   const fin = f.finances || new Set();
   const finance = qui.find((a) => fin.has(a));
   if (finance) signaux.push({ cle: 'finance_relay', texte: 'wallet financé par Relay depuis un wallet Solana d’IGNITION' });
   if (f.meta && f.meta.logo && hoteDe(f.meta.logo) === L.BRIEF2.IGNITION.imagesHote) signaux.push({ cle: 'image_ignition', texte: 'image hébergée sur ' + L.BRIEF2.IGNITION.imagesHote });
-  if (coteEth && achat !== null && achat >= DEV_GROS_ETH) signaux.push({ cle: 'dev_2eth', texte: 'le dev achète ' + achat.toFixed(2).replace('.', ',') + ' ETH' });
+  if (coteEth && achat !== null && achat >= DEV_GROS_ETH) signaux.push({ cle: 'dev_2eth', val: achat, texte: 'le dev achète ' + achat.toFixed(2).replace('.', ',') + ' ETH' });
   const plat = L.BRIEF2.PLATEFORMES.find((p) => p.adresse === dep || p.adresse === to);
   if (plat) {
-    if (achat !== null && achat >= PLATEFORME_DEV_MIN_ETH) signaux.push({ cle: 'plateforme', texte: 'plateforme ' + plat.nom + ' avec ' + achat.toFixed(2).replace('.', ',') + ' ETH du dev' });
-    else attention.push({ cle: 'plateforme_petit', texte: 'plateforme ' + plat.nom + ' sans 1 ETH du dev' });
+    if (achat !== null && achat >= PLATEFORME_DEV_MIN_ETH) signaux.push({ cle: 'plateforme', val: { nom: plat.nom, eth: achat }, texte: 'plateforme ' + plat.nom + ' avec ' + achat.toFixed(2).replace('.', ',') + ' ETH du dev' });
+    else attention.push({ cle: 'plateforme_petit', val: plat.nom, texte: 'plateforme ' + plat.nom + ' sans 1 ETH du dev' });
   }
   if (qui.some((a) => L.BRIEF2.RELAIS.includes(a))) attention.push({ cle: 'relais', texte: 'relais de l’« usine à graduation » : bundle, vendre vite' });
   /* les mauvais signes */
   if (achat === null) inconnues.push('achat_dev');
-  else if (achat < ACHAT_MINUSCULE_ETH) mauvais.push({ cle: 'achat_dev_minuscule', texte: achat === 0 ? 'aucun achat du dev' : 'achat du dev minuscule (' + achat.toFixed(4).replace('.', ',') + ' ETH)' });
+  else if (achat < ACHAT_MINUSCULE_ETH) mauvais.push({ cle: 'achat_dev_minuscule', val: achat, texte: achat === 0 ? 'aucun achat du dev' : 'achat du dev minuscule (' + achat.toFixed(4).replace('.', ',') + ' ETH)' });
   if (f.exemptions == null) inconnues.push('exemptions');
-  else if (f.exemptions < EXEMPTIONS_MIN) mauvais.push({ cle: 'exemptions', texte: f.exemptions + ' exemption anti-snipe (×0,1 selon le brief)' });
+  else if (f.exemptions < EXEMPTIONS_MIN) mauvais.push({ cle: 'exemptions', val: f.exemptions, texte: f.exemptions + ' exemption anti-snipe (×0,1 selon le brief)' });
   if (!f.meta) inconnues.push('meta');
   else {
     if (f.meta.logo && LOGO_SNIPER.test(hoteDe(f.meta.logo) || f.meta.logo)) mauvais.push({ cle: 'logo_sniper', texte: 'logo pris sur un outil de sniper (' + hoteDe(f.meta.logo) + ')' });
     if (!lienX(f.meta.socials)) mauvais.push({ cle: 'pas_de_x', texte: 'pas de lien X' });
   }
-  if (fini(f.taxe)) { if (f.taxe > TAXE_MAX) mauvais.push({ cle: 'taxe', texte: 'taxe de ' + f.taxe + ' %' }); }
+  if (fini(f.taxe)) { if (f.taxe > TAXE_MAX) mauvais.push({ cle: 'taxe', val: f.taxe, texte: 'taxe de ' + f.taxe + ' %' }); }
   else inconnues.push('taxe');
   /* un copieur d'IGNITION : maxFee 0,2 gwei et gaz < 5,8 M (brief) */
   const cop = L.BRIEF2.IGNITION.copieurs;
@@ -307,7 +307,10 @@ function jugeLancement(f) {
   else if (mauvais.length) risque = mauvais[0].texte;
   else if (inconnues.length) risque = 'non lu : ' + inconnues.join(', ');
   else risque = 'la plupart rechutent de 60 à 90 % après leur premier pic (brief)';
-  return { alerte, verdict, source, signaux, mauvais, attention, inconnues, risque, devConnu: dc, achatDevEth: achat, achatSource, coteEth };
+  /* le meme risque en CODE (16/10, journal public smart_public.js : le texte
+     anglais se construit par gabarit sur la cle, jamais sur la phrase) */
+  const rc = f.devVend === true ? { cle: 'dev_vend' } : attention.length ? attention[0] : mauvais.length ? mauvais[0] : inconnues.length ? { cle: 'inconnues', val: inconnues.slice() } : { cle: 'rechute' };
+  return { alerte, verdict, source, signaux, mauvais, attention, inconnues, risque, risqueCode: { cle: rc.cle, val: rc.val === undefined ? null : rc.val }, devConnu: dc, achatDevEth: achat, achatSource, coteEth };
 }
 
 /** T+2 min (section 2) : bon signe, sortir, ou rien. `etat` = etatCourbe(...)

@@ -219,6 +219,40 @@ function notifyPrive(text) {
   return fini;
 }
 
+/* ---- UN MESSAGE VERS UN CHAT NOMME (16/10/2026) ----
+ * Le canal PUBLIC des alertes smart money (SMART_PUBLIC_TG_CHAT, smart_public.js) :
+ * ni TG_CHAT_ID (les annonces de gains) ni la conversation privee. Meme file et
+ * meme ecart de 400 ms que `notify` et `notifyPrive` : un canal de plus ne fait
+ * jamais depasser la cadence du bot. Rien n'est envoye sans jeton ou sans chat,
+ * et le carnet le dit (route « chat »). Rend une promesse : vrai si Telegram a
+ * pris le message. Le texte arrive deja construit et echappe par l'appelant. */
+function notifyChat(chatId, text) {
+  const cible = String(chatId == null ? '' : chatId).trim();
+  if (!cfg.TG_BOT_TOKEN || !cible) {
+    note('chat', false, 'config', 'TG_BOT_TOKEN ou chat absent', text);
+    return Promise.resolve(false);
+  }
+  let rendu;
+  const fini = new Promise((r) => { rendu = r; });
+  chain = chain.then(async () => {
+    let ok = false;
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/sendMessage`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ chat_id: cible, text, parse_mode: 'HTML', disable_web_page_preview: true }),
+      });
+      const j = await res.json().catch(() => ({}));
+      ok = !!j.ok;
+      if (!ok) console.warn(`[tg] message vers ${cible} refuse : ${j.error_code} ${j.description}`);
+      note('chat', ok, j.error_code, j.description, text);
+    } catch (e) { note('chat', false, 'reseau', e.message, text); }
+    rendu(ok);
+    await new Promise((r) => setTimeout(r, 400));
+  }).catch(() => { rendu(false); });
+  return fini;
+}
+
 async function sendDocument(buffer, nom, legende, chatId) {
   /* A defaut de canal dedie, celui des notifications — a condition qu'il ne
      soit pas public. */
@@ -244,4 +278,4 @@ async function sendDocument(buffer, nom, legende, chatId) {
   } catch (e) { console.warn('[tg] document echoue :', e.message); return false; }
 }
 
-module.exports = { notify, notifyPrive, notifyPhoto, notifyVideo, sendDocument, chatEstPublic, chatEstPrive, enabled, journal };
+module.exports = { notify, notifyPrive, notifyChat, notifyPhoto, notifyVideo, sendDocument, chatEstPublic, chatEstPrive, enabled, journal };

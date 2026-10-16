@@ -270,6 +270,14 @@ function instance(w, o) {
     const v = r.I.vue().lancements;
     ok(v && v.courbes.suivies === 1 && v.ignition.nonce === 91, 'la vue : une courbe suivie, le nonce d’IGNITION');
     ok(!JSON.stringify(r.I.vue()).includes('Pas un conseil'), 'la vue publique ne porte aucun texte d’alerte');
+    /* 16/10 : la meme alerte, ouverte aux joueurs (smart_public.js) — en anglais, par gabarit, et mesuree depuis le prix de la courbe */
+    const vp = r.I.alertesPubliques(0), ap = vp.alertes[0] || {}, fp = ap.fiche || {};
+    ok(vp.actif && vp.alertes.length === 1 && ap.categorie === 'dev' && ap.verdict === 'vert' && fp.titre === 'Known dev launch (CrawlScan)' && fp.symbole === 'JUDGEBOT', 'public : JUDGEBOT, 🟢 « Known dev launch (CrawlScan) », categorie « dev »');
+    ok(fp.qui && fp.qui[0] && fp.qui[0].nom === 'Known dev CrawlScan' && fp.qui[0].adresse === '0x58ea497c16422a344a50785f6f23ca92082e2e03' && fp.qui[0].detail === 'dev buy 0.028 ETH', 'public : qui = le dev connu, son adresse ENTIERE, son achat lu sur la courbe');
+    ok(/^\d+ s old · curve 0\.\d{3} \/ 4\.20 ETH \(\d+%\)$/.test(fp.etat || '') && fp.promo === 'no paid profile · no ads · no boosts', 'public : age et courbe, promo DexScreener, en anglais : ' + fp.etat);
+    ok(fp.liens && fp.liens.dexscreener === 'https://dexscreener.com/robinhood/' + J && fp.liens.explorer === 'https://robinhoodchain.blockscout.com/token/' + J && /Not financial advice\.$/.test(ap.texte || ''), 'public : liens DexScreener et explorateur, « Not financial advice. »');
+    ok(ap.mesure && ap.mesure.ref && ap.mesure.ref.source === 'curve' && pc && Math.abs(ap.mesure.ref.prix / pc.prix - 1) < 0.5, 'public : le prix de reference est celui de la courbe, sans appel DexScreener');
+    ok(!/[éèêàùç]|Pas un conseil|LANCEMENT|dev connu/.test(JSON.stringify(vp)), 'public : aucun mot du texte prive francais');
     /* phase defavorable : un cycle 1 s apres le lancement, avant les 20 confirmations */
     const r2 = await rejeu(1);
     const dt2 = r2.prives[0] ? Math.round(r2.prives[0].t / 1000 - t0) : null;

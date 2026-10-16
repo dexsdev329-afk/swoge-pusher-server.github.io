@@ -5603,6 +5603,16 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, entete);
       return res.end(JSON.stringify(I ? I.vue() : { actif: false, pret: false, mode: 'off' }));
     }
+    /* Le journal PUBLIC des alertes (16/10/2026, smart_public.js) : la base
+       locale seulement, les champs construits par gabarit, jamais le texte
+       prive. ?depuis=<id> : les nouvelles alertes et la mesure de celles qui
+       avancent encore. Meme debit, memes en-tetes que le reste de /ai/smart. */
+    if (path === '/ai/smart/alertes') {
+      const d = require('./smart_public').litDepuis(new URLSearchParams(req.url.split('?')[1] || '').get('depuis'));
+      if (d === null) { res.writeHead(400, entete); return res.end(JSON.stringify({ erreur: 'invalid depuis' })); }
+      res.writeHead(200, entete);
+      return res.end(JSON.stringify(I && I.alertesPubliques ? I.alertesPubliques(d) : { actif: false, raison: 'detector off', alertes: [], vivantes: [], bilan: null }));
+    }
     const genre = { '/ai/smart/jeton': 'jeton', '/ai/smart/wallet': 'wallet', '/ai/smart/createur': 'createur' }[path];
     const a = String(new URLSearchParams(req.url.split('?')[1] || '').get('a') || '');
     if (!genre) { res.writeHead(404, entete); return res.end(JSON.stringify({ erreur: 'not found' })); }
@@ -11931,7 +11941,8 @@ server.listen(cfg.PORT, () => {
      signaux arrivent a la colonie par le meme `signalSmart`, avec leur SOURCE :
      une ligne d'audit chacune, jamais un achat. Un jeton encore sur sa courbe
      n'a pas de prix DexScreener : la colonie lit celui de la courbe suivie. */
-  smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
+  /* 16/10 : le canal PUBLIC des alertes (SMART_PUBLIC_TG_CHAT, smart_public.js) part par notifyChat */
+  smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t), notifyChat: (c, t) => tg.notifyChat(c, t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
     faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v) });
   aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a

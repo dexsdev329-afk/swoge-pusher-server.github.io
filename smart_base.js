@@ -76,6 +76,15 @@ const MIGRATIONS = [
      adresse TEXT PRIMARY KEY, symbole TEXT, bloc INTEGER, pool TEXT, version INTEGER, statut TEXT NOT NULL DEFAULT 'a_voir',
      vu_t INTEGER, juge_t INTEGER, fdv REAL, liq REAL, prix REAL, pool_ds TEXT, pic REAL, raison TEXT);
    CREATE INDEX IF NOT EXISTS historique_statut ON historique (statut, bloc);`,
+  /* v4 — 16/10/2026, decision du proprietaire « ouvre les alertes aux joueurs » :
+     le JOURNAL PUBLIC (smart_public.js). Une ligne par alerte partie, sous une
+     forme anglaise construite par gabarit (fiche JSON + texte), et sa MESURE :
+     prix de reference, relevés a +5/+15/+30/+60/+120 min, plus haut et plus
+     bas lus. Rien de la table `alertes` (texte prive) n'y est recopie. */
+  `CREATE TABLE IF NOT EXISTS publiques (
+     id INTEGER PRIMARY KEY AUTOINCREMENT, t INTEGER, publie_t INTEGER, cle TEXT UNIQUE, genre TEXT, categorie TEXT, verdict TEXT, jeton TEXT,
+     fiche TEXT, texte TEXT, tg TEXT, ref_prix REAL, ref_t INTEGER, ref_source TEXT, mesures TEXT, haut REAL, bas REAL, obs_t INTEGER, obs_n INTEGER, fini INTEGER DEFAULT 0);
+   CREATE INDEX IF NOT EXISTS publiques_fini ON publiques (fini, t);`,
 ];
 
 /** Une valeur JS -> une valeur SQLite : BigInt en TEXT, objets en JSON. */

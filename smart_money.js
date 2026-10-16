@@ -26,9 +26,15 @@
  *     (smart_lancements.js, brief v2 du 15/10, apres JUDGEBOT) ; toutes les
  *     2 min, les envois Relay des wallets Solana d'IGNITION.
  *
+ *  5. (16/10, decision du proprietaire) chaque alerte qui part au
+ *     proprietaire part AUSSI au public, en anglais, par gabarit, et sa
+ *     mesure suit (smart_public.js : flux de la page, canal Telegram
+ *     optionnel, SMART_PUBLIC=0 eteint tout le public).
+ *
  * SMART_MONEY : vide = ETEINT (aucune minuterie, aucune requete, aucun
  * fichier ; viem et sql.js ne sont meme pas charges) ; « observe » = lit,
- * calcule, garde les alertes sans les envoyer ; « 1 » = envoie au proprietaire.
+ * calcule, garde les alertes sans les envoyer (ni au public) ; « 1 » = envoie
+ * au proprietaire, et au public sauf SMART_PUBLIC=0.
  * ================================================================== */
 
 const fs = require('fs');
@@ -38,6 +44,7 @@ const SRC = require('./smart_sources');
 const SL = require('./smart_listes');
 const SS = require('./smart_signaux');
 const SLZ = require('./smart_lancements');
+const SPUB = require('./smart_public');
 
 const PASSE_MS = 30 * 60e3;          // « toutes les 30 min » (demande du proprietaire)
 const VEILLE_MS = 5 * 60e3;          // 2 900 blocs : 1 appel sans adresse (200 wallets sur 30 000 blocs : 4,8 Mo en 348 ms, sonde du 13/10)
@@ -208,6 +215,10 @@ function cree(deps0) {
   const masque = (x) => { let t = String(x == null ? '' : x); if (C.rpcUrl) t = t.split(C.rpcUrl).join('<node>'); return t.replace(/URL: \S+/g, 'URL: <node>'); };
   const note = (genre, texte) => { journal.push({ t: deps.horloge(), genre, texte: masque(texte).slice(0, 300) }); if (journal.length > JOURNAL_MAX) journal.shift(); };
   let instantane = null;
+  /* le journal public (16/10) : il lit la base quand elle est ouverte */
+  const PUB = SPUB.cree({ base: () => B, horloge: deps.horloge, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, tg: deps.tg, note,
+    prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null) });
+  async function ticPublic() { try { if (B) await PUB.tic(); } catch (e) { note('public', masque(e.message || e).slice(0, 120)); } }
 
   async function allume() {
     if (B) return;
@@ -240,7 +251,11 @@ function cree(deps0) {
   }
 
   // ---------------------------------------------------------- envoyer
-  async function envoie(genre, cle, jeton, texte) {
+  /* `pub` (16/10) : les CHAMPS de l'alerte pour le journal public
+     (smart_public.construitFiche), jamais le texte prive. Le public suit le
+     proprietaire en mode « 1 » seulement, meme si Telegram a refuse le message
+     prive : la page ne depend pas de la conversation du proprietaire. */
+  async function envoie(genre, cle, jeton, texte, pub) {
     const deja = B.un('SELECT id FROM alertes WHERE cle = ?', [cle]);
     if (deja) return false;
     let ok = false;
@@ -249,8 +264,11 @@ function cree(deps0) {
     }
     B.pose('alertes', { t: Math.floor(deps.horloge() / 1000), genre, cle, jeton, texte, envoye: ok ? 1 : 0 });
     note('alerte', `${genre} ${jeton || ''} ${C.mode === 'envoi' ? (ok ? 'envoyee' : 'REFUSEE par Telegram') : 'gardee (observe)'}`);
+    if (pub && C.mode === 'envoi') { try { await PUB.publie(genre, cle, jeton, pub); } catch (e) { note('public', 'erreur : ' + masque(e.message || e).slice(0, 120)); } }
     return ok;
   }
+  /** L'age (min) d'un jeton depuis sa 1re piscine lue par la veille, ou null. */
+  const ageDe = (j) => { const c = B.un('SELECT t FROM creations WHERE jeton = ? AND t IS NOT NULL ORDER BY bloc ASC LIMIT 1', [j]); return c ? Math.max(0, deps.horloge() / 1000 - c.t) / 60 : null; };
 
   // ---------------------------------------------------------- 1. decouverte
   const ROTATION = [['vol', [1, 2, 3, 4, 5]], ['vol', [6, 7, 8, 9, 10]], ['tx', [1, 2, 3, 4, 5]], ['tx', [6, 7, 8, 9, 10]]];
@@ -1040,7 +1058,13 @@ function cree(deps0) {
           const palm = { lancements: c.lancements, reussites: c.reussites, retraits: c.retraits, drapeaux: c.drapeaux };
           const inf = await RV.infosJeton(jeton).catch(() => ({}));
           const texte = K.texteAlerteCreateur(Object.assign({}, al, { palmares: palm }), { explorer: deps.explorer, via: a.via, symbole: inf.symbole });
-          if (await envoie('createur', 'createur:' + jeton, jeton, texte)) bilan.alertes++;
+          /* public : un createur deja lu n'a pas de verdict du brief ; jaune
+             (surveiller), rouge s'il a deja retire une liquidite ou porte un drapeau */
+          const sale = (c.retraits || 0) > 0 || (c.drapeaux || 0) > 0;
+          const pub = { categorie: 'dev', verdict: sale ? 'rouge' : 'jaune', titre: { cle: 'createur' }, symbole: inf.symbole, ageMin: ageDe(jeton),
+            qui: [{ adresse: al.createur, role: 'creator', lancements: c.lancements }],
+            risque: c.retraits ? { cle: 'retraits', val: c.retraits } : c.drapeaux ? { cle: 'drapeaux', val: c.drapeaux } : { cle: 'rechute' }, plan: { cle: sale ? 'rouge' : 'jaune' } };
+          if (await envoie('createur', 'createur:' + jeton, jeton, texte, pub)) bilan.alertes++;
         }
       }
       /* les achats des smart, et ceux des wallets du brief (15/10) : leurs
@@ -1084,7 +1108,9 @@ function cree(deps0) {
         for (const al of K.alertesSmart(achats, new Set(smart))) {
           const sym = (B.un('SELECT symbole FROM jetons WHERE adresse = ?', [al.jeton]) || {}).symbole;
           const texte = K.texteAlerteSmart(al, { explorer: deps.explorer, scores, symbole: sym });
-          if (await envoie('smart', 'smart:' + al.jeton, al.jeton, texte)) bilan.alertes++;
+          const pub = { categorie: 'smart', verdict: 'jaune', titre: { cle: 'smart', val: { n: al.wallets.length, min: Math.max(1, Math.round((al.t1 - al.t0) / 60)) } }, symbole: sym, ageMin: ageDe(al.jeton),
+            qui: al.wallets.map((w) => ({ adresse: w.qui, role: 'smart' })), risque: { cle: 'smart_regle' }, plan: { cle: 'jaune' } };
+          if (await envoie('smart', 'smart:' + al.jeton, al.jeton, texte, pub)) bilan.alertes++;
         }
       }
       B.meta('veille_bloc', haut);
@@ -1272,7 +1298,11 @@ function cree(deps0) {
         if (B.un('SELECT id FROM alertes WHERE cle = ?', [cle])) continue;
         const env = deps.env || process.env;
         const r = await SS.redige(v, faits, { fetch: deps.prendre, cleAnthropic: env.ANTHROPIC_API_KEY || '', desactive: String(env.SMART_ANALYSTE_LLM || '').trim() === '0' });
-        if (await envoie('analyste', cle, jeton, r.texte)) bilan.envoyes++;
+        /* public : le VERDICT et ses faits, jamais le texte (le modele peut l'avoir redige) */
+        const pub = { categorie: 'analyste', verdict: v.verdict === SS.VERDICTS.ACHETER ? 'vert' : 'jaune', titre: { cle: 'analyste', val: v.verdict }, symbole: faits.symbole,
+          ageMin: v.conditions.age, capUsd: faits.mcUsd, capSource: 'dex', qui: v.achats.slice(0, 6).map((x) => ({ adresse: x.wallet, ilYaMin: x.minutes })),
+          risque: SPUB.risqueAnalyste(v), plan: { cle: v.verdict === SS.VERDICTS.ACHETER ? 'analyste_vert' : 'analyste_jaune', val: { mise: v.conditions.mise } } };
+        if (await envoie('analyste', cle, jeton, r.texte, pub)) bilan.envoyes++;
         if (r.par === 'gabarit' && r.raison && r.raison !== 'sans cle') note('analyste', 'gabarit : ' + r.raison);
       } catch (e) {
         bilan.erreurs++;
@@ -1430,13 +1460,22 @@ function cree(deps0) {
     const base = `passe toutes les ${PASSE_MS / 60e3} min (GeckoTerminal + DexScreener sans cle, noeud ${C.rpcPropre ? 'SMART_RPC_URL' : 'public'} en lecture seule), veille toutes les ${VEILLE_MS / 60e3} min, rapport ${C.heure} ${FUSEAU}`;
     const z = SLZ.config(deps.env);
     const lz = `, lancements Pons ${z.lancements ? 'toutes les ' + SLZ.CYCLE_MS / 1e3 + ' s' : 'ETEINTS (SMART_LANCEMENTS=0)'}, IGNITION ${z.ignition ? 'oui' : 'non'}, Relay ${z.relay ? 'un wallet toutes les ' + SLZ.RELAY_MS / 1e3 + ' s' : 'non'}, copie ${z.copie ? 'oui' : 'non'}, rebond ${z.rebond ? 'oui' : 'non'}, promo DexScreener ${z.dsOrders ? 'oui' : 'non'}`;
-    return C.mode === 'observe' ? `[smart] OBSERVATION (SMART_MONEY=observe) : ${base}${lz} — n envoie rien` : `[smart] ALERTES au proprietaire seul (SMART_MONEY=1, notifyPrive) : ${base}${lz}`;
+    const pc = PUB.config;
+    const pub = pc.actif ? ` ; PUBLIC (SMART_PUBLIC) : flux /ai/smart/alertes, canal ${pc.tgChat ? 'SMART_PUBLIC_TG_CHAT, ' + pc.maxH + ' par heure au plus' : 'aucun (SMART_PUBLIC_TG_CHAT vide)'}, delai ${pc.delaiS} s` : ' ; public ETEINT (SMART_PUBLIC=0)';
+    return C.mode === 'observe' ? `[smart] OBSERVATION (SMART_MONEY=observe) : ${base}${lz} — n envoie rien, ni au proprietaire ni au public` : `[smart] ALERTES au proprietaire (SMART_MONEY=1, notifyPrive) : ${base}${lz}${pub}`;
   }
 
   return {
-    config: C, passe, veille, ligneDemarrage, allume,
+    config: C, passe, ligneDemarrage, allume,
+    /* la veille et les lancements font aussi avancer le public (16/10) :
+       envois retardes et releves de prix, sans minuterie de plus */
+    veille: async () => { const r = await veille(); await ticPublic(); return r; },
     /** Un cycle des lancements (60 s) ; les envois Relay (2 min). */
-    lancements: async () => { await allume(); const r = await LZ.cycle(); instantane = construitVue(); return r; },
+    lancements: async () => { await allume(); const r = await LZ.cycle(); await ticPublic(); instantane = construitVue(); return r; },
+    /** Le journal public : GET /ai/smart/alertes?depuis=<id> (base locale seulement). */
+    alertesPubliques: (depuis) => PUB.vue(depuis),
+    ticPublic,
+    configPublic: PUB.config,
     relay: async () => { await allume(); return LZ.relay(); },
     /** Le prix d'un jeton sur sa courbe Pons suivie (ombres de la colonie). */
     prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
