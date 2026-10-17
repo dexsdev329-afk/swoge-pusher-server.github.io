@@ -139,7 +139,8 @@ function choisis(action, F, Fh, C, fps, dir, n, sol, nHD) {
   const r = choisis1(action, F, Fh, C, fps, dir, n, sol);
   if (nHD) {
     const L = F.length, idx = [];
-    if (r.boucle && r.s != null) { for (let k = 0; k < nHD; k++) idx.push(Math.min(L - 1, r.s + Math.round(k * r.P / nHD))); r.ipsHD = nHD / r.periodeS; }
+    if (r.allerRetour) { const h = allerRetour(L, nHD, fps, r.coutureRepos); idx.push(...h.idx); r.ipsHD = h.ips; }
+    else if (r.boucle && r.s != null) { for (let k = 0; k < nHD; k++) idx.push(Math.min(L - 1, r.s + Math.round(k * r.P / nHD))); r.ipsHD = nHD / r.periodeS; }
     else if (r.geste) {
       for (let k = 0; k < nHD; k++) idx.push(Math.round(r.a + k * (r.b - r.a) / Math.max(1, nHD - 1)));
       let kp = 0; for (let k = 1; k < nHD; k++) if (Math.abs(idx[k] - r.pic) < Math.abs(idx[kp] - r.pic)) kp = k;
@@ -150,6 +151,9 @@ function choisis(action, F, Fh, C, fps, dir, n, sol, nHD) {
   }
   return r;
 }
+
+/* la couture au-dela de laquelle un repos passe en aller-retour : le seuil du controle « boucle » */
+const COUTURE_REPOS_MAX = 1.8;
 
 function choisis1(action, F, Fh, C, fps, dir, n, sol) {
   const solPx = (sol == null ? 0.88 : sol) * C;
@@ -205,7 +209,24 @@ function choisis1(action, F, Fh, C, fps, dir, n, sol) {
     const r = sc(s, P);
     if (r.v < best.v - 0.05) best = Object.assign({ s, P }, r);
   }
-  return { idx: best.id, ips: n * fps / best.P, boucle: true, s: best.s, P: best.P, periodeS: best.P / fps, coutureRepos: best.v };
+  if (best.v <= COUTURE_REPOS_MAX) return { idx: best.id, ips: n * fps / best.P, boucle: true, s: best.s, P: best.P, periodeS: best.P / fps, coutureRepos: best.v };
+  /* 17/10/2026 : aucune fenetre ne boucle. Lot « sonde » du pirate (8d07a85f, 17/10) :
+     couture 2,39-2,70 dans les 4 directions (seuil 1,8), et le meme 2,48-2,62 sur la
+     piratesse le 14/10 — un repos presque immobile dont la derniere image n'est pas
+     la premiere. Alors ALLER-RETOUR sur tout le clip : n/2+1 images a l'aller, puis
+     les n/2-1 du milieu au retour (0 1 2 3 4 3 2 1 pour n = 8). La couture est alors
+     UN pas d'image, comme toutes les autres, et le clip entier donne le plus de
+     mouvement (repos_mouvement : 0,001-0,002 sur la sonde, seuil 0,002). */
+  return allerRetour(L, n, fps, best.v);
 }
 
-module.exports = { choisis, ecartPieds, cotePied, alternances, AXE };
+/* les indices d'un aller-retour sur les L images d'un clip, en n images (n pair >= 4) */
+function allerRetour(L, n, fps, coutureAvant) {
+  const m = Math.floor(n / 2) + 1, idx = [];
+  for (let k = 0; k < m; k++) idx.push(Math.round(k * (L - 1) / (m - 1)));
+  for (let k = m - 2; k >= 1; k--) idx.push(idx[k]);
+  const pasS = (L - 1) / (m - 1) / fps;
+  return { idx, ips: pasS > 0 ? 1 / pasS : 8, boucle: true, allerRetour: true, s: 0, P: L - 1, periodeS: n * pasS, coutureRepos: coutureAvant };
+}
+
+module.exports = { choisis, ecartPieds, cotePied, alternances, AXE, allerRetour, COUTURE_REPOS_MAX };

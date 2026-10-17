@@ -107,6 +107,25 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'planches-chaine-'));
   ok(ecarts.every((e) => Math.abs(e - pasIdeal) <= 1 + 0.5 * pasIdeal) && Math.abs(1 / ia.ips - pasIdeal / 24) < 1e-6,
      'attaque : images ' + ia.idx.join(',') + ' — ecarts ' + ecarts.join(',') + ' images (pas ' + pasIdeal.toFixed(2) + ', l impact garde), jouees a ' + ia.ips.toFixed(2) + ' i/s = leur vrai rythme');
 
+  /* 17/10 : un repos qui ne boucle sur aucune fenetre (lot sonde du pirate : couture 2,39-2,70,
+     seuil 1,8) passe en ALLER-RETOUR — la couture devient un pas d'image comme les autres */
+  {
+    const C = 64, h = 32, L = 49, Fd = [], Fdh = [];
+    for (let i = 0; i < L; i++) {
+      const d = new Uint8ClampedArray(C * C * 4), dh = new Uint8ClampedArray(h * h * 4);
+      const x0 = 10 + Math.floor(i / 2);   /* un carre qui derive sans revenir : aucune boucle possible */
+      for (let y = 20; y < 50; y++) for (let x = x0; x < x0 + 16; x++) { const o = (y * C + x) * 4; d[o] = 200; d[o + 3] = 255; }
+      for (let y = 10; y < 25; y++) for (let x = x0 >> 1; x < (x0 >> 1) + 8; x++) { const o = (y * h + x) * 4; dh[o] = 200; dh[o + 3] = 255; }
+      Fd.push(d); Fdh.push(dh);
+    }
+    const ir = choisis('idle', Fd, Fdh, C, 24, 'se', 8, 0.88, 16);
+    const ecart = (a, b) => T.ecart(Fdh[a], Fdh[b], h * h);
+    const pas = ir.idx.map((j, k) => ecart(j, ir.idx[(k + 1) % 8])), moy = pas.slice(0, 7).reduce((a, b) => a + b, 0) / 7;
+    ok(ir.allerRetour && ir.idx.join() === '0,12,24,36,48,36,24,12' && ir.idxHD.length === 16 && ir.idxHD[8] === 48 && ir.idxHD[15] === ir.idxHD[1],
+       'repos qui ne boucle pas : aller-retour sur tout le clip (' + ir.idx.join(',') + '), HD aussi (16 images, retour au milieu)');
+    ok(pas[7] / moy <= 1.05 && Math.abs(ir.ipsHD / ir.ips - 2) < 1e-9, 'la couture 7 -> 0 vaut un pas moyen (' + (pas[7] / moy).toFixed(2) + ', seuil 1,8) ; la HD joue deux fois plus d images au meme rythme');
+  }
+
   console.log('\n-- 2. un monstre symetrique en vraies vues passe --');
   const parPalette = { null: f };
   for (const pal of ['sym', 'sabre']) {
