@@ -2985,6 +2985,47 @@ function depot() {
     tourMs: Number(process.env.CREDIT_DEPOT_TOUR_MS) > 0 ? Number(process.env.CREDIT_DEPOT_TOUR_MS) : undefined });
   return DEPOT;
 }
+/* ---- LE DEPOT AUX PARIS EN SOL, USDT OU ETH (bet_depot.js, 17/10/2026) ----
+   Une adresse de depot STRICTE de Relay, livree en $SWOGEBET au COFFRE DES PARIS
+   (BET_VAULT_ADDRESS) sur Robinhood Chain ; le recu se lit sur RPC_URL. 95 % de ce qui arrive va
+   au solde de paris de la session par game.creditBetDeposit (seenTx, journal 'depb', etat sauve
+   aussitot) ; le reste (BET_DEPOT_FRAIS_BPS, 500 par defaut) reste dans le coffre. Eteint sans
+   RELAY_API_KEY, sans coffre valide, si BET_DEPOT=0, ou si le jeu ne compte pas en 18 decimales
+   (decimals() du $SWOGEBET lu sur la chaine le 17/10 = 18). */
+let BET_DEPOT = null;
+function betDepot() {
+  if (BET_DEPOT) return BET_DEPOT;
+  let vault = null;
+  const brut = String(cfg.BET_VAULT_ADDRESS || '').trim();
+  try { if (brut) vault = ethers.utils.getAddress(brut); } catch (e) { console.error('[betdepot] BET_VAULT_ADDRESS is not a valid address - SOL/USDT/ETH bet deposits stay off'); }
+  const raisons = [];
+  if (!vault) raisons.push('no valid BET_VAULT_ADDRESS');
+  if (!cfg.RELAY_API_KEY) raisons.push('no RELAY_API_KEY');
+  if (process.env.BET_DEPOT === '0') { raisons.push('BET_DEPOT=0'); vault = null; }
+  if (cfg.DECIMALS !== require('./bet_depot').DECIMALES_JETON) { raisons.push('game decimals differ from the token'); vault = null; }
+  if (Number(cfg.CHAIN_ID) !== 4663) { raisons.push('CHAIN_ID is not Robinhood Chain'); vault = null; }
+  const B = require('./bet_depot');
+  const fraisBps = B.lisFrais(process.env.BET_DEPOT_FRAIS_BPS);
+  if (fraisBps === null) console.error('[betdepot] BET_DEPOT_FRAIS_BPS is not an integer 0..' + B.FRAIS_MAX_BPS + ' - no new bet deposit orders (open ones still credited at their own fee)');
+  BET_DEPOT = B.cree({ dossier: cfg.DATA_DIR, vault, jeton: cfg.SWOGEBET_TOKEN, api: cfg.RELAY_API, cle: cfg.RELAY_API_KEY, fraisBps,
+    rpc: require('./x402').rpcBase(cfg.RPC_URL),
+    credite: ({ player, amountWei, tx }) => {
+      const fait = game.creditBetDeposit({ player, amount: ethers.BigNumber.from(amountWei), tx });
+      if (fait) {
+        persist();
+        console.log(`[deposit bet relay] ${player} +${amountWei} (${tx})`);
+        toAddr(player, { type: 'betDeposit', betBalance: game.betBalanceStr(player) });
+      }
+      return fait;
+    },
+    dejaVu: (k) => game.seenTx.has(k),
+    estMaison: (a) => game.estMaison(a),
+    cadenceMs: Number(process.env.BET_DEPOT_CADENCE_MS) > 0 ? Number(process.env.BET_DEPOT_CADENCE_MS) : undefined,
+    tourMs: Number(process.env.BET_DEPOT_TOUR_MS) > 0 ? Number(process.env.BET_DEPOT_TOUR_MS) : undefined });
+  console.log(BET_DEPOT.actif() ? '[betdepot] on: SOL/USDT/ETH deposit addresses deliver $SWOGEBET to the bet vault, fee ' + (fraisBps === null ? 'unreadable - new orders off' : fraisBps + ' bps')
+    : '[betdepot] off (' + (raisons.join(', ') || 'not configured') + ') - SOL/USDT/ETH bet deposits are not offered');
+  return BET_DEPOT;
+}
 /** Qui paie une reponse de l'agent ou du chat : le credit en dollars ('credit') ou le solde $SWOGE (defaut). */
 function payeurDe(addr, payeur, quoi) {
   if (payeur === 'credit') {
@@ -4490,6 +4531,40 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET') {
       return json(200, { ok: true, available: D.actif() && !D.enPanne(), origins: D.origines(), orders: D.liste(addr),
         note: 'Send SOL or USDT to a one-time address; it is converted to USDC and you are credited what actually arrives.' });
+    }
+    if (req.method !== 'POST') return json(405, { ok: false, raison: 'GET or POST only' });
+    let q;
+    try { q = JSON.parse((await corps(req, 2048)).toString('utf8') || '{}'); } catch (e) { q = null; }
+    if (!q || typeof q !== 'object') return json(400, { ok: false, raison: 'unreadable request' });
+    D.demarre();
+    const r = await D.nouvelle(addr, q);
+    return json(r.status, r.corps);
+  }
+  /* ---- LE DEPOT AUX PARIS EN SOL, USDT OU ETH (bet_depot.js, 17/10) : GET /bet/deposit
+     (provenances, frais, commandes de la session), POST /bet/deposit {origin, amountUsd},
+     GET /bet/deposit/<id>. Le meme jeton de session que /credit/deposit (swogebet.html le garde
+     sous « swogeSession », comme le Studio) ; pas de cle swg_. Le solde credite est TOUJOURS
+     celui de la session, jamais une adresse du corps ; la commande d'une autre session : 404. */
+  if (path === '/bet/deposit' || /^\/bet\/deposit\/b[0-9a-f]{24}$/.test(path)) {
+    const cors = { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type, authorization' };
+    const json = (code, o) => { res.writeHead(code, Object.assign({ 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }, cors)); return res.end(JSON.stringify(o)); };
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+    const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+    const addr = jeton ? sessionJoueur.lire(game.sessionSecret, jeton) : null;
+    if (!addr) return json(401, { ok: false, raison: 'sign in with your wallet first' });
+    const D = betDepot();
+    if (path !== '/bet/deposit') {
+      if (req.method !== 'GET') return json(405, { ok: false, raison: 'GET only' });
+      const id = path.slice('/bet/deposit/'.length);
+      D.presse(addr, id);
+      const v = D.lit(addr, id);
+      return v ? json(200, Object.assign({ ok: true, betBalance: game.betBalanceStr(addr) }, v)) : json(404, { ok: false, raison: 'no such deposit for this sign-in' });
+    }
+    if (req.method === 'GET') {
+      const e = D.etat();
+      return json(200, { ok: true, available: D.ouvert() && !D.enPanne() && !game.estMaison(addr), origins: D.origines(), orders: D.liste(addr),
+        feeBps: e.fraisBps, feePercent: e.fraisBps == null ? null : e.fraisBps / 100,
+        note: 'Send SOL, USDC, USDT or ETH to a one-time address; it is swapped to $SWOGEBET and you are credited what actually arrives, minus the deposit fee.' });
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'GET or POST only' });
     let q;
@@ -7747,6 +7822,9 @@ const server = http.createServer(async (req, res) => {
           engageBet: enCours.parJeton.swogebet.engage,
           couvreTout: pot2 ? pot2.gte(bd2.total.add(ethers.utils.parseUnits(String(enCours.parJeton.swogebet.engage), cfg.DECIMALS))) : null,
           enCours,
+          /* Les depots SOL/USDT/ETH (bet_depot.js) : ce qui est arrive au coffre, ce qui a ete
+             credite, et le frais garde — deja DANS le surplus ci-dessus (pot − du). */
+          depotsRelay: (() => { try { return betDepot().etat(); } catch (e) { return null; } })(),
         };
       })(),
     }, null, 2));
@@ -11603,6 +11681,8 @@ server.listen(cfg.PORT, () => {
   try { demarreBase(); } catch (e) { console.error('[x402] Base start: ' + (e && e.message || e)); }
   /* Les commandes de depot SOL/USDT ouvertes avant l'arret sont relues sur le disque et suivies. */
   try { depot().demarre(); } catch (e) { console.error('[depot] start: ' + (e && e.message || e)); }
+  /* Et celles du depot aux paris (bet_depot.js) : le meme chemin, vers le coffre des paris. */
+  try { betDepot().demarre(); } catch (e) { console.error('[betdepot] start: ' + (e && e.message || e)); }
   /* ---- LES VIDEOS PAYEES AU CREDIT, REPRISES (14/10) ----
      Leurs reserves durables ont survecu a l'arret (credits.js) : le suivi reprend sous le meme
      identifiant (la page continue de la suivre) et regle chacune une fois ; sans identifiant xAI,
