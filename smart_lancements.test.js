@@ -350,6 +350,12 @@ function instance(w, o) {
     const sg = s.signaux.find((x) => x.jeton === A('b1'));
     ok(sg && sg.source === 'lancement' && sg.conditions[0].cle === 't2_bon' && sg.conditions[0].valeur.acheteurs === 21, 'il va a la colonie (21 acheteurs uniques), source « lancement »');
     ok(!s.signaux.some((x) => x.jeton === A('b2')), '19 acheteurs avant T+2 (le 20e apres) : rien');
+    /* le dev vend un jeton dont le bon signe n'est JAMAIS parti : pas de « SORTIR » (17/10 : 24 des 30
+       alertes publiques etaient des sorties sans alerte d'entree) */
+    w.vente(A('e1'), A('f1'), A('f1'), 0.1, B0 + 2100);
+    w.pointe = B0 + 2600;
+    await muet(() => s.LZ.cycle());
+    egal(s.envoyes.filter((x) => x.genre === 'sortie').length, 0, 'le dev vend apres un bon signe garde pour la colonie : aucune alerte de sortie');
     /* avec SMART_T2_ALERTE=1 */
     const w2 = monde(); const C0 = w2.pointe - 2000;
     w2.lance({ jeton: A('b3'), courbe: A('e3'), dep: A('f3'), bloc: C0, devAchat: 0.2, sym: 'T2' });

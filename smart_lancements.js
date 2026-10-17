@@ -420,8 +420,14 @@ function cree(deps) {
           }
           const venteNeuve = ventesDev > (s.ventesDev || 0);
           s.acheteurs = [...ach]; s.achete = achete.toString(); s.net = net.toString(); s.ventesDev = ventesDev;
-          /* « le dev ou ses wallets vendent = sortir », sur une courbe alertee */
-          if (venteNeuve && s.suivre) {
+          /* « le dev ou ses wallets vendent = sortir », sur une courbe ALERTEE.
+             `annonce === false` : un bon signe T+2 garde pour la colonie, jamais envoye
+             (SMART_T2_ALERTE eteint). Mesure du 17/10/2026, 12:20-21:25 UTC : 24 des 30
+             alertes publiques etaient des « EXIT » sur des jetons sans AUCUNE alerte
+             d'entree avant (age 3 a 72 min, la plupart 3-7 min : juste apres le T+2) —
+             une sortie d'une position que personne n'avait. Elles restent notees. */
+          if (venteNeuve && s.suivre && s.annonce === false) note('lancements', 'le dev vend ' + s.jeton + ' (bon signe T+2 jamais envoye) : pas d alerte de sortie');
+          if (venteNeuve && s.suivre && s.annonce !== false) {
             const r = await alerte('sortie', 'sortie:' + s.jeton, s.jeton, { verdict: 'rouge', titre: 'SORTIR — le dev vend', symbole: s.symbole, jeton: s.jeton,
               ageMin: (a - s.bloc) * S_PAR_BLOC / 60, courbe: { eth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.net)) : null, seuilEth: s.cote === SP.ADR.ETH ? SP.versEth(BigInt(s.seuil)) : null, gradue: s.gradue },
               qui: ['deployer ' + court(s.deployer)], promo: undefined, risque: 'le dev ou ses wallets vendent : sortir', plan: SP.plan('rouge', { sortie: true }), lienX: s.lienX,
@@ -461,7 +467,7 @@ function cree(deps) {
               plan: { cle: verdict, val: { sortie: s.ventesDev > 0 } }, capSource: 'curve', prixUsd: prixUsdDe(s.dernier, s.cote === SP.ADR.ETH) } });
           if (r.ok) bilan.alertes++;
           if (!envoyer) bilan.t2Seuls = (bilan.t2Seuls || 0) + 1;
-          if (!deja) { s.suivre = true; s.alerte = verdict; s.symbole = meta && meta.symbole; s.lienX = meta && SP.lienX(meta.socials); s.source = SP.SOURCES.LANCEMENT; }
+          if (!deja) { s.suivre = true; s.annonce = envoyer; s.alerte = verdict; s.symbole = meta && meta.symbole; s.lienX = meta && SP.lienX(meta.socials); s.source = SP.SOURCES.LANCEMENT; }
           if (verdict !== 'rouge') {
             signal({ jeton: s.jeton, symbole: s.symbole, verdict, source: deja ? (s.source || SP.SOURCES.LANCEMENT) : SP.SOURCES.LANCEMENT, courbe: true,
               conditions: [{ cle: 't2_bon', etat: 'ok', valeur: s.t2 }], inconnues: j.inconnues, wallets: [] });
