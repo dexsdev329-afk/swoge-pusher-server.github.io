@@ -400,6 +400,59 @@ const cle = (l) => l.transactionHash + ':' + l.logIndex;
     ok(!/CLE-SECRETE/.test(r.masque('x URL: ' + SECRET + ' y ' + SECRET)), 'masque() retire toute trace de l\'URL');
   }
 
+  // ================================================== 14. 17/10 : une passe coupee garde ce qu'elle a lu
+  console.log('-- 14. 17/10 : recus caches lot par lot ; cellule ouverte lourde descendue --');
+  {
+    /* Production du 17/10 : 0 jeton lu par passe, « budget » en boucle.
+       L'intention : une lecture coupee par le budget ne se refait pas a la
+       passe suivante — ni les lots de recus deja rendus, ni la partie fermee
+       d'une cellule qui contient la pointe. */
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-rpc14-'));
+    const recus = {}; for (let k = 1; k <= 60; k++) recus[tx(k)] = { transactionHash: tx(k), blockNumber: hex(5), logs: [] };
+    const G = fauxNoeud({ logs: [], pointe: 1500, recus });
+    const T = temps();
+    const r = R.cree({ prendre: G.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier, budgetAppels: 2 });
+    let e = null; try { await r.recus(Object.keys(recus), 500); } catch (x) { e = x; }
+    ok(e instanceof R.BudgetEpuise, '60 recus, budget de 2 requetes : coupe au 3e lot');
+    egal((fs.existsSync(path.join(dossier, 'brut')) ? fs.readdirSync(path.join(dossier, 'brut')) : []).filter((f) => /^R_/.test(f)).length, 40, 'les 2 lots rendus (40 recus) sont DEJA en cache (avant : 0, tout etait jete)');
+    r.nouvellePasse();
+    const m = await r.recus(Object.keys(recus), 500);
+    egal(m.size + ':' + (G.etat.http - 2), '60:1', 'passe suivante : 1 requete, pour les 20 qui manquent');
+    const h = await r.horodatages([1, 2, 3], 500);
+    ok(h.size === 0 || h.size === 3, 'horodatages : meme chemin (lot par lot)');
+
+    /* une cellule ouverte lourde : 3 000 lignes sur [5 000 000, pointe], la pointe
+       dans la cellule L23 [0, 8 388 607] ; sans la marque, chaque lecture la
+       relisait entiere ; avec, la 2e lecture ne relit qu'une queue <= OUVERTE_MAX */
+    const blocs = []; for (let b = 5000000; b < 5900000; b += 300) blocs.push([b, 1]);
+    const logs = chaine(blocs);
+    const F = fauxNoeud({ logs, pointe: 5900000 });
+    const r2 = R.cree({ prendre: F.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier });
+    const o = { pointe: 5899990, sure: 5898990 };
+    const a = await r2.lisLogs({ address: JETON, topics: [TR] }, 5000000, o.pointe, o);
+    egal(a.logs.length, brut(logs, 5000000, o.pointe).length, '1re lecture : toutes les lignes');
+    ok(fs.existsSync(path.join(dossier, 'brut', 'L_' + R.empreinte({ address: JETON, topics: [TR] }) + '_ouverte.json.gz')), 'la cellule ouverte a rendu >= ' + R.OUVERTE_LIGNES + ' lignes : le filtre est marque');
+    const q0 = F.etat.requetes.length;
+    const b = await r2.lisLogs({ address: JETON, topics: [TR] }, 5000000, o.pointe, o);
+    egal(b.logs.map(cle).join(), a.logs.map(cle).join(), '2e lecture (descente) : exactement les memes lignes');
+    ok(F.etat.requetes.length > q0, '2e lecture : la partie fermee est lue une fois, en cellules cachees');
+    const q2 = F.etat.requetes.length;
+    const c2 = await r2.lisLogs({ address: JETON, topics: [TR] }, 5000000, o.pointe, o);
+    const fen = F.etat.requetes.slice(q2).map((q) => parseInt(q.params[0].toBlock, 16) - parseInt(q.params[0].fromBlock, 16) + 1);
+    egal(c2.logs.length, a.logs.length, '3e lecture : memes lignes');
+    ok(fen.length === 1 && fen[0] <= R.OUVERTE_MAX + 1000, `3e lecture : 1 appel, une queue ouverte de ${fen.join(',')} blocs (<= ${R.OUVERTE_MAX} + 1 000 ; avant : ${o.pointe - 5000000 + 1})`);
+    /* un filtre leger (un acheteur, 5 lignes) : pas de marque, pas un appel de plus */
+    const L5 = chaine([[5000100, 1], [5300000, 2], [5800000, 2]]).map((l) => Object.assign(l, { topics: [TR, pad(W(77)), l.topics[2]] }));
+    const F5 = fauxNoeud({ logs: L5, pointe: 5900000 });
+    const r5 = R.cree({ prendre: F5.prendre, horloge: T.horloge, dors: T.dors, espaceLegerMs: 0, espaceLourdMs: 0, dossier });
+    const f5 = { address: JETON, topics: [TR, pad(W(77))] };
+    await r5.lisLogs(f5, 5000000, o.pointe, o);
+    const n5 = F5.etat.http;
+    await r5.lisLogs(f5, 5000000, o.pointe, o);
+    egal(n5 + ':' + (F5.etat.http - n5), '1:1', 'un filtre leger : 1 appel par lecture, comme avant (aucune descente)');
+    fs.rmSync(dossier, { recursive: true, force: true });
+  }
+
   if (rates) { console.log(`RATES : ${rates}/${n + rates}`); process.exit(1); }
   console.log(`smart_rpc.test.js : ${n} verifications OK`);
 })().catch((e) => { console.error('EXCEPTION', e); process.exit(1); });

@@ -597,6 +597,83 @@ for (const k of ['TG_BOT_TOKEN', 'TG_CHAT_ID', 'TG_BACKUP_CHAT_ID', 'TG_BACKUP_I
     ok(j3.cap_usd != null && j3.pic_usd != null, 'J3 (retenu au pic) garde aussi sa fdv actuelle (avant : cap_usd vide)');
     fs.rmSync(d12, { recursive: true, force: true });
   }
+  // ================================================== 7 quinquies. 17/10 : la marche historique n'affame plus la lecture des jetons
+  console.log('-- 7 quinquies. 17/10 : une fenetre historique qui epuise le budget n\'empeche plus de lire les jetons --');
+  {
+    /* Production du 17/10 : passe 3695 en « budget » (60 448 209 octets), la
+       fenetre historique finie (8 535 naissances), 0 jeton lu ; aucune passe
+       « ok ». L'intention : les jetons retenus se lisent CHAQUE passe, meme
+       quand la marche historique, a elle seule, depasserait le budget. */
+    const { journal, pad } = require('./essais/smart_money/faux_noeud');
+    /* le cout d'une passe normale, pour borner le budget juste au-dessus */
+    const d0 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-part0-'));
+    const b0 = banc();
+    const R0 = R.cree({ prendre: b0.prendre, horloge: b0.horloge, dors: b0.dors, dossier: path.join(d0, 'smart_money') });
+    const [p0] = await muet(() => instance(b0, d0, {}, { rpc: R0 }).passe());
+    egal(p0.statut, 'ok', 'monde sans fenetre lourde : la passe finit');
+    const cout = R0.etat.passe.octets;
+    /* une fenetre historique LOURDE : 6 000 Initialize v4 contre l'ETH dans la
+       1re fenetre (sous la pointe sure), ~3 fois le cout d'une passe entiere */
+    const lourd = (b) => {
+      let ix = 2e6;
+      const haut = MONDE.POINTE - 1000, bas = haut + 1 - M.HISTO_FENETRE;
+      for (let k = 0; k < 6000; k++) {
+        const bloc = bas + Math.floor((k * (haut - bas)) / 6000), j = '0x' + (0xe0000000 + k).toString(16).padStart(40, '0'), pool = '0x' + (0xd0000000 + k).toString(16).padStart(64, '0');
+        const h = b.w.nouvelleTx(bloc, A.C3, MONDE.PM);
+        b.w.ajoute(h, journal(MONDE.PM, [K.TOPIC.INIT_V4, pool, pad(K.ADR.ETH_NATIF), pad(j)], [10000n, 200n, 0n, 1n << 96n, 0n], bloc, h, ix++));
+      }
+    };
+    const d1 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-part1-'));
+    const b1 = banc(); lourd(b1);
+    const budget = Math.round(cout * 1.2);
+    const R1 = R.cree({ prendre: b1.prendre, horloge: b1.horloge, dors: b1.dors, dossier: path.join(d1, 'smart_money'), budgetOctets: budget });
+    const I1 = instance(b1, d1, {}, { rpc: R1 });
+    const [p1] = await muet(() => I1.passe());
+    egal(p1.statut, 'budget', `budget de ${budget} octets, fenetre lourde : la passe le dit`);
+    egal(p1.lus, 3, 'et pourtant les 3 jetons retenus sont LUS dans cette passe (avant le 17/10 : 0, la marche historique passait d\'abord)');
+    egal(I1.base().tous("SELECT * FROM jetons WHERE statut = 'lu'").length, 3, 'la base les a « lu »');
+    egal((I1.base().un('SELECT smart FROM wallets WHERE adresse = ?', [A.S1]) || {}).smart, 1, 'S1 est smart des la 1re passe');
+    const e1 = p1.etapes || {};
+    ok(['decouverte', 'pointe', 'migrations', 'jetons', 'histo_naissances'].every((k) => e1[k] && Number.isFinite(e1[k].octets) && Number.isFinite(e1[k].appels)), 'bilan.etapes mesure chaque etape (octets, appels) : ' + Object.keys(e1).join(','));
+    ok(e1.histo_naissances && e1.histo_naissances.octets > 0 && e1.jetons.octets > 0, `les octets vont ou on le lit : jetons ${e1.jetons && e1.jetons.octets}, naissances ${e1.histo_naissances && e1.histo_naissances.octets}`);
+    ok(e1.histo_ds != null, 'le budget du noeud epuise dans les naissances n\'empeche pas le jugement DexScreener (aucun octet du noeud)');
+    ok(Array.isArray(p1.parJeton) && p1.parJeton.length === 3 && p1.parJeton.every((x) => x.fini && x.octets > 0), 'bilan.parJeton : chaque jeton lu, ses octets');
+    const somme = Object.values(e1).reduce((s, x) => s + x.octets, 0);
+    egal(somme, R1.etat.passe.octets, 'la somme des etapes = les octets de la passe (rien ne se perd)');
+    const v1 = I1.vue();
+    ok(v1.passe && v1.passe.detail && v1.passe.detail.etapes && v1.passe.detail.etapes.jetons, '/ai/smart : passe.detail.etapes est servi');
+    /* la marche reprend sur le cache : la fenetre finit en quelques passes */
+    let tours = 0;
+    while (I1.base().meta('histo_bas') == null && tours < 10) { await muet(() => I1.passe()); tours++; }
+    ok(I1.base().meta('histo_bas') != null, `la fenetre lourde finit sur le cache (${tours} passes)`);
+    fs.rmSync(d1, { recursive: true, force: true });
+
+    /* la RESERVE : avec le vrai budget (60 Mo) et une reserve qui ne laisse
+       presque rien aux jetons (un dixieme d'une passe), la part des jetons est
+       coupee, la marche historique tourne quand meme, et les jetons finissent
+       sur le cache. Ce monde est petit : la vie de ses jetons tient dans la
+       cellule OUVERTE qui contient la pointe, jamais cachee ; avant le 17/10,
+       le 1er jeton y relisait les memes 48 899 octets a chaque passe sans
+       jamais finir. `ouverteLignes` a 20 (1 000 en production) : sa vie
+       compte comme une cellule ouverte lourde (smart_rpc, OUVERTE_MAX). */
+    const d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-part2-'));
+    const b2 = banc();
+    const R2 = R.cree({ prendre: b2.prendre, horloge: b2.horloge, dors: b2.dors, dossier: path.join(d2, 'smart_money'), ouverteLignes: 20 });
+    const I2 = instance(b2, d2, {}, { rpc: R2, partHistoOctets: R.BUDGET_OCTETS - Math.round(cout / 10) });
+    const [p2] = await muet(() => I2.passe());
+    egal(p2.coupe, 'jetons', 'la part des jetons epuisee : dit (bilan.coupe)');
+    ok(p2.statut !== 'budget', 'mais le budget GLOBAL ne l\'est pas : la passe continue (' + p2.statut + ')');
+    ok((p2.etapes || {}).histo_naissances && p2.historique && p2.historique.fenetre, 'la marche historique lit sa fenetre dans sa reserve');
+    ok(((p2.etapes || {}).jetons || {}).octets <= Math.round(cout / 10) + 16 * 1024 * 1024, 'la part des jetons est tenue (une reponse de depassement au plus)');
+    tours = 0;
+    let p2b = p2;
+    while (I2.base().tous("SELECT 1 FROM jetons WHERE statut = 'a_lire'").length && tours < 30) { [p2b] = await muet(() => I2.passe()); tours++; }
+    egal(I2.base().tous("SELECT * FROM jetons WHERE statut = 'lu'").length, 3, `les 3 jetons finissent sur le cache (${tours} passes de plus)`);
+    egal((I2.base().un('SELECT smart FROM wallets WHERE adresse = ?', [A.S1]) || {}).smart, 1, 'avec le meme resultat (S1 smart)');
+    ok(p2b.statut === 'ok', 'la derniere passe finit : ' + (p2b.erreur || p2b.statut));
+    fs.rmSync(d2, { recursive: true, force: true });
+    fs.rmSync(d0, { recursive: true, force: true });
+  }
   {
     /* N5 : un SMART_RPC_URL a cle, un noeud muet : la vue publique ne contient jamais l'URL */
     const d10 = fs.mkdtempSync(path.join(os.tmpdir(), 'smart-secret-'));

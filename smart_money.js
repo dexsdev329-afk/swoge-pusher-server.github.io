@@ -138,6 +138,30 @@ const HISTO_FILE_MAX = 3000;         // la marche s'arrete tant que 3 000 jetons
    candidats « effondres » : 3 au-dessus de 1 M$ au pic (astro 7,88 M$, AGI 4,06 M$,
    Magatard 1,96 M$), 6 en dessous. CHOISI : 10 k$. */
 const HISTO_LIQ_MIN_USD = 10000;
+/* ---- LA PART DES JETONS (17/10/2026) ----
+ * Mesure de production (GET /ai/smart, 17/10 ~21:30 UTC) : 248 wallets, 0
+ * smart, 317 jetons retenus, 18 lus ; passe 3695 en « budget » (60 448 209
+ * octets, 171 requetes, 1 406 appels JSON-RPC), detail.lus 0, historique
+ * { naissances 8 535, juges 3 000, fenetre [37 904 935, 38 953 510] } ; aucune
+ * passe « ok » dans la base (passe_ok vide), « passe budget » en boucle. La
+ * marche historique passait AVANT les jetons et finissait sa fenetre ; la
+ * lecture des jetons recevait le reste, et un jeton coupe ne compte pas : 0
+ * lu par passe, donc jamais 10 projets lus pour un wallet, jamais un smart.
+ * Sonde du 17/10 (noeud public, cache vide puis chaud, sonde_histo.js) : la
+ * fenetre de production 2^20 [37 904 935, 38 953 510] coute 19 228 700 octets
+ * a froid (15 getLogs, 9 410 lignes ; l'estimation du 14/10 disait ~10 Mo), les
+ * deux suivantes 14 360 694 et 7 817 199 octets (cellules deja en cache) ; les
+ * migrations depuis le bloc 0 : 7 996 a 51 472 octets. Et un jeton coupe ne
+ * gardait pas toujours ce qu'il avait lu (recus caches au dernier lot, cellule
+ * ouverte relue entiere) : corrige dans smart_rpc (lot(), OUVERTE_MAX), meme
+ * date. D'ou : les jetons d'abord, la
+ * marche historique garde une RESERVE de 20 Mo (la fenetre la plus chere
+ * mesuree, a froid) et prend le reste ; elle peut attendre (299 jetons a
+ * lire), ce sont les acheteurs lus qui font les smart. Le budget global (60 Mo)
+ * ne bouge pas. Mesure de chaque etape en production : bilan.etapes,
+ * bilan.parJeton (passe.detail de /ai/smart). */
+const PART_HISTO_OCTETS = 20e6;
+const PAR_JETON_MAX = 40;            // lignes de bilan.parJeton gardees par passe (CHOISI : la vue reste petite)
 /* ---- L'ANALYSTE DU BRIEF (15/10/2026) ----
  * Les wallets du brief du proprietaire (smart_listes.js) sont VEILLES comme les
  * smart : leurs achats d'un jeton ne depuis 24 h entrent dans `achats_smart`.
@@ -195,6 +219,7 @@ const jsonOu = (s, d) => { try { return s == null ? d : JSON.parse(s); } catch (
  *   actions     async () -> Map adresse -> fiche (registre officiel) ; defaut actions_rh
  *   minuteries  false : aucune minuterie (les essais appellent passe/veille)
  *   lignesToutMax  remplace LIGNES_TOUT_MAX (essais : forcer la lecture par acheteur)
+ *   partHistoOctets  remplace PART_HISTO_OCTETS (essais : la reserve de la marche historique)
  */
 function cree(deps0) {
   const cfgG = (() => { try { return require('./config'); } catch (e) { return {}; } })();
@@ -347,11 +372,15 @@ function cree(deps0) {
         pic_usd: g.pic || null, pic_jour: g.picJour || null, pic_source: g.pic ? g.picSource : null, vu_t: t, source: g.pool || null });
       h.retenus++;
     };
-    /* 1. les naissances, une fenetre par passe, vers le bloc 0 */
+    /* 1. les naissances, une fenetre par passe, vers le bloc 0. Le budget du
+       noeud epuise ICI n'empeche pas les etapes 2 et 3 (DexScreener et
+       GeckoTerminal, aucun octet du noeud, leurs propres budgets) : l'erreur
+       est gardee et relancee a la fin (17/10/2026). */
     const file = (B.un("SELECT count(*) n FROM historique WHERE statut = 'a_voir'") || {}).n || 0;
     let bas = B.meta('histo_bas');
     if (bas == null) bas = P.sure + 1;
-    if (bas > 0 && file < HISTO_FILE_MAX) {
+    let arret = null;
+    if (bas > 0 && file < HISTO_FILE_MAX) await etape(bilan, 'histo_naissances', async () => {
       const de = Math.max(0, bas - HISTO_FENETRE), a = bas - 1;
       const filtres = [];
       for (const f of FABRIQUES_V2) filtres.push({ address: f, topics: [K.TOPIC.PAIR_V2, K.pad32(K.ADR.WETH)] }, { address: f, topics: [K.TOPIC.PAIR_V2, null, K.pad32(K.ADR.WETH)] });
@@ -370,11 +399,11 @@ function cree(deps0) {
         B.meta('histo_bas', de);
       });
       h.naissances = vus.size; h.fenetre = [de, a];
-    }
+    }).catch((e) => { if (!e.budget) throw e; arret = e; h.coupe = 'budget'; });
     /* 2. le jugement DexScreener : 30 jetons par appel, les plus recents d'abord */
     const marque = (j, statut, o) => B.ecris('UPDATE historique SET statut = ?, juge_t = ?, fdv = ?, liq = ?, prix = ?, pool_ds = ?, symbole = COALESCE(?, symbole), raison = ?, pic = COALESCE(?, pic) WHERE adresse = ?',
       [statut, t, o.fdv == null ? null : o.fdv, o.liq == null ? null : o.liq, o.prix == null ? null : o.prix, o.pool || null, o.symbole || null, o.raison || null, o.pic == null ? null : o.pic, j]);
-    for (let k = 0; k < HISTO_DS_LOTS; k++) {
+    await etape(bilan, 'histo_ds', async () => { for (let k = 0; k < HISTO_DS_LOTS; k++) {
       const lot = B.tous("SELECT adresse FROM historique WHERE statut = 'a_voir' ORDER BY bloc IS NULL DESC, bloc DESC LIMIT 30").map((r) => r.adresse);
       if (!lot.length) break;
       const rep = await S.jetonsDsLot(lot);
@@ -394,12 +423,12 @@ function cree(deps0) {
           /* la fdv actuelle compte, si une liquidite reelle la porte */
           if (fdv >= K.SEUIL_CAP_USD && liq >= HISTO_LIQ_MIN_USD) { retenir(j, { symbole: best.base.symbole, cap: fdv, capSource: 'dexscreener fdv (historical discovery)', pool: best.pool }); marque(j, 'retenu', o); continue; }
           if (liq >= HISTO_LIQ_MIN_USD || fdv >= SRC.PIC_CANDIDAT_USD) { marque(j, 'candidat', o); h.candidats++; continue; }
-          marque(j, 'ecarte', Object.assign(o, { raison: `liquidity $${Math.round(liq)}, fdv $${Math.round(fdv)}` }));
+          marque(j, 'ecarte', Object.assign(o, { raison: `liquidity ${Math.round(liq)}, fdv ${Math.round(fdv)}` }));
         }
       });
-    }
+    } });
     /* 3. le pic des candidats (1 OHLCV chacun), les plus liquides d'abord */
-    for (const c of B.tous("SELECT * FROM historique WHERE statut = 'candidat' ORDER BY liq DESC LIMIT " + HISTO_GT)) {
+    await etape(bilan, 'histo_gt', async () => { for (const c of B.tous("SELECT * FROM historique WHERE statut = 'candidat' ORDER BY liq DESC LIMIT " + HISTO_GT)) {
       const r = c.pool_ds ? await (S.picHisto || S.pic)(c.pool_ds, c.adresse) : null;
       if (!r) {
         if (S.etat.gt.abandon || (S.etat.gt.passeHisto || 0) >= HISTO_GT) break;   // refus ou budget : il reste candidat
@@ -411,9 +440,10 @@ function cree(deps0) {
       if (pic != null && Math.max(pic, c.fdv || 0) >= K.SEUIL_CAP_USD) {
         retenir(c.adresse, { symbole: c.symbole, pic, picJour: new Date(r.pic.t * 1000).toISOString().slice(0, 10), picSource: 'geckoterminal daily close × implied supply (historical discovery)', cap: c.fdv, capSource: 'dexscreener fdv', pool: c.pool_ds });
         marque(c.adresse, 'retenu', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, pic });
-      } else marque(c.adresse, 'ecarte', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, pic, raison: pic == null ? 'no daily close' : `peak $${Math.round(pic)}` });
-    }
+      } else marque(c.adresse, 'ecarte', { fdv: c.fdv, liq: c.liq, prix: c.prix, pool: c.pool_ds, pic, raison: pic == null ? 'no daily close' : `peak ${Math.round(pic)}` });
+    } });
     bilan.retenus = (bilan.retenus || 0) + h.retenus;
+    if (arret) throw arret;
     return h.retenus;
   }
 
@@ -945,6 +975,40 @@ function cree(deps0) {
     B.meta('lancements_jour', jour);
   }
 
+  // ---------------------------------------------------------- la mesure par etape (17/10/2026)
+  /* Ce que coute chaque etape d'une passe : octets, requetes HTTP et appels
+     JSON-RPC du noeud (compteurs de la passe, R.etat.passe), appels
+     DexScreener et GeckoTerminal (S.etat, partages avec la veille : un appel
+     de la veille pendant l'etape y est compte), duree. Ecrit dans
+     bilan.etapes et bilan.parJeton, donc dans /ai/smart (passe.detail). */
+  const compteurs = () => ({ octets: R.etat.passe.octets || 0, appels: R.etat.passe.appels || 0, rpc: R.etat.passe.rpc || 0,
+    ds: (S.etat.ds && S.etat.ds.appels) || 0, gt: (S.etat.gt && S.etat.gt.appels) || 0, t: deps.horloge() });
+  const ecart = (c0) => { const c = compteurs(); return { octets: c.octets - c0.octets, appels: c.appels - c0.appels, rpc: c.rpc - c0.rpc, ds: c.ds - c0.ds, gt: c.gt - c0.gt, ms: c.t - c0.t }; };
+  async function etape(bilan, nom, fn) {
+    const c0 = compteurs();
+    try { return await fn(); } finally {
+      const d = ecart(c0), e = bilan.etapes[nom] || (bilan.etapes[nom] = { octets: 0, appels: 0, rpc: 0, ds: 0, gt: 0, ms: 0 });
+      for (const k of Object.keys(e)) e[k] += d[k];
+    }
+  }
+  /** Une etape BORNEE : elle s'arrete quand il ne reste plus que `reserve`
+   *  octets du budget de la passe. Son arret ne tue pas la suite ; un budget
+   *  GLOBAL epuise (octets ou appels de la passe, plafond du jour) remonte, et
+   *  la suite est sautee comme avant. Rend la valeur de fn, ou null si la
+   *  part est epuisee. Une seule reponse peut depasser la part (le budget est
+   *  verifie AVANT chaque requete, smart_rpc) : la reserve la paie. */
+  async function borne(bilan, nom, reserve, fn) {
+    const b = R.etat.budget;
+    if (!b || !(b.octets > reserve)) return etape(bilan, nom, fn);
+    const global = b.octets;
+    b.octets = global - reserve;
+    try { return await etape(bilan, nom, fn); }
+    catch (e) {
+      if (e.budget !== 'octets' || R.etat.passe.octets >= global) throw e;
+      return null;
+    } finally { if (R.etat.budget === b) b.octets = global; }
+  }
+
   // ---------------------------------------------------------- la passe
   async function passe() {
     if (enCours) return { fait: 'deja' };
@@ -956,18 +1020,30 @@ function cree(deps0) {
       const debut = Math.floor(deps.horloge() / 1000);
       const bilan = { retenus: 0, pics: 0, lus: 0, statut: 'ok' };
       let P = null;
+      bilan.etapes = {}; bilan.parJeton = [];
       try {
-        await decouverte(bilan);
-        P = await R.pointe();
+        await etape(bilan, 'decouverte', () => decouverte(bilan));
+        P = await etape(bilan, 'pointe', () => R.pointe());
+        const M = await etape(bilan, 'migrations', () => migrations(P));
+        /* les jetons retenus AVANT la marche historique, dans leur part
+           (PART_HISTO_OCTETS : voir sa mesure) ; un jeton coupe par la part
+           reste « a_lire » et reprend sur le cache a la passe suivante */
+        const lus = await borne(bilan, 'jetons', deps.partHistoOctets != null ? deps.partHistoOctets : PART_HISTO_OCTETS, async () => {
+          for (const row of B.tous("SELECT * FROM jetons WHERE statut = 'a_lire' ORDER BY COALESCE(pic_usd, cap_usd, 0) DESC")) {
+            const c0 = compteurs();
+            const x = { adresse: row.adresse, symbole: row.symbole || null, fini: false };
+            if (bilan.parJeton.length < PAR_JETON_MAX) bilan.parJeton.push(x);
+            try { await litJeton(row, P, M); x.fini = true; }
+            finally { Object.assign(x, ecart(c0)); }
+            bilan.lus++;
+            B.sauve();
+          }
+          return true;
+        });
+        if (!lus) bilan.coupe = 'jetons';
         await historique(bilan, P);
-        const M = await migrations(P);
-        for (const row of B.tous("SELECT * FROM jetons WHERE statut = 'a_lire' ORDER BY COALESCE(pic_usd, cap_usd, 0) DESC")) {
-          await litJeton(row, P, M);
-          bilan.lus++;
-          B.sauve();
-        }
         recalcule();
-        await compteLancements(P, M);
+        await etape(bilan, 'lancements', () => compteLancements(P, M));
       } catch (e) {
         bilan.statut = e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur';
         bilan.erreur = masque(e.message || e).slice(0, 200);
@@ -1522,4 +1598,4 @@ function planifie(deps) {
 }
 
 module.exports = { config, cree, planifie, PASSE_MS, VEILLE_MS, RAMPES, FABRIQUES_V2, FABRIQUES_V3, NOUVEAU_S, RETRAIT_RUG, LIGNES_TOUT_MAX, HEURE_BLOCS,
-  REF_USDG_ETH, PISCINES_MAX, HISTO_FENETRE, HISTO_DS_LOTS, HISTO_GT, HISTO_FILE_MAX, HISTO_LIQ_MIN_USD };
+  REF_USDG_ETH, PISCINES_MAX, HISTO_FENETRE, HISTO_DS_LOTS, HISTO_GT, HISTO_FILE_MAX, HISTO_LIQ_MIN_USD, PART_HISTO_OCTETS };

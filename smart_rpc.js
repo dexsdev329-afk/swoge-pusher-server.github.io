@@ -106,6 +106,17 @@ const DELAI_MS = 30000;
 const RECUL_SURE = 1000;
 const CIBLE = 7000;
 const CROIT = 2;
+/* La plus longue partie FERMEE relue a chaque passe dans une cellule ouverte
+   (17/10/2026, voir lisLogs) : 2^16 blocs, ~1,9 h a 0,1034 s par bloc (sonde du
+   13/10). CHOISI : au-dessus de la fenetre de la veille (2 900 blocs, rattrapage
+   36 000 au plus) et des cycles des lancements (18 000 au plus), qui ne changent
+   donc pas ; une passe de 30 min avance la pointe de ~17 400 blocs. */
+const OUVERTE_MAX = 2 ** 16;
+/* Une cellule ouverte qui rend au moins OUVERTE_LIGNES lignes marque son
+   filtre (voir lisLogs) : CHOISI, ~1 Mo relu par passe au plus sans la marque
+   (600 a 950 octets par ligne, sondes du 13/10). Les Transfer d'un acheteur, la
+   veille et les lancements restent en dessous : leurs appels ne changent pas. */
+const OUVERTE_LIGNES = 1000;
 const L_MAX = { simple: 23, multi: 16, sansAdresse: 14 };
 const LOT = 20;                   // lots de 20 : 153 ms pour 20 recus (sonde) ; 100 : 6 refus sur 14 (communaute.js, 11/10)
 const CACHE_MAX_OCTETS = 1024 * 1024 * 1024;   // 1 Gio sur le volume : CHOISI ; au-dela on lit sans ecrire (et on le DIT : etat.cachePlein)
@@ -200,6 +211,7 @@ function cree(deps0) {
     pauses: PAUSES_MS,
     budgetAppels: BUDGET_APPELS,
     budgetOctets: BUDGET_OCTETS,
+    ouverteLignes: OUVERTE_LIGNES,
     cacheMaxOctets: CACHE_MAX_OCTETS,
     corpsMax: CORPS_MAX,
     delaiMs: DELAI_MS,
@@ -340,14 +352,22 @@ function cree(deps0) {
   }
   /** Un lot de requetes (LOT par requete HTTP). Rend les resultats dans l'ordre
    *  ({ result } ou { erreur }). */
-  async function lot(requetes) {
+  /* `surMorceau(rendus, debut)` (17/10/2026) : appele apres CHAQUE lot de 20,
+     pour cacher ce qui est lu avant qu'un budget epuise au lot suivant ne
+     jette tout. Avant, les recus d'une lecture par acheteur n'etaient caches
+     qu'a la fin du dernier lot : une passe coupee par le budget au milieu
+     relisait les memes lots a la passe suivante, sans fin (essai du 17/10,
+     smart_money.test.js 7 quinquies : les memes recus, passe apres passe). */
+  async function lot(requetes, surMorceau) {
     const out = [];
     for (let d = 0; d < requetes.length; d += LOT) {
       const morceau = requetes.slice(d, d + LOT);
       for (let k = 0; ; k++) {
         try {
           const rs = await enFile(() => Promise.all(morceau.map((q) => clientLot.request(q, { retryCount: 0 }))), true);
-          for (const r of rs) out.push(r && r.error ? { erreur: { code: r.error.code, message: masque(r.error.message || '') } } : { result: r ? r.result : null });
+          const rendus = rs.map((r) => (r && r.error ? { erreur: { code: r.error.code, message: masque(r.error.message || '') } } : { result: r ? r.result : null }));
+          out.push(...rendus);
+          if (surMorceau) surMorceau(rendus, d);
           break;
         } catch (e) {
           const x = racine(e);
@@ -410,6 +430,7 @@ function cree(deps0) {
     const g = genre(filtre);
     let lmax = Math.min(L_MAX[g], etat.lmax[g] != null ? etat.lmax[g] : 99);
     const emp = empreinte(filtre);
+    let lourde = !!cacheLit('L_' + emp + '_ouverte');   // ce filtre a deja rendu une cellule ouverte lourde (17/10)
     const st = { appels: 0, coupes: 0, coupesSansAppel: 0, refusLignes: 0, refusBlocs: 0, depuisCache: 0, lignes: 0, cellules: 0 };
     const logs = [];
     const haut = Math.min(a, o.pointe);
@@ -435,6 +456,24 @@ function cree(deps0) {
          relisait la meme queue « ouverte » a chaque passe (essai du 13/10 : 23
          appels rejoues par passe, aucune passe de 25 appels ne finissait). */
       if (!ferme && fin > haut && haut <= o.sure && c.L > 0) { st.coupes++; st.coupesSansAppel++; pile.unshift(...fils(c)); continue; }
+      /* 17/10/2026 : une cellule OUVERTE (elle finit au-dessus de la pointe
+         sure) n'est jamais cachee ; lue d'un seul appel, toute sa partie
+         fermee etait retelechargee a chaque passe. La cellule qui contient la
+         pointe couvre jusqu'a 2^23 blocs (~10 jours) : seul le plafond de
+         10 000 lignes la coupait, d'ou jusqu'a ~9,5 Mo relus par filtre et
+         par passe (947 octets par ligne de Swap v4, sonde du 13/10), cinq
+         filtres et plus pour un jeton actif (Transfer, Swap de ses piscines,
+         sorties de 0x…dead). Essai de bout en bout du 17/10
+         (smart_money.test.js, 7 quinquies) : le 1er jeton relisait les memes
+         48 899 octets (Transfer et Swap de [10 000 000, pointe]) a chaque
+         passe, 30 passes sans finir. Pour un filtre dont une cellule ouverte
+         a rendu au moins `ouverteLignes` lignes (marque `_ouverte`, ecrite une
+         fois), on descend sans appel tant que la partie fermee depasse
+         OUVERTE_MAX blocs : les enfants fermes sont lus une fois et caches,
+         seule une queue de OUVERTE_MAX blocs au plus est relue. Un filtre
+         leger (Transfer d'un acheteur, veille, lancements) ne change pas : pas
+         un appel de plus. */
+      if (!ferme && lourde && c.L > 0 && Math.min(o.sure, haut) - Math.max(debut, de) + 1 > OUVERTE_MAX) { st.coupes++; st.coupesSansAppel++; pile.unshift(...fils(c)); continue; }
       const cle = 'L_' + emp + '_L' + c.L + '_' + c.i;
       let lus = ferme ? cacheLit(cle) : null;
       if (!lus && c.L > 0) {
@@ -477,6 +516,7 @@ function cree(deps0) {
         }
         lus = Array.isArray(r.result) ? r.result : [];
         if (ferme) cacheEcrit(cle, lus);
+        else if (!lourde && lus.length >= deps.ouverteLignes && Math.min(o.sure, q1) - q0 + 1 > OUVERTE_MAX) { lourde = true; cacheEcrit('L_' + emp + '_ouverte', [lus.length]); }
       }
       st.cellules++;
       let garde = 0;
@@ -504,13 +544,13 @@ function cree(deps0) {
     const out = new Map(); const manque = [];
     const P = deps.prefixeHash + prefixe;
     for (const h of hashes) { const c = cacheLit(P + h.toLowerCase()); if (c) { out.set(h, c); etat.depuisCache++; } else manque.push(h); }
-    const rs = await lot(manque.map((h) => ({ method: methode, params: [h] })));
-    rs.forEach((r, k) => {
+    await lot(manque.map((h) => ({ method: methode, params: [h] })), (rs, d) => rs.forEach((r, k0) => {
+      const k = d + k0;
       if (!r.result) return;
       out.set(manque[k], r.result);
       const b = r.result.blockNumber == null ? null : parseInt(r.result.blockNumber, 16);
       if (sure != null && b != null && isFinite(b) && b <= sure) cacheEcrit(P + manque[k].toLowerCase(), r.result);
-    });
+    }));
     return out;
   }
   const recus = (hashes, sure) => parHash('eth_getTransactionReceipt', 'R_', hashes, sure);
@@ -542,8 +582,10 @@ function cree(deps0) {
   async function horodatages(blocs, sure) {
     const out = new Map(); const manque = [];
     for (const b of new Set(blocs)) { const c = b <= sure ? cacheLit('B_' + b) : null; if (c) out.set(b, c.t); else manque.push(b); }
-    const rs = await lot(manque.map((b) => ({ method: 'eth_getBlockByNumber', params: [hex(b), false] })));
-    rs.forEach((r, k) => { if (r.result && r.result.timestamp) { const t = parseInt(r.result.timestamp, 16); out.set(manque[k], t); if (manque[k] <= sure) cacheEcrit('B_' + manque[k], { t }); } });
+    await lot(manque.map((b) => ({ method: 'eth_getBlockByNumber', params: [hex(b), false] })), (rs, d) => rs.forEach((r, k0) => {
+      const k = d + k0;
+      if (r.result && r.result.timestamp) { const t = parseInt(r.result.timestamp, 16); out.set(manque[k], t); if (manque[k] <= sure) cacheEcrit('B_' + manque[k], { t }); }
+    }));
     return out;
   }
 
@@ -589,5 +631,5 @@ function cree(deps0) {
 module.exports = {
   cree, nouveauRythme, genre, normalise, empreinte, zeros, racine, hex, libelle,
   RefusNoeud, AbandonPasse, BudgetEpuise, MethodeInterdite, TropLourd,
-  URL_DEFAUT, ESPACE_LEGER_MS, ESPACE_LOURD_MS, RECULS_MS, PAUSES_MS, BUDGET_APPELS, BUDGET_OCTETS, PLAFOND_JOUR_HTTP, PLAFOND_JOUR_OCTETS, CORPS_MAX, RECUL_SURE, CIBLE, L_MAX, LOT, METHODES,
+  URL_DEFAUT, ESPACE_LEGER_MS, ESPACE_LOURD_MS, RECULS_MS, PAUSES_MS, BUDGET_APPELS, BUDGET_OCTETS, PLAFOND_JOUR_HTTP, PLAFOND_JOUR_OCTETS, CORPS_MAX, RECUL_SURE, CIBLE, OUVERTE_MAX, OUVERTE_LIGNES, L_MAX, LOT, METHODES,
 };
