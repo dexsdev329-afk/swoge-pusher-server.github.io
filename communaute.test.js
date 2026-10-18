@@ -55,6 +55,8 @@
  *    frais dans la vente d un autre, aucun en-tete lu pour une annonce tue.
  */
 const assert = require('assert');
+/* Le prompt d'un appel images OpenAI : JSON (generations) ou FormData (edits, avec la reference). */
+const promptDe = (b) => (b && typeof b.get === 'function' ? String(b.get('prompt') || '') : JSON.parse(b).prompt);
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -255,7 +257,8 @@ function chaine(cadence) {
   C.prendre = async (url, opt) => {
     const u = String(url);
     if (u.includes('dexscreener')) { C.dex++; return { ok: true, status: 200, json: async () => ({ pairs: [{ priceUsd: String(C.prix) }] }) }; }
-    if (u.includes('api.openai.com/v1/images')) { C.images++; C.dernierPrompt = JSON.parse(opt.body).prompt; return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: PNG.toString('base64') }], usage: { output_tokens: 6893 } }) }; }
+    /* /v1/images/edits (image de reference, x_post.js) part en multipart : le prompt se lit dans le FormData. */
+    if (u.includes('api.openai.com/v1/images')) { C.images++; C.dernierPrompt = promptDe(opt.body); return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: PNG.toString('base64') }], usage: { output_tokens: 6893 } }) }; }
     if (u.includes('api.openai.com/v1/chat')) { C.visions++; return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify({ hands: C.mains, why: 'test' }) } }] }) }; }
     if (u.includes('telegram') || u.includes('blockscout')) throw new Error('requete interdite dans l essai : ' + u);
     if (C.refus > 0) { C.refus--; C.appels.push('429'); return { ok: false, status: 429, json: async () => ({ jsonrpc: '2.0', id: 1, error: { code: 429, message: 'Too Many Requests' } }) }; }
@@ -759,7 +762,7 @@ const memes = (s, l) => s.size === l.length && l.every((a) => s.has(a));
     const J = G.fabrique({}, { imageCle: true });
     const prompts = [];
     const vrai = G.C.prendre;
-    G.C.prendre = async (u, o) => { if (String(u).includes('/v1/images')) prompts.push(JSON.parse(o.body).prompt); return vrai(u, o); };
+    G.C.prendre = async (u, o) => { if (String(u).includes('/v1/images')) prompts.push(promptDe(o.body)); return vrai(u, o); };
     const J1 = G.fabrique({}, { imageCle: true, prendre: G.C.prendre });
     const [r] = await muet(() => J1.images());
     egal(r.faites.join(','), 'nouveau,believer,paper,releve', 'quatre images, une par genre');
