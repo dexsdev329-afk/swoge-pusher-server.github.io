@@ -891,6 +891,8 @@ function etatNeuf() {
     depuis: Date.now(), tours: 0, toursDepuisOrdre: REPOS_ORDRE_TOURS,
     seuil: SEUIL, derniers: [], depuisAjustement: 0, suites: [], sortieEssais: 0,
     ombres: [], audit: {}, profils: {},
+    /* les prix d'entree bookes par jeton, 14 jours : voir `vetoRentree` */
+    entrees: {},
     /* Le coût d'aller-retour MESURÉ par case (age×mc), depuis les devis que le
        cobaye fait déjà sur les candidats — pour juger l'audit en NET, pas en
        brut. Vide au départ : l'audit reste brut tant qu'une case n'a pas de
@@ -1012,6 +1014,7 @@ function charge() {
   }
   regroupeAudit();
   centreLesNotes();
+  semeLesEntrees();
 }
 
 /* ---- UNE VALEUR APPRISE SOUS D'ANCIENNES BUTEES N'EST PAS UNE VALEUR APPRISE ----
@@ -1172,6 +1175,7 @@ function sauve() {
     if (E.flux.length > 200) E.flux = E.flux.slice(0, 200);
     if (E.journalStructure.length > 60) E.journalStructure = E.journalStructure.slice(0, 60);
     oublieLesVieuxConnus();
+    oublieLesVieillesEntrees();
     fs.mkdirSync(path.dirname(FICHIER), { recursive: true });
     fs.writeFileSync(TMP, JSON.stringify(E));
     fs.renameSync(TMP, FICHIER);
@@ -5503,6 +5507,8 @@ const FAMILLES = [
   [/^no venue can quote a real order/, 'no venue can quote a real order'],
   [/too young|trop jeune/, 'too young: set aside until it has the age'],
   [/cooling down/, 'sold recently: cooling down before buying it again'],
+  /* `vetoRentree` (18/10/2026) : la phrase porte le rapport et le prix, la famille non. */
+  [/^re-entry at [\d.]+x our lowest earlier entry/, 're-entry far above our earlier entry'],
   [/serial launcher/, 'serial launcher: several launches from the same wallet'],
   [/paying the top|on paierait le sommet|paierait l/, 'already up too far: we would be paying the top'],
   [/already down|deja tombe|deja \-/, 'already down before we even look'],
@@ -7091,6 +7097,163 @@ function recents(k, ms) {
   return (E.releves || []).filter((x) => x.k === k && x.t >= depuis);
 }
 
+/* ==========================================================================
+ * ON NE RACHETE PAS UN JETON A UNE FOIS ET DEMIE CE QU'ON L'A DEJA PAYE
+ *
+ * « Hier tu as fait un trade sur un jeton, a peu pres +40 %, puis tu as
+ *   rachete le meme jeton au double du prix. Ce n'est pas logique. »
+ *   (proprietaire, 18/10/2026 — NYD : +35,1 %, puis rachat a 1,94 fois le
+ *   premier prix d'entree, ferme a -43,1 %.)
+ *
+ * Mesure du 18/10/2026 sur le carnet papier du releve (300 trades fermes, du
+ * 13/09 au 18/10 00:30 UTC), par jeton, rapport = prix d'entree / plus bas
+ * prix d'entree anterieur sur le meme jeton :
+ *   premieres entrees    n=190  +5,8 % en moyenne, 97/190 gagnants, +1 024 $
+ *   toutes les reprises  n=110  +1,0 %, 58/110, +81 $
+ *     rapport < 1        n=56   +3,6 %, 33/56, +159 $
+ *     1 a 1,5            n=40   -0,4 %, 20/40, -14 $
+ *     1,5 a 2            n=9    -5,6 %, 4/9, -48 $
+ *     2 et plus          n=5    -4,3 %, 1/5, -17 $
+ *   1,5 et plus, ensemble : n=14, -5,1 %, 5/14 gagnants, -65 $ (SUSUTA x1,56
+ *   -46,7 %, CUDA x1,57 -37,1 %, NYD x1,94 -43,1 %, SCAN x2,63 et x3,17,
+ *   FLYBLOCKS x2,55, HOODCATS x3,17, SEED x2,30, EVRI x1,86).
+ * QUATORZE trades : c'est un PETIT echantillon, une indication et pas une
+ * preuve. La regle est donc posee a 1,5 et AUDITEE : chaque refus laisse une
+ * ombre (refus du Closer, juste avant d'ouvrir), et la ligne « closer ·
+ * re-entry far above our earlier entry » se lit contre « achete ou retenu ».
+ * Si ce qu'elle refuse monte autant que ce qu'on achete, elle coute : on la
+ * relache (COLONIE_RENTREE_MAX), on ne la defend pas.
+ *
+ * LE MEME PRIX, DE LA MEME SOURCE. `prix0` est en dollars : la relecture de
+ * la piscine du jeton juste avant d'acheter (GeckoTerminal,
+ * `base_token_price_usd`), ou, sans relecture, le prix du flux. Le garde
+ * compare EXACTEMENT cette quantite (`prixDEntree`), prise au meme point du
+ * tour, au prix booke a l'ouverture — et non au remplissage du miroir que
+ * `entreeReelle` met ensuite dans `prix0` : c'est une autre source, et la
+ * memoire de ce garde ne la melange pas. Et seulement sur la MEME piscine :
+ * MET cotait 0,000565 et 0,001619 sur deux piscines (187 % d'ecart, 9/09) ;
+ * comparer une entree d'une piscine au prix d'une autre fabriquerait un
+ * « double » qui n'a jamais eu lieu. Une autre piscine laisse passer, et se
+ * compte (`rentreeAutrePiscine`).
+ *
+ * LA MEMOIRE DURE 14 JOURS, et survit aux redemarrages (`E.entrees`, ecrit
+ * avec le reste de l'etat). Sur les 110 reprises du carnet, la plus tardive
+ * arrive 4,3 h apres l'entree la plus basse (mediane 1,4 h, p90 2,9 h) :
+ * 14 jours ne change donc AUCUN cas mesure, et suit la demande — « si tu l'as
+ * deja achete a un prix » n'a pas d'echeance de quelques heures. Au-dela de
+ * deux semaines, un jeton de quelques heures d'age a l'achat n'est plus le
+ * meme marche. Environ 80 jetons en memoire (190 premieres entrees en 35
+ * jours), dix entrees au plus par jeton, l'entree la plus basse toujours
+ * gardee.
+ *
+ * COLONIE_RENTREE_MAX regle le rapport, borne a [1,1 ; 10] ; vide, illisible
+ * ou hors bornes, 1,5. A 10, la regle ne refuse en pratique plus rien.
+ * ======================================================================== */
+const RENTREE_DEFAUT = 1.5;
+const RENTREE_BORNES = [1.1, 10];
+const RENTREE_GARDE_MS = 14 * JOUR_MS;
+const RENTREE_PAR_JETON = 10;
+const RENTREE_FAMILLE = 're-entry far above our earlier entry';
+function rentreeMax() {
+  const brut = process.env.COLONIE_RENTREE_MAX;
+  const v = (brut === undefined || String(brut).trim() === '') ? NaN : Number(brut);
+  return (isFinite(v) && v >= RENTREE_BORNES[0] && v <= RENTREE_BORNES[1]) ? v : RENTREE_DEFAUT;
+}
+/* Le prix que `ouvre` bookera : c'est lui, et lui seul, qu'on compare. */
+function prixDEntree(t) { return t && t.prixAchat > 0 ? t.prixAchat : (t ? t.prix : 0); }
+const piscineDe = (pool) => (pool ? String(pool).toLowerCase() : null);
+function entreesDe(adr, now) {
+  const M = E.entrees;
+  if (!M || typeof M !== 'object' || !adr) return [];
+  const r = M[String(adr).toLowerCase()];
+  if (!r || !Array.isArray(r.liste)) return [];
+  return r.liste.filter((x) => x && x.prix > 0 && isFinite(x.prix) && x.t > 0 && now - x.t < RENTREE_GARDE_MS);
+}
+/** Appelee par `ouvre` une fois la position poussee : le prix booke, sa piscine, son heure. */
+function noteEntreeFaite(t, prix, now) {
+  if (!t || !t.addr || !(prix > 0) || !isFinite(prix)) return;
+  if (!E.entrees || typeof E.entrees !== 'object') E.entrees = {};
+  const adr = String(t.addr).toLowerCase();
+  const r = E.entrees[adr] || (E.entrees[adr] = { sym: t.sym || '', liste: [] });
+  if (!Array.isArray(r.liste)) r.liste = [];
+  r.sym = t.sym || r.sym;
+  r.liste.push({ prix, pool: piscineDe(t.pool), t: now || Date.now() });
+  /* Dix au plus, dans l'ordre du temps : on lache la plus ancienne qui n'est
+     pas la plus basse — c'est la plus basse qui fait le plancher. */
+  while (r.liste.length > RENTREE_PAR_JETON) {
+    let iMin = 0;
+    for (let i = 1; i < r.liste.length; i++) if (r.liste[i].prix < r.liste[iMin].prix) iMin = i;
+    r.liste.splice(iMin === 0 ? 1 : 0, 1);
+  }
+}
+/* Au moment d'ecrire l'etat : ce qui a passe 14 jours s'en va. */
+function oublieLesVieillesEntrees(now) {
+  const M = E.entrees;
+  if (!M || typeof M !== 'object') { E.entrees = {}; return; }
+  now = now || Date.now();
+  for (const adr of Object.keys(M)) {
+    const r = M[adr];
+    if (!r || !Array.isArray(r.liste)) { delete M[adr]; continue; }
+    r.liste = r.liste.filter((x) => x && x.prix > 0 && x.t > 0 && now - x.t < RENTREE_GARDE_MS);
+    if (!r.liste.length) delete M[adr];
+  }
+}
+const ilYa = (ms) => ms < 3600e3 ? Math.max(0, Math.round(ms / 60000)) + ' min ago'
+  : ms < 2 * JOUR_MS ? Math.round(ms / 3600e3 * 10) / 10 + ' h ago' : Math.round(ms / JOUR_MS * 10) / 10 + ' days ago';
+/* ---- UN ETAT D'AVANT LE GARDE ----
+ * Il n'a pas de `E.entrees`. Les positions ouvertes portent ce qu'il faut — le
+ * prix booke (`prixPapier` si le miroir l'a remplace, `prix0` sinon), la
+ * piscine, l'heure — et c'est la que se jouent les reprises (toutes sous
+ * 4,3 h, voir plus haut). Le carnet, lui, ne garde pas la piscine : il n'est
+ * pas seme, plutot que de comparer sans savoir sur quelle piscine. Une fois. */
+function semeLesEntrees() {
+  if (E.entreesSemees) return;
+  if (!E.entrees || typeof E.entrees !== 'object') E.entrees = {};
+  for (const p of (E.positions || [])) {
+    if (!p || !p.adr || entreesDe(p.adr, Date.now()).length) continue;
+    const prix = p.prixPapier > 0 ? p.prixPapier : p.prix0;
+    noteEntreeFaite({ addr: p.adr, sym: p.sym, pool: p.pool }, prix, p.t0 || Date.now());
+  }
+  E.entreesSemees = true;
+}
+/** Le garde : la phrase du refus, ou null. Rien d'appele ; seule une autre piscine se compte. */
+function vetoRentree(t, now) {
+  now = now || Date.now();
+  const prix = prixDEntree(t);
+  if (!t || !t.addr || !(prix > 0) || !isFinite(prix)) return null;
+  const toutes = entreesDe(t.addr, now);
+  if (!toutes.length) return null;
+  const pool = piscineDe(t.pool);
+  const memes = toutes.filter((x) => (x.pool || null) === pool);
+  if (!memes.length) { compte('rentreeAutrePiscine'); return null; }
+  const bas = memes.reduce((a, b) => (b.prix < a.prix ? b : a));
+  const ratio = prix / bas.prix;
+  const max = rentreeMax();
+  if (!isFinite(ratio) || ratio < max) return null;
+  return 're-entry at ' + ratio.toFixed(2) + 'x our lowest earlier entry on this token ($'
+       + Number(bas.prix.toPrecision(3)) + ', ' + ilYa(now - bas.t) + '): ' + max + 'x at most — '
+       + 'measured 18/10 on 14 re-entries at 1.5x or more: 5 winners, -5.1% on average';
+}
+/** Ce que la page et le releve montrent : le reglage, les refus, et la ligne contre la reference. */
+function rentreeBilan() {
+  const c = E.compteurs || {};
+  const A = E.audit || {};
+  const lig = (cle) => { const a = A[cle];
+    return { cle, n: a ? a.n : 0,
+      partMontes: a && a.n ? Math.round(a.montes / a.n * 100) : null,
+      moyenne: a && a.n ? Math.round(a.s / a.n * 10) / 10 : null,
+      nStrat: a ? a.nStrat || 0 : 0, strat: a && a.nStrat ? Math.round(a.strat / a.nStrat * 10) / 10 : null }; };
+  const ligne = lig('closer · ' + RENTREE_FAMILLE), reference = lig('achete ou retenu');
+  return { max: rentreeMax(), gardeJours: RENTREE_GARDE_MS / JOUR_MS,
+    jetons: Object.keys(E.entrees || {}).length,
+    vus: c.rentreeVue || 0, refus: c.rentreeRefusee || 0, autrePiscine: c.rentreeAutrePiscine || 0,
+    ligne, reference, min: AUDIT_MIN_OBS,
+    /* sous AUDIT_MIN_OBS ombres jugees, on ne conclut pas */
+    verdict: (ligne.n < AUDIT_MIN_OBS || reference.n < AUDIT_MIN_OBS) ? 'unknown'
+      : ligne.partMontes >= reference.partMontes + 10 ? 'costs'
+      : ligne.partMontes <= reference.partMontes - 15 ? 'protects' : 'same' };
+}
+
 /* ---- DEUX AGENTS OUVRENT ----
  * Le Closer dit oui et tient la duree qu'il a apprise ; le Banquier dit
  * combien, et sa raison part avec la position. Elle voyagera jusqu'a la
@@ -7172,6 +7335,8 @@ function ouvre(t) {
     /* L'essai des jeunes (27/09) : a relire a part dans le carnet. */
     exploration: t.exploration || null,
   });
+  /* Le prix booke ICI, avant tout remplissage du miroir : voir `vetoRentree`. */
+  noteEntreeFaite(t, prix0, E.positions[E.positions.length - 1].t0);
   if (t.exploration === 'jeune') { E.jeuneDernier = Date.now(); compte('jeuneAchete'); }
   {
     const dm = devisManquant(t);
@@ -10682,6 +10847,17 @@ async function tour() {
           }
         } catch (e) { compte('deriveNonLue'); }
       }
+      /* ---- LE RACHAT TROP AU-DESSUS DE CE QU'ON A DEJA PAYE ----
+       * Apres la relecture, pas avant : le garde compare le prix que `ouvre`
+       * bookerait (`prixDEntree`) au plus bas prix deja booke sur ce jeton et
+       * cette piscine. Refus du Closer, donc ombre et ligne d'audit comme les
+       * autres gardes ; et sans `ouvre`, aucun signal d'achat, donc aucun
+       * ordre du miroir. Voir `vetoRentree` (18/10/2026, n=14). */
+      if (!refus) {
+        compte('rentreeVue');
+        const rr = vetoRentree(t);
+        if (rr) { refus = rr; quiRefuse = 'closer'; compte('rentreeRefusee'); }
+      }
       /* La sonde DexScreener des 4-10 min : mesure seule, apres le verdict,
          qui ne change pas. Voir `sondeDexJeune`. */
       if (refus && sondesDex < DEX_SONDE_PAR_TOUR && t.saute && t.saute.dex
@@ -10993,6 +11169,8 @@ function vue() {
        qu'ils deviennent (rapport du 27/09, proposition 4). */
     nonIndexe: nonIndexeBilan(),
     sondeAge: sondeAgeBilan(),
+    /* Le rachat a 1,5 fois et plus de l'entree la plus basse (18/10) : reglage, refus, ligne contre la reference. */
+    rentree: rentreeBilan(),
     /* ---- LES JEUX DE REGLES QUI COURENT EN PARALLELE ----
        Ils ne tradent rien : ils rejouent les memes ombres et disent ce qu'ils
        auraient rendu. C'est ce qui remplace seize trades mesures a la main par
@@ -11233,6 +11411,8 @@ function arrete() {
 module.exports = {
   portefeuilles: PF,
   sondeDexAge, sondeAgeBilan, noteSondeAge, SONDE_AGE_LIGNES, DEX_SONDE_AGE_PAR_TOUR,
+  vetoRentree, rentreeMax, rentreeBilan, noteEntreeFaite, oublieLesVieillesEntrees, prixDEntree,
+  RENTREE_DEFAUT, RENTREE_GARDE_MS, RENTREE_FAMILLE,
   soumets, soumissions, etatSoumission, SOUMIS, SOUMIS_PAR_TOUR, SOUMIS_FILE_MAX, SOUMIS_PAR_JOUR, SOUMIS_ESSAIS,
   budgetCg, cleDansLeBudget,
   epreuveDeSortie,

@@ -8729,6 +8729,133 @@ async function baleineParTranche() {
   ok(C._etat().compteurs.scoutVu === 425488, 'et une seconde relecture n y touche plus');
 }
 
+/* ==========================================================================
+ * ON NE RACHETE PAS A 1,5 FOIS CE QU'ON A DEJA PAYE (18/10/2026)
+ *
+ * « Tu as fait +40 % sur un jeton, puis tu l'as rachete au double. » Carnet du
+ * 18/10 : 14 reprises a 1,5 fois et plus de l'entree la plus basse, -5,1 % en
+ * moyenne, 5 gagnants. Le garde refuse, sur la MEME piscine et au MEME prix
+ * que celui que `ouvre` bookerait ; il laisse une ombre, donc une ligne
+ * d'audit ; et un refus du papier ne donne aucun ordre au miroir.
+ * ======================================================================== */
+async function rachatAuDouble() {
+  console.log('\n-- on ne rachete pas un jeton a 1,5 fois ce qu on l a deja paye --');
+  remise(sains());
+  let E = C._etat();
+  const now = Date.now();
+  const A = '0x' + 'ab'.repeat(20), P = '0x' + 'cd'.repeat(20);
+  const tj = (o) => Object.assign({ addr: A, sym: 'NYD', pool: P, prix: 1 }, o || {});
+  ok(C.rentreeMax() === 1.5 && C.RENTREE_DEFAUT === 1.5, 'le rapport par defaut est 1,5');
+  ok(C.vetoRentree(tj(), now) === null, 'premiere entree : rien en memoire, rien a refuser');
+  C.noteEntreeFaite(tj(), 1, now - 3600e3);
+  ok(C.vetoRentree(tj({ prix: 1.4 }), now) === null, 'reprise a 1,4 fois : achetee (40 reprises de 1 a 1,5 : -0,4 %, ce n est pas le cas mesure)');
+  const r15 = C.vetoRentree(tj({ prix: 1.5 }), now);
+  ok(/^re-entry at 1\.50x/.test(r15 || ''), 'reprise a 1,5 fois : refusee « ' + r15 + ' »');
+  ok(C._familleRefus(r15) === C.RENTREE_FAMILLE && C._familleRefus(C.RENTREE_FAMILLE) === C.RENTREE_FAMILLE,
+     'le refus a sa famille dans l audit, et la famille se rend a elle-meme (le regroupement ne la deforme pas)');
+  ok(C.vetoRentree(tj({ prix: 2 }), now) !== null, 'reprise au double : refusee (NYD, 1,94 fois, -43,1 %)');
+  ok(C.vetoRentree(tj({ prix: 0.8 }), now) === null, 'reprise a 0,8 fois : achetee (56 reprises sous l entree : +3,6 %)');
+  /* Le prix compare est celui que `ouvre` bookerait : la relecture d abord. */
+  ok(C.vetoRentree(tj({ prix: 1.2, prixAchat: 1.6 }), now) !== null && C.vetoRentree(tj({ prix: 1.8, prixAchat: 1.3 }), now) === null,
+     'le prix compare est la relecture quand elle existe, sinon le flux — la meme quantite que `prix0`');
+  const autres0 = (E.compteurs.rentreeAutrePiscine || 0);
+  ok(C.vetoRentree(tj({ prix: 3, pool: '0x' + 'ef'.repeat(20) }), now) === null && E.compteurs.rentreeAutrePiscine === autres0 + 1,
+     'une AUTRE piscine ne se compare pas (MET : 187 % entre deux piscines) — elle passe, et se compte');
+  /* Le reglage : borne, et illisible vaut le defaut. */
+  for (const [v, att] of [['2', 2], ['abc', 1.5], ['', 1.5], ['50', 1.5], ['1.05', 1.5], ['1.1', 1.1], ['10', 10]]) {
+    process.env.COLONIE_RENTREE_MAX = v;
+    ok(C.rentreeMax() === att, 'COLONIE_RENTREE_MAX=« ' + v + ' » → ' + C.rentreeMax());
+  }
+  process.env.COLONIE_RENTREE_MAX = '2';
+  ok(C.vetoRentree(tj({ prix: 1.5 }), now) === null && C.vetoRentree(tj({ prix: 2 }), now) !== null, 'et le garde lit le reglage');
+  delete process.env.COLONIE_RENTREE_MAX;
+  /* La memoire : 14 jours, puis rien. */
+  const rec = E.entrees[A].liste[0];
+  rec.t = now - C.RENTREE_GARDE_MS + 60000;
+  ok(C.vetoRentree(tj({ prix: 2 }), now) !== null, 'a 14 jours moins une minute, l entree compte encore');
+  rec.t = now - C.RENTREE_GARDE_MS - 1;
+  ok(C.vetoRentree(tj({ prix: 2 }), now) === null, 'passe 14 jours, elle ne compte plus');
+  C.oublieLesVieillesEntrees(now);
+  ok(!E.entrees[A], 'et elle sort de l etat a l ecriture');
+  /* Dix entrees au plus, la plus basse toujours gardee. */
+  C.noteEntreeFaite(tj(), 0.5, now - 5000);
+  for (let i = 0; i < 12; i++) C.noteEntreeFaite(tj(), 1 + i / 10, now - 4000 + i);
+  ok(E.entrees[A].liste.length === 10 && E.entrees[A].liste.some((x) => x.prix === 0.5),
+     'dix entrees par jeton au plus, et la plus basse reste : c est elle qui fait le plancher');
+
+  console.log('\n-- dans le tour : refus du Closer, ombre, et aucun ordre du miroir --');
+  remise(sains());
+  const achats = [];
+  C.poseMiroir({ surAchat: async (x) => { achats.push(x.adr); return 0; }, surVente: async () => 0 });
+  MONDE.piscineDerive = 1.05;            /* la relecture cote 5 % au-dessus du flux */
+  await C.tour();
+  E = C._etat();
+  const p = E.positions[0];
+  ok(!!p && E.entrees[p.adr] && E.entrees[p.adr].liste.length === 1 && E.entrees[p.adr].liste[0].prix === p.prix0
+     && Math.abs(p.prix0 - 1.05) < 1e-9 && E.entrees[p.adr].liste[0].pool === String(p.pool).toLowerCase(),
+     'l ouverture garde le prix booke (' + (p && p.prix0) + ', la relecture), sa piscine et son heure');
+  const adr = p.adr;
+  ok(achats.indexOf(adr) >= 0, 'la premiere entree est bien envoyee au miroir : le faux miroir ecoute');
+  C.sauve();
+  C._pose(C.etatNeuf());
+  ok(!C._etat().entrees[adr], 'coupure : en memoire, plus rien');
+  C.charge();
+  E = C._etat();
+  ok(!!E.entrees[adr] && E.entrees[adr].liste[0].prix === p.prix0, 'relu du disque : la memoire des entrees survit au redemarrage');
+  /* Un etat d'avant le garde : pas de memoire, des positions ouvertes. */
+  delete E.entrees; delete E.entreesSemees;
+  C.sauve();
+  C._pose(C.etatNeuf());
+  C.charge();
+  E = C._etat();
+  ok(!!E.entrees[adr] && E.entrees[adr].liste[0].prix === p.prix0 && E.entreesSemees === true,
+     'un etat d avant le garde seme sa memoire depuis les positions ouvertes, une fois');
+  const pos = E.positions.find((x) => x.adr === adr);
+  C._ferme(pos, pos.prix0 * 1.4, Date.now(), { par: 'closer' });
+  E.positions = E.positions.filter((x) => x !== pos);     /* `ferme` laisse le retrait a l appelant */
+  /* Le repos apres vente (60 min) est un autre garde : on le laisse passer. */
+  E.connus[adr].vendu = Date.now() - (C.REACHAT_REPOS_MIN + 1) * 60000;
+  E.connus[adr].dernier = 0;
+  const tm = MONDE.jetons.find((x) => x.addr === adr);
+  tm.prix = 2;                           /* relu a 2,10 : 2 fois l entree booke */
+  for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
+  const achatsAvant = achats.filter((a) => a === adr).length;
+  await C.tour();
+  E = C._etat();
+  const cand = (E.candidats || []).find((c) => c.addr === adr);
+  ok(!E.positions.some((x) => x.adr === adr), 'au double, le papier n ouvre pas');
+  ok(!!cand && cand.quiRefuse === 'closer' && /^re-entry at 2\.00x/.test(cand.refus || ''),
+     'le refus est celui du Closer : « ' + (cand && cand.refus) + ' »');
+  await new Promise((r) => setTimeout(r, 50));
+  ok(achats.filter((a) => a === adr).length === achatsAvant,
+     'et le miroir ne recoit AUCUN achat : sans ouverture, pas de signal, donc pas d ordre reel');
+  const ombre = E.ombres.find((o) => o.adr === adr && o.quiRefuse === 'closer');
+  ok(!!ombre, 'le refus laisse une ombre : on saura ce que la reprise aurait fait');
+  ombre.t = Date.now() - C.HORIZON_REF * 60000;
+  C.regleLesOmbres({ [adr]: { prix: 2.6, liq: 50000 } });
+  const CLE = 'closer · ' + C.RENTREE_FAMILLE;
+  ok(!!E.audit[CLE] && E.audit[CLE].n === 1 && E.audit[CLE].montes === 1,
+     'et sa ligne d audit « ' + CLE + ' » : ' + JSON.stringify(E.audit[CLE]));
+  C._noteAudit(CLE, -40); C._noteAudit(CLE, 5);
+  ok(C.auditComplet().some((x) => x.cle === CLE), 'la ligne est dans l audit complet, a cote de la reference');
+  const b = C.vue().rentree;
+  ok(!!b && b.max === 1.5 && b.gardeJours === 14 && b.refus >= 1 && b.ligne.n === 3 && b.verdict === 'unknown',
+     'la vue la montre, et refuse de conclure sur ' + (b && b.ligne.n) + ' ombres (moins de ' + (b && b.min) + ') : ' + JSON.stringify(b));
+  /* A 1,4 fois, la reprise passe. */
+  tm.prix = 1.4 / 1.05;                  /* relu a 1,40 : 1,33 fois l entree */
+  E.connus[adr].vendu = Date.now() - (C.REACHAT_REPOS_MIN + 1) * 60000;
+  E.connus[adr].dernier = 0;
+  for (const k of Object.keys(C._cache)) for (const j of Object.keys(C._cache[k])) delete C._cache[k][j];
+  await C.tour();
+  E = C._etat();
+  const c133 = (E.candidats || []).find((c) => c.addr === adr);
+  ok(E.positions.some((x) => x.adr === adr), 'a 1,33 fois l entree, le papier rachete ('
+     + (c133 ? (c133.refus || 'achete') : 'pas examine') + ')');
+  ok(achats.filter((a) => a === adr).length === achatsAvant + 1, 'et cette reprise-la part au miroir, elle');
+  C.poseMiroir(null);
+  MONDE.piscineDerive = 0;
+}
+
 (async () => {
   await isolement();
   await apprendreDesMorts();
@@ -8844,6 +8971,7 @@ async function baleineParTranche() {
   await banquePapierLitLaColonie();
   await signalDuBrief();
   await signauxDuBriefV2();
+  await rachatAuDouble();
   C.arrete();
   try { fs.rmSync(DOSSIER, { recursive: true, force: true }); } catch (e) {}
   console.log('\n' + (rates ? 'RATES : ' + rates + '/' + n : 'tout passe : ' + n + ' verifications'));

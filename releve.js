@@ -39,6 +39,11 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   console.log('audit cap ', marge(/buy ceiling|cap below/));
   console.log('audit pisc', marge(/pool below|nothing to sell/));
   console.log('portes    ', marge(/too volatile|too few public|round trip too costly/) || '(rien encore)');
+  /* Le rachat a 1,5 fois et plus de l entree la plus basse (18/10, n=14 au carnet) : sa ligne contre la reference. */
+  const RT = d.rentree;
+  if (RT) console.log('rachat    ', `max x${RT.max} · memoire ${RT.gardeJours} j, ${RT.jetons} jetons · refus ${RT.refus}/${RT.vus} (autre piscine ${RT.autrePiscine})`
+    + ` · ligne n=${RT.ligne.n} montes=${RT.ligne.partMontes ?? '—'}% moy=${RT.ligne.moyenne ?? '—'} strat=${RT.ligne.strat ?? '—'}`
+    + ` · reference ${RT.reference.partMontes ?? '—'}% · verdict ${RT.verdict} (sous ${RT.min} ombres, aucun)`);
   /* Les moins de 4 min selon DexScreener (mesure seule, 28/09) et les portefeuilles juges. */
   const SA = d.sondeAge;
   if (SA) console.log('jeunes<4  ', SA.lignes.map((l) => `${l.nom} n=${l.n} ${l.partMontes ?? '—'}%`).join(' | ') + ` · ligne entiere n=${SA.ligneEntiere.n} ${SA.ligneEntiere.partMontes ?? '—'}%`);
