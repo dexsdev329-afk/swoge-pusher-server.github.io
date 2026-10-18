@@ -2101,6 +2101,15 @@ async function lisDex(addr, opt) {
     const j = await json('https://api.dexscreener.com/latest/dex/tokens/' + addr);
     const p = (j.pairs || []).filter((x) => String(x.chainId || '').toLowerCase() === 'robinhood');
     noteService('dex', true);
+    /* Le prix natif de chaque paire, et son facteur en dollars : ce que la
+       lecture de chaine (prix_chaine.js) compare et convertit. Aucun appel de
+       plus ; eteinte, elle ne retient rien. */
+    for (const x of p) {
+      try {
+        PRIX_CHAINE.noteDex({ pool: x.pairAddress, usd: nn(x.priceUsd), natif: nn(x.priceNative),
+          eth: coteEnEth(x.quoteToken ? { sym: x.quoteToken.symbol || '', adr: String(x.quoteToken.address || '').toLowerCase() } : null) === true });
+      } catch (e) { /* une observation ne casse jamais une lecture */ }
+    }
     if (!p.length) return garde2({ vu: false });
     p.sort((a, b) => nn(b.liquidity && b.liquidity.usd) - nn(a.liquidity && a.liquidity.usd));
     /* La piscine demandee si elle est la, la plus profonde sinon. */
@@ -5099,15 +5108,25 @@ function casSortie(r) {
 /* Faut-il prendre le gain maintenant ? Son propre releve decide ; sans releve
    il essaie une fois sur trois, comme le Promoteur — assez pour apprendre, pas
    assez pour vendre tout ce qui monte. */
-function veutPrendre(p, r) {
+/* L'avis, sans le tirage : `sur` quand le releve decide, sinon c'est un essai
+   (une fois sur trois). Coupe en deux le 17/10 pour que la lecture de chaine
+   (prix_chaine.js) rejoue la MEME regle sans faire avancer le compteur des
+   essais — le comportement de `veutPrendre` est inchange. */
+function avisDePrise(p, r) {
   if (r < GAIN_EXPLORE) return null;
   const cas = casSortie(r);
   const avis = ajustementAgent('sentinelle', cas);
-  if (avis > 0.5) return cas;
+  if (avis > 0.5) return { cas, sur: true };
   if (avis < -0.5) return null;
   if (nObs('sentinelle') >= 8 && memLit('sentinelle', 'sortie', cas.sortie)) return null;
+  return { cas, sur: false };
+}
+function veutPrendre(p, r) {
+  const a = avisDePrise(p, r);
+  if (!a) return null;
+  if (a.sur) return a.cas;
   E.sortieEssais = (E.sortieEssais || 0) + 1;
-  return (E.sortieEssais % 3 === 0) ? cas : null;
+  return (E.sortieEssais % 3 === 0) ? a.cas : null;
 }
 
 /* On note ce qu'on vient de prendre, et QUAND il faudra revenir voir. */
@@ -7652,6 +7671,16 @@ function vendUneTranche(p, r, part, quand, pourquoi) {
   return true;
 }
 
+/* Les paliers que `r` franchit et que la position n'a pas encore vendus, dans
+   l'ordre — sans rien vendre. Sorti de `joueEchelle` le 17/10 pour que la
+   lecture de chaine rejoue la meme echelle ; `joueEchelle` est inchange. */
+function paliersFranchis(p, r) {
+  const E2 = echelle();
+  if (!E2.actif) return [];
+  const deja = p.paliers || {};
+  return [{ k: '1', a: E2.p1, v: E2.v1 }, { k: '2', a: E2.p2, v: E2.v2 }, { k: '3', a: E2.p3, v: E2.v3 }]
+    .filter((n) => !deja[n.k] && n.a > 0 && r >= n.a);
+}
 /* Les paliers atteints ce tour-ci, dans l'ordre. Rend `true` s'il ne reste
    plus rien a tenir. */
 function joueEchelle(p, r, quand) {
@@ -7659,11 +7688,9 @@ function joueEchelle(p, r, quand) {
   if (!E2.actif) return false;
   if (p.reste === undefined) p.reste = 1;
   if (!p.paliers) p.paliers = {};
-  const niveaux = [{ k: '1', a: E2.p1, v: E2.v1 }, { k: '2', a: E2.p2, v: E2.v2 },
-                   { k: '3', a: E2.p3, v: E2.v3 }];
-  for (const n of niveaux) {
-    if (p.paliers[n.k] || !(n.a > 0) || r < n.a) continue;
+  for (const n of paliersFranchis(p, r)) {
     p.paliers[n.k] = true;
+    try { PRIX_CHAINE.palierReel(p, n.k, r, quand); } catch (e) { /* observation seule */ }
     vendUneTranche(p, r, n.v / 100, quand, 'palier +' + n.a + '%');
   }
   return p.reste <= 0.001;
@@ -7742,8 +7769,22 @@ function capQuiDiverge(p, prix, mcSource) {
   return (f > 1 + CAP_ECART || f < 1 - CAP_ECART) ? { mc: mcSource, part: Math.round(f * 100) } : null;
 }
 
+/* La regle qui a ferme, lue dans ce que `regle` et le Veilleur ecrivent : la
+   lecture de chaine apparie sa propre premiere fois a celle-la. */
+function regleDeSortie(comment) {
+  const c = comment || {};
+  const raison = String(c.raison || '');
+  if (/^trailing stop/.test(raison)) return 'arret suiveur';
+  if (/^down \d+% since entry|^the pool went from/.test(raison)) return 'sol coupe';
+  if (/^gain taken/.test(raison)) return 'gain pris';
+  if (/^last rung/.test(raison)) return 'dernier palier';
+  if (c.par === 'closer' && !raison) return 'echeance';
+  return 'autre';
+}
 function ferme(p, prix, quand, comment) {
   let r = (prix - p.prix0) / p.prix0 * 100;
+  /* Observation seule : la ligne d'audit de la lecture de chaine. */
+  if (isFinite(r)) { try { PRIX_CHAINE.sortieReelle(p, regleDeSortie(comment), r, quand); } catch (e) { /* rien */ } }
   let aberrant = null;
   /* ---- UN DEVIS N'EST PAS UNE LECTURE DE COURS ----
    * `REND_MIN` ecarte les -100 % parce qu'ils viennent presque toujours d'un
@@ -10861,6 +10902,9 @@ function vue() {
        hors de `audit` (ce n'est pas un refus : la page la lirait comme une
        regle). Voir `smartVue`. */
     smartSignal: smartVue(),
+    /* La lecture de chaine des positions (17/10) : son audit, a part de
+       `audit` pour la meme raison — ce n'est pas un refus. */
+    prixChaine: PRIX_CHAINE.vue(nomNoeudPrixChaine()),
     pousses: { pons: poussesPour('pons', PONS_PAR_TOUR), hood: poussesPour('hood', PADS_PAR_TOUR), secretpad: poussesPour('secretpad', PADS_PAR_TOUR) },
     traits: classementDesTraits().slice(0, 12),
     horizons: HORIZONS, horizonRef: HORIZON_REF,
@@ -11044,6 +11088,37 @@ function remiseAZero(pourquoi) {
   return true;
 }
 
+/* ==========================================================================
+ * LA LECTURE DE CHAINE DES POSITIONS OUVERTES (17/10/2026) — OBSERVATION SEULE
+ *
+ * Voir prix_chaine.js pour la mesure et la conversion. Eteinte par defaut ;
+ * COLONIE_PRIX_CHAINE=observe l'allume. Elle rejoue les regles de sortie de
+ * CE fichier (coupe, paliers, arret suiveur, gain pris), jamais recopiees, sur
+ * une copie des champs de la position, et ne ferme rien.
+ *
+ * Le noeud : celui de tete de la colonie (RPC_SECOURS quand il est pose — un
+ * debit qui nous appartient —, sinon le noeud officiel), lu par ses propres
+ * appels : ni l'espacement `n.dernier` du tour, ni le releve `E.services` ne
+ * bougent, sinon une mesure changerait la rotation des noeuds qu'elle mesure.
+ * Les journaux v4 (une lecture par position) vont au noeud officiel, qui sert
+ * dix millions de blocs (mesure du 17/10).
+ * ======================================================================== */
+const PRIX_CHAINE = require('./prix_chaine').cree({
+  env: process.env,
+  etat: () => E,
+  positions: () => E.positions || [],
+  regles: { danger: dangerSentinelle, suiveur: arretSuiveur, paliers: paliersFranchis, prise: avisDePrise,
+            min: REND_MIN, max: REND_MAX },
+  noeud: () => { const l = noeuds(); return l.filter((n) => !noeudMort(n))[0] || l[0]; },
+  noeudJournaux: () => NOEUD_OFFICIEL,
+});
+/* Le nom du noeud, jamais son adresse : celle de RPC_SECOURS porte la cle. */
+function nomNoeudPrixChaine() {
+  const l = noeuds(); const n = l.filter((x) => !noeudMort(x))[0] || l[0];
+  if (!n) return null;
+  return n.cle === 'chaine' ? 'official public node' : n.cle === 'chaine2' ? SECOURS_NOM : 'keyed dRPC node';
+}
+
 let minuteur = null;
 /* ==========================================================================
  * LE VEILLEUR : REGARDER SOUVENT, NE RIEN DECIDER
@@ -11145,10 +11220,14 @@ function demarre() {
      cadence du tour, ce qui est exactement le probleme qu'il repare. */
   veilleur = setInterval(() => { veille().catch(() => {}); }, VEILLE_MS);
   if (veilleur.unref) veilleur.unref();
+  /* La lecture de chaine, seulement sur COLONIE_PRIX_CHAINE=observe. */
+  if (PRIX_CHAINE.demarre()) console.log('[ai] lecture de chaine des positions : observe, toutes les '
+    + PRIX_CHAINE.reglages().ms + ' ms, ' + PRIX_CHAINE.reglages().maxMin + ' appels/min au plus');
 }
 function arrete() {
   if (minuteur) { clearInterval(minuteur); minuteur = null; }
   if (veilleur) { clearInterval(veilleur); veilleur = null; }
+  PRIX_CHAINE.arrete();
 }
 
 module.exports = {
@@ -11200,7 +11279,8 @@ module.exports = {
   rejoue, cleAudit, noteAuditStrat, CHUTE_COUPE, HORIZON_REF,
   lisSecretpad, lisHood, annotePads, poussePads, SECRETPAD_LANCEUR, SUJET_SECRETPAD_LANCE, HOOD_URL, PADS_PAR_TOUR,
   casSentinelle, dangerSentinelle, veutProlonger, casPromoteur, prixFrais, posePrix,
-  veutPrendre, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
+  veutPrendre, avisDePrise, casSortie, noteSuite, regleLesSuites, GAIN_EXPLORE,
+  prixChaine: PRIX_CHAINE, paliersFranchis, regleDeSortie,
   noteOmbre, regleLesOmbres, auditDesRefus, OMBRE_TENUE_MIN, OMBRE_DISPARUE, OMBRE_SILENCES,
   noteProfil, courbeDe, horizonPour, informationDe, classementDesTraits,
   vetoOracle, vetoScout, vetoWarden, vetoWhale, vetoWhisper, VETOS, sociauxMin, volaMax,

@@ -314,6 +314,7 @@ lance_monde ville       ville.test.js
 lance_monde xp          xp.test.js
 lance_monde zones       zones.test.js
 lance_monde annmonde    annonces_monde.test.js     # les quatre chemins d une ligne complete, les quatre portes, faux Telegram
+lance prixch  "$SRV" node prix_chaine.test.js   # la lecture de chaine des positions (17/10, lot 1) : lecteurs v2/v3/v4 sur une fausse chaine, eteinte par defaut, rien sans position, position GELEE jamais ecrite, plafond par minute, delai, 429, audit du suiveur N s avant le tour
 lance miroir  "$SRV" node miroir.test.js
 lance reel    "$SRV" node miroir_reel.test.js
 [ $VITE -eq 1 ] || lance page "$SITE" node ai_colonie.test.js

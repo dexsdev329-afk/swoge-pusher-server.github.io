@@ -55,6 +55,12 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
     }
     console.log('smart     ', `mode ${SG.mode} · porte ${SG.porte && SG.porte.ouverte ? 'OUVERTE' : 'fermee : ' + ((SG.porte && SG.porte.raisons) || []).join(' ; ')} · en attente ${SG.enAttente} · ombres ${SG.ombres}`);
   }
+  /* La lecture de chaine des positions (17/10) : l ecart et le retard de DexScreener, et par regle ce
+     qu une sortie sur la chaine aurait change. Observation seule, verdict refuse sous 100. */
+  const PC = d.prixChaine;
+  if (PC) console.log('chaine    ', `mode ${PC.mode} · ecart med ${PC.ecart.medianePct ?? '—'}% p90 ${PC.ecart.p90Pct ?? '—'}% (n=${PC.ecart.n})`
+    + ` · retard ${PC.retard.minMedianS ?? '—'}-${PC.retard.maxMedianS ?? '—'} s (n=${PC.retard.n}, a jour ${PC.retard.aJour})`
+    + ` · ${(PC.audit || []).map((a) => `${a.regle} n=${a.n}/${PC.assez} avance=${a.avanceMediane ?? '—'}s pts=${a.ptsMoyen ?? '—'}`).join(' | ') || 'aucune sortie appariee'}`);
   const PFv = d.portefeuilles;
   if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};
