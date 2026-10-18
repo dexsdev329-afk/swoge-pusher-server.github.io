@@ -196,6 +196,7 @@ lance baselanc "$SRV" node base_lancements.test.js   # lancements Base (Clanker,
 lance actions  "$SRV" node actions_rh.test.js   # actions tokenisees : l officielle contre la copie (liste Robinhood), ecart piscine/Chainlink sans republier la valeur de l oracle
 lance relx402  "$SRV" node releve_x402.test.js   # experience de prix : baisses contre temoins avant/apres, exterieur seul, jour mele exclu, rien sous 1 000 demandes
 lance lecturesrh "$SRV" node lectures_rh.test.js   # robinhood_rpc/token/wallet/tx : lecture seule, bornes, le seau (la colonie d abord), decodage sur un faux noeud aux vrais encodages
+lance relaisrpc "$SRV" node relais_rpc.test.js   # /rpc/rh (18/10) : liste fermee (eth_sendRawTransaction jamais transmis, meme dans un lot), corps 128 Kio, lot 25, plage 10 M blocs, debit par IP et global, UN seul en-tete CORS quand le noeud en envoie deux, erreurs du noeud telles quelles, cache des seules plages fermees, URL du noeud jamais rendue, route du vrai serveur
 lance chatx402 "$SRV" node chat_x402.test.js   # chat_completion : devis = pire cas (ASCII a 1/2, le reste a ses octets) x X402_CHAT_MARGE, modele brut, sortie OpenAI, un echec jamais regle
 lance autoinsc "$SRV" node auto_inscription.test.js   # inscription PayAI automatique : notre serveur et notre tresorerie seulement, plafonds, une fois par outil, la cle ne sort jamais
 lance compteurs "$SRV" node compteurs.test.js   # compteurs durables : un fichier par jour UTC, survivent au redemarrage et a SIGTERM, maison a part, jamais l IP
@@ -347,6 +348,7 @@ lance lancepage "$SITE" node lance_v4.test.js   # carte de lancement : le portef
 lance dexmc   "$SITE" node dexscreener_mcap.test.js   # capitalisation : le chiffre de DexScreener tel quel, aucun dollar invente, le taux choisi par l actif de cotation (V3 et V4 $SWOGE)
 [ $VITE -eq 1 ] || lance lpv3 "$SITE" node launchpad_v3.test.js   # VRAIE chaine : frais V3 lu sur le contrat, grille V2/V3, cotation ETH d un V2
 [ $VITE -eq 1 ] || lance lpv4ch "$SITE" node launchpad_v4_frais.test.js   # VRAIE chaine : les jetons V4 dans Explore et dans l echange (actif de cotation, 50 %), Collect vers le bon launchpad
+[ $VITE -eq 1 ] || lance lprelais "$SITE" node launchpad_relais.test.js   # fork anvil (ANVIL) : noeud officiel avorte dans le navigateur -> Explore lu par le relais /rpc/rh (lanceurs + SWAI), 6 eth_getLogs en vol au plus, devis de la fiche par le relais
 lance lpv4page "$SITE" node launchpad_v4_page.test.js   # launchpad.html : choix du pool ($SWOGE, ETH, V3), fiche GoPlus lue (cases vides dites « not readable »), copies refusees par le vrai propose, kit du createur, portefeuille de la page
 lance passpage "$SITE" node agent_passport.test.js   # Agent Passport : champs en texte, signature verifiee dans le navigateur (ou par le serveur, dit), passeport modifie refuse, publier par la session
 lance navliens "$SITE" node nav_liens.test.js   # aucun lien muet sur les pages qui eteignent leurs liens par defaut ; chaque entree du menu recoit un VRAI clic, 1280 et 390 px

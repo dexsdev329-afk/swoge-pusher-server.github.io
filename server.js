@@ -2500,6 +2500,12 @@ function lecturesRh() {
   });
   return LECTURES_RH;
 }
+/* Le relais public des lectures du launchpad (relais_rpc.js, 18/10/2026). RH_RELAIS_RPC_URL, sinon
+   le noeud de la colonie (RPC_URL). Jamais d'URL journalisee ni rendue : elle peut porter une cle. */
+let RELAIS_RH = null;
+function relaisRh() {
+  return RELAIS_RH || (RELAIS_RH = require('./relais_rpc').cree({ amont: String(process.env.RH_RELAIS_RPC_URL || cfg.RPC_URL || '').trim() }));
+}
 /* Les actions tokenisees de Robinhood Chain (actions_rh.js, 28/09/2026) : l'officielle, la copie, l'ecart a l'oracle. */
 let ACTIONS_RH = null;
 function actionsRh() {
@@ -3934,6 +3940,16 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(e.ok ? 200 : 503, { 'content-type': 'application/json; charset=utf-8',
                                       'cache-control': 'no-store' });
     return res.end(JSON.stringify(e, null, 2));
+  }
+  /* ---- LE RELAIS JSON-RPC DE ROBINHOOD CHAIN (relais_rpc.js, 18/10/2026) ----
+     Le navigateur refuse par moments les reponses du noeud officiel (en-tete
+     CORS en double, « '*,*' » sur chaque eth_getLogs le 18/10) ; le launchpad
+     repasse alors la meme lecture ici. Lecture seule, liste fermee, bornes et
+     debit dans le module ; l'URL du noeud amont n'est jamais rendue. */
+  if (path === '/rpc/rh') return relaisRh().sert(req, res, qui(req));
+  if (path === '/rpc/rh/etat') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'access-control-allow-origin': '*' });
+    return res.end(JSON.stringify(relaisRh().etat()));
   }
   /* ========================= LA COLONIE D'AGENTS =========================
    *
