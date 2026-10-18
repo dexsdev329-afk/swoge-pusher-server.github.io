@@ -50,6 +50,7 @@ const parisEnJeu = require('./paris_en_jeu');
 const tennisVerrou = require('./tennis_verrou');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
+let agentLife = null;   /* agentlife.js, pose au demarrage ; son etat est servi dans /ai/colonie */
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
 const aiPerp = require('./ai_perp');
@@ -12104,6 +12105,12 @@ server.listen(cfg.PORT, () => {
   smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t), notifyChat: (c, t) => tg.notifyChat(c, t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
     faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v) });
   aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
+  /* AgentLife (18/10/2026, agentlife.js) : les alertes de l'autre bot du proprietaire, lues toutes
+     les 5 min, deviennent des OMBRES de la colonie par le meme `signalSmart` (une ligne d'audit par
+     type d'alerte), jamais un achat. AGENTLIFE_SIGNALS_KEY absente = rien. */
+  agentLife = require('./agentlife').cree({ dossier: cfg.DATA_DIR, surAlerte: (v) => aiColonie.signalSmart(v) });
+  agentLife.planifie();
+  aiColonie.fournisseurAgentlife(() => agentLife.etat());
   /* Le solde The Odds API, lu dans le compteur que les en-tetes tiennent deja a
      jour (0 credit) : toutes les 30 min, premiere lecture 2 min apres le
      demarrage (alerte_solde.odds). */

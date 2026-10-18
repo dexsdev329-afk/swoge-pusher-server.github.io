@@ -10167,6 +10167,16 @@ const SMART_LIGNES = { ACHETER: 'smart signal: buy', SURVEILLER: 'smart signal: 
  * par le detecteur), et se juge NETTE des frais d'aller-retour de la courbe
  * (`fraisPct`, 6 points, sonde du 15/10). */
 const SMART_LIGNES_V2 = { lancement: 'smart launch: pons', dev: 'smart launch: known dev', ignition: 'smart launch: ignition', copie: 'smart copy: wallet', rebond: 'smart rebound' };
+/* ---- AGENTLIFE (18/10/2026, agentlife.js) ----
+ * Les alertes de l'autre bot du proprietaire entrent par le MEME chemin que les sources v2 : une
+ * ligne par type d'alerte (« agentlife: rebound »…), jugee contre « achete ou retenu ». Elles
+ * n'entrent JAMAIS dans le tour (comme toute source v2 : seule la ligne du 1er brief a une porte).
+ * Ses bilans 7 jours sont les siens (plus haut de capitalisation, pas un prix vendable) : rien ici
+ * ne les reprend. */
+for (const [k, ligne] of Object.entries(require('./agentlife').LIGNES)) SMART_LIGNES_V2['agentlife_' + k] = ligne;
+/* L'etat du lecteur (tours, alertes lues, transmises, erreurs), servi tel quel dans la vue : le serveur le pose. */
+let etatAgentlife = null;
+function fournisseurAgentlife(fn) { etatAgentlife = typeof fn === 'function' ? fn : null; }
 const SMART_V2_WATCH = 'smart v2: watch';
 function smartLigneDe(v) {
   if (v && v.source && SMART_LIGNES_V2[v.source]) return v.verdict === 'ACHETER' ? SMART_LIGNES_V2[v.source] : SMART_V2_WATCH;
@@ -11078,6 +11088,7 @@ function vue() {
        hors de `audit` (ce n'est pas un refus : la page la lirait comme une
        regle). Voir `smartVue`. */
     smartSignal: smartVue(),
+    agentlife: (() => { try { return etatAgentlife ? etatAgentlife() : null; } catch (e) { return null; } })(),
     /* La lecture de chaine des positions (17/10) : son audit, a part de
        `audit` pour la meme raison — ce n'est pas un refus. */
     prixChaine: PRIX_CHAINE.vue(nomNoeudPrixChaine()),
@@ -11483,7 +11494,7 @@ module.exports = {
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
   SANS_ACHAT_DESSERRE,
-  signalSmart, fournisseurPrixCourbe, smartLigneDe, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
+  signalSmart, fournisseurPrixCourbe, fournisseurAgentlife, smartLigneDe, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
   SMART_ACHAT_MIN_OBS, SMART_LIGNES, SMART_PAR_TOUR,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc, _lisChaine: lisChaine,
 };
