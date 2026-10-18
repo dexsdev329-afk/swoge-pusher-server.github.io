@@ -135,6 +135,9 @@ process.on('unhandledRejection', (e) => {
     eq((p.sac || {})[arme.id] || 0, 1, 'la piece est dans le sac du joueur, sans un geste');
     eq(sac.contenu.length, 0, 'et le sac au sol est vide');
     eq(monde.sacs.indexOf(sac), -1, 'il a meme disparu : un sac vide ne se rouvre pas');
+    /* Le sac se vide COTE SERVEUR avant que le message n arrive par la socket : on attend aussi le
+       message (18/10 : rouge une fois, « la page est prevenue », le message etait encore en route). */
+    await jusqua(() => s.recus.some((x) => x.type === 'realmRamasse'));
     const dit = s.recus.filter((x) => x.type === 'realmRamasse');
     ok(dit.length >= 1, 'la page est prevenue');
     ok(dit[0].auto, 'et elle sait que c est automatique');
@@ -338,6 +341,7 @@ process.on('unhandledRejection', (e) => {
     const apres = moteur.personnageEtat(A, 'andy').stats.def;
     ok(apres > avant, `et elle est BUE : la defense monte (${avant} -> ${apres})`);
     eq(moteur.sacRempli(A), 0, 'elle ne prend aucune place dans le sac');
+    await jusqua(() => s.recus.some((x) => x.type === 'realmRamasse'));   /* le message suit l etat (voir 1.) */
     const dit = s.recus.filter((x) => x.type === 'realmRamasse').pop();
     ok(dit && dit.stat === 'def', 'la page est prevenue de ce qu on a pris');
     ok(dit && dit.bue, 'et qu on l a bue, pas rangee');
