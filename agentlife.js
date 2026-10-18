@@ -48,6 +48,7 @@ const LIGNES = {
   surveille: 'agentlife: watched token', copie: 'agentlife: copy a leader',
 };
 const ECARTES = ['swoge', 'confirmation'];
+const FRAIS_COURBE = require('./smart_pons').FRAIS_COURBE_AR_PCT;
 
 /**
  * deps = { surAlerte(v) -> bool (ai_colonie.signalSmart), dossier, prendre (fetch), maintenant() }
@@ -100,7 +101,12 @@ function cree(deps) {
         if (!LIGNES[a.kind]) { ecarte('inconnu:' + String(a.kind).slice(0, 20)); continue; }
         if (String(a.chain || 'robinhood') !== 'robinhood') { MESURE.horsChaine++; continue; }
         if (!/^0x[0-9a-f]{40}$/.test(token)) { ecarte('adresse'); continue; }
+        /* courbe + fraisPct : releve du 18/10 (44 alertes sur 24 h), « foule » et « lancement » visent
+           surtout des jetons encore sur leur courbe Pons, sans prix DexScreener. La colonie prend alors
+           le prix de la courbe si elle la suit, et n'applique les frais d'aller-retour (smart_pons,
+           FRAIS_COURBE_AR_PCT, 6 points) qu'a une ombre pesee SUR la courbe (ai_colonie.js). */
         const pris = d.surAlerte({ jeton: token, sym: a.symbol || null, verdict: 'ACHETER', source: 'agentlife_' + a.kind, t: Number.isFinite(at) ? at : t,
+          courbe: true, fraisPct: FRAIS_COURBE,
           conditions: a.note ? [String(a.note).slice(0, 140)] : [] });
         if (pris) { transmises++; MESURE.transmises++; } else MESURE.refusees++;
       }

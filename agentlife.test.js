@@ -56,6 +56,7 @@ function alerte(kind, c, minutes, o) {
   eq(Date.parse(u.searchParams.get('since')), T - 30 * 60000, 'premier tour : depuis 30 min, pas plus');
   eq(recus.map((v) => v.source).join(','), 'agentlife_rebond,agentlife_lancement', 'transmises : rebond et lancement seulement');
   ok(recus.every((v) => v.verdict === 'ACHETER' && /^0x[0-9a-f]{40}$/.test(v.jeton) && v.t < T), 'chacune : ACHETER, adresse, heure de l alerte');
+  ok(recus.every((v) => v.courbe === true && v.fraisPct === require('./smart_pons').FRAIS_COURBE_AR_PCT), 'courbe Pons possible, frais d aller-retour de la courbe (appliques par la colonie a une ombre pesee sur la courbe seulement)');
   const M = X.etat().mesure;
   ok(M.ecartees.swoge === 1 && M.ecartees.confirmation === 1 && M.horsChaine === 1 && M.ecartees['inconnu:nouveau_type'] === 1 && M.ecartees.adresse === 1,
      'ecartees : swoge (echo), confirmation (vente), autre chaine, type inconnu, adresse illisible');
