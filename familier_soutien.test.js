@@ -61,7 +61,11 @@ function poseMonstre(R, j, dx, dy, pv) {
               pv: pv || 100000, pvMax: pv || 100000, dir: 'down', cible: null,
               recharge: 999, rechargeT: 999, stase: 0,
               feu: 0, feuReste: 0, feuTaux: 0, feuPar: null,
-              errX: 0, errY: 0, errChrono: 0 };
+              /* errChrono immense, errX = errY = 0 : le monstre ne flane pas. Mesure du 18/10 :
+                 avec errChrono 0, il tirait une direction au hasard (realm.js, « personne en vue »)
+                 et 1 passage sur 5 il avait erre a 259 px en 4 s — le familier, sans ennemi pres de
+                 lui, se taisait, et « elle part des qu il manque du mana » tombait. */
+              errX: 0, errY: 0, errChrono: 1e9 };
   R.monstres.push(m);
   return m;
 }

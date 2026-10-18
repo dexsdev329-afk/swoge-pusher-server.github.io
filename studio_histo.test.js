@@ -94,7 +94,10 @@ console.log('\n-- 6. les bornes --');
 console.log('\n-- 7. la route prend l adresse dans la session --');
 {
   const src = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
-  const i = src.indexOf("path === '/studio/histo'"), bloc = src.slice(i, src.indexOf("path === '/studio/chat' ||", i));
+  /* Le bloc de la route SEULE : jusqu'a la route suivante du meme niveau. Le 18/10, le bloc courait
+     jusqu'a /studio/chat et avalait les routes passkey ajoutees entre les deux (leur `q.addr` est une
+     recherche publique d'etat, pas l'historique) : l'essai lisait une autre route que la sienne. */
+  const i = src.indexOf("path === '/studio/histo'"), bloc = src.slice(i, src.indexOf("\n  if (path", i));
   ok(/sessionJoueur\.lire\(game\.sessionSecret, jeton\)/.test(bloc) && !/c\.addr|corps\.addr|q\.addr|\.adresse/.test(bloc), 'l adresse vient de la session signee, jamais du corps');
   ok(/503/.test(bloc) && /jamais ecrase/.test(bloc), 'un fichier illisible rend 503, jamais un vide');
 }

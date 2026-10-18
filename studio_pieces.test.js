@@ -136,7 +136,7 @@ const b64 = (b) => b.toString('base64');
     /* Les photos partout SAUF les modeles texte seul (vision === false, ajoutes
        le 05/10) ; les PDF chez Claude seul. Le catalogue dit exactement ce que
        chaque modele sait lire — la page ne propose pas une piece qui echouerait. */
-    ok(cat.modeles.every((x) => x.pieces.images === (C.modele(x.id).vision !== false))
+    ok(cat.modeles.every((x) => x.pieces.images === (C.modeleChat(x.id).vision !== false))
        && cat.modeles.filter((x) => x.pieces.pdf).every((x) => x.fournisseur === 'anthropic') && cat.modeles.some((x) => x.pieces.pdf)
        && cat.modeles.some((x) => !x.pieces.images),
        'le catalogue dit ce que chaque modele lit : photos sauf les modeles texte seul, PDF chez Claude');
