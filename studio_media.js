@@ -58,8 +58,26 @@ const IMAGE = [
    * `usage`. « Speed » = qualité medium, « Quality » = high. */
   { id: 'rapide', fournisseur: 'openai', nom: 'Speed', qualite: 'medium' },
   { id: 'qualite', fournisseur: 'openai', nom: 'Quality', qualite: 'high' },
+  /* ---- « Free » (18 octobre 2026, studio_gratuit.js) ----
+   * Rien a payer, rien a facturer : Pollinations (~5 s, filigrane) et SDXL chez
+   * OVH (~66 s). Une image par demande, pas de retouche, au plus
+   * GRATUIT_IMAGES_JOUR par joueur et par jour. */
+  { id: 'rapide', fournisseur: 'gratuit', nom: 'Fast (~5 s, watermarked)', api: 'pollinations', usd: 0 },
+  { id: 'qualite', fournisseur: 'gratuit', nom: 'SDXL (~1 min)', api: 'sdxl', usd: 0 },
 ];
-const FOURNISSEURS_IMAGE = [{ id: 'grok', nom: 'Grok Imagine' }, { id: 'openai', nom: 'ChatGPT Image' }];
+const FOURNISSEURS_IMAGE = [{ id: 'grok', nom: 'Grok Imagine' }, { id: 'openai', nom: 'ChatGPT Image' }, { id: 'gratuit', nom: 'Free' }];
+const GRATUIT_IMAGES_JOUR = () => Math.max(1, Number(process.env.STUDIO_GRATUIT_IMAGES_JOUR || 10));
+/* adresse (minuscules) -> { jour, n } ; en memoire, comme le quota du chat gratuit. */
+const QUOTA_GRATUIT = new Map();
+const jourUtc = (t) => new Date(t).toISOString().slice(0, 10);
+function imagesGratuitesRestantes(addr, t) {
+  const q = QUOTA_GRATUIT.get(String(addr).toLowerCase());
+  return Math.max(0, GRATUIT_IMAGES_JOUR() - (q && q.jour === jourUtc(t || Date.now()) ? q.n : 0));
+}
+function prendImageGratuite(addr, t) {
+  const k = String(addr).toLowerCase(), j = jourUtc(t || Date.now()), q = QUOTA_GRATUIT.get(k);
+  QUOTA_GRATUIT.set(k, q && q.jour === j ? { jour: j, n: q.n + 1 } : { jour: j, n: 1 });
+}
 /* Prix OpenAI par million de jetons (texte, image d'entrée, image de sortie).
    Un modèle absent de la table est facturé au plus cher connu. */
 const PRIX_OPENAI = {
@@ -116,6 +134,8 @@ const PAR_MINUTE = () => Math.max(1, Number(process.env.STUDIO_MEDIA_PAR_MINUTE 
 const MESURE = { images: 0, videos: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements: 0, sansUsage: 0,
   /* Vidéos au crédit retrouvées au démarrage : reprises (suivies), ou rendues faute d'identifiant xAI. */
   reprises: 0, reprisesRendues: 0,
+  /* Les images gratuites (18/10) : servies, refusees par le garde, echecs du service. */
+  gratuites: { n: 0, refus: 0, echecs: 0 },
   /* Les images payées en x402 (prix FIXE = le pire cas, faute de mesure) : ce
      qu'elles ont coûté vraiment, pour baisser ce prix sur mesure et non au jugé. */
   horsSolde: { images: 0, coutUsd: 0, prixUsd: 0, sansUsage: 0 } };
@@ -146,23 +166,27 @@ function pourUsd(usd) { return Math.ceil(factureUsd(usd) * 1e4) / 1e4; }
 
 /** Le catalogue montré à la page : modèles, options, prix typiques en $SWOGE. */
 function catalogue(cours, actifs) {
-  /* `actifs` : { grok, openai } — ou un booleen (l'ancien appel : Grok seul). */
+  /* `actifs` : { grok, openai, gratuit } — ou un booleen (l'ancien appel : Grok seul). */
   const a = (actifs && typeof actifs === 'object') ? actifs : { grok: !!actifs, openai: false };
   const actif = !!a.grok;
   const p = prixOpenai();
   const image = {
     fournisseurs: FOURNISSEURS_IMAGE.map((f) => ({ id: f.id, nom: f.nom, actif: !!a[f.id],
-      modeles: IMAGE.filter((m) => m.fournisseur === f.id).map((m) => (m.fournisseur === 'openai'
+      gratuit: f.id === 'gratuit' || undefined,
+      modeles: IMAGE.filter((m) => m.fournisseur === f.id).map((m) => (m.fournisseur === 'gratuit'
+        ? { id: m.id, nom: m.nom, parImageSwoge: 0, parImageUsd: 0, gratuit: true }
+        : m.fournisseur === 'openai'
         ? { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(OPENAI_MESURE_SORTIE * p.o / 1e6, cours), parImageUsd: pourUsd(OPENAI_MESURE_SORTIE * p.o / 1e6), estime: true }
         : { id: m.id, nom: m.nom, parImageSwoge: pourSwoge(m.usd, cours), parImageUsd: pourUsd(m.usd) })) })),
-    formats: FORMATS_IMAGE, nombres: NOMBRES,
+    formats: FORMATS_IMAGE, nombres: NOMBRES, gratuitJour: GRATUIT_IMAGES_JOUR(),
   };
   /* Compatibilite : l'ancienne page lit image.modeles (Grok). */
   image.modeles = image.fournisseurs[0].modeles;
   return {
-    ouvert: (!!a.grok || !!a.openai) && cours > 0,
+    /* Le gratuit ne lit pas le cours : la generation d'images reste ouverte pour lui seul. */
+    ouvert: ((!!a.grok || !!a.openai) && cours > 0) || !!a.gratuit,
     videoOuverte: actif && cours > 0,
-    note: !(a.grok || a.openai) ? 'Image and video generation is not switched on yet (the provider key is not set on the server).'
+    note: !(a.grok || a.openai) ? (a.gratuit ? 'Only the free image models are on right now.' : 'Image and video generation is not switched on yet (the provider key is not set on the server).')
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — generation is paused so nobody is overcharged.' : null,
     videoNote: !actif ? 'Video is not switched on yet (the Grok Imagine key is not set on the server).'
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — generation is paused so nobody is overcharged.' : null,
@@ -260,12 +284,16 @@ function prixFixeImageUsd({ fournisseur, modele, n, prompt }) {
 async function images(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-  const fid = q.fournisseur === 'openai' ? 'openai' : 'grok';
+  /* Le gratuit n'existe que pour la page (canal studio, solde de jeu ou credit) : jamais revendu en
+     x402 ni par une cle d'agent — un autre fournisseur demande y retombe sur Grok, comme avant. */
+  const gratuitOk = q.fournisseur === 'gratuit' && !deps.horsSolde && (!q.canal || q.canal === 'studio');
+  const fid = q.fournisseur === 'openai' ? 'openai' : gratuitOk ? 'gratuit' : 'grok';
   const m = IMAGE.find((x) => x.fournisseur === fid && x.id === q.modele) || IMAGE.find((x) => x.fournisseur === fid);
   const four = (deps.fournisseurs && deps.fournisseurs[fid]) || (fid === 'grok' ? deps.fournisseur : null);
-  if (!four || (four.actif && !four.actif())) return { ok: false, code: 503, raison: (fid === 'openai' ? 'ChatGPT Image' : 'Grok Imagine') + ' is not switched on yet.' };
+  if (!four || (four.actif && !four.actif())) return { ok: false, code: 503, raison: (fid === 'openai' ? 'ChatGPT Image' : fid === 'gratuit' ? 'Free image generation' : 'Grok Imagine') + ' is not switched on yet.' };
   const prompt = String(q.prompt || '').trim().slice(0, PROMPT_MAX);
   if (!prompt) return { ok: false, code: 400, raison: 'describe the image to create' };
+  if (fid === 'gratuit') return imageGratuite(q, deps, { addr, m, four, prompt });
   const n = NOMBRES.includes(Number(q.n)) ? Number(q.n) : 1;
   const format = FORMATS_IMAGE.includes(q.format) ? q.format : 'auto';
   const image = imageJointe(q.image);
@@ -325,6 +353,34 @@ async function images(q, deps) {
   const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
   return Object.assign({ ok: true, genre: 'image', fournisseur: fid, modele: m.id, urls, retouche: !!envoyee,
     reference: image ? 'jointe' : refSwoge ? 'swoge' : null, compris: compris.reecrit || refSwoge ? compris.prompt : null }, f);
+}
+
+/* Une image gratuite : une seule, sans photo jointe ni reecriture (la reecriture se paie), ni
+   reserve ni facture. Le quota se prend a l'image LIVREE ; un refus du garde ne le prend pas. */
+async function imageGratuite(q, deps, { addr, m, four, prompt }) {
+  const t = q.maintenant || Date.now();
+  if (q.image) return { ok: false, code: 400, raison: 'the free models can\'t edit a photo — pick Grok Imagine or ChatGPT Image, or remove the photo' };
+  if (!imagesGratuitesRestantes(addr, t)) return { ok: false, code: 429, gratuitRestant: 0, raison: 'you have used your ' + GRATUIT_IMAGES_JOUR() + ' free images for today — they come back at midnight UTC, or pick a paid model' };
+  if (EN_VOL.has(addr)) return { ok: false, code: 429, raison: 'one generation at a time' };
+  if (!rythmeOk(addr, t)) return { ok: false, code: 429, raison: 'too many generations — wait a minute' };
+  const format = FORMATS_IMAGE.includes(q.format) ? q.format : 'auto';
+  EN_VOL.add(addr);
+  let rep;
+  try { rep = await four.images({ api: m.api, prompt, n: 1, format }); }
+  catch (e) {
+    EN_VOL.delete(addr);
+    if (e && e.refus) { MESURE.gratuites.refus++; return { ok: false, code: 400, gratuit: true, raison: e.raison || 'this request was refused by the free model\'s safety check' }; }
+    MESURE.gratuites.echecs++;
+    return { ok: false, code: 502, gratuit: true, raison: 'the free image service failed — try again, or pick a paid model', detail: String(e && e.message || e).slice(0, 200) };
+  }
+  EN_VOL.delete(addr);
+  if (!rep || !rep.urls || !rep.urls.length) { MESURE.gratuites.echecs++; return { ok: false, code: 502, gratuit: true, raison: 'no image came back — try again' }; }
+  prendImageGratuite(addr, t);
+  MESURE.gratuites.n++;
+  if (deps.note) { try { deps.note('image_gratuite', { outil: 'generate_image', canal: 'studio', qui: addr, sorte: 'gratuit/' + m.id, usd: 0, coutUsd: 0 }); } catch (e) { /* jamais bloquant */ } }
+  const urls = rep.urls.map((u) => (/^data:/.test(u) && deps.range ? (deps.range(u) || u) : u));
+  return { ok: true, genre: 'image', fournisseur: 'gratuit', modele: m.id, urls, retouche: false, reference: null, compris: null,
+    gratuit: true, factureSwoge: '0', factureUsd: 0, gratuitRestant: imagesGratuitesRestantes(addr, t) };
 }
 
 /** Lance une vidéo. q = { addr, modele, prompt, duree, resolution, format, image } */
@@ -481,5 +537,5 @@ function reprendVideos(deps, durables) {
   return bilan;
 }
 
-module.exports = { VOIX, voixPermises, REFERENCES_MAX, pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
+module.exports = { GRATUIT_IMAGES_JOUR, QUOTA_GRATUIT, imagesGratuitesRestantes, VOIX, voixPermises, REFERENCES_MAX, pireCasImageUsd, prixFixeImageUsd, coutsImage, FOURNISSEURS_IMAGE, PRIX_OPENAI, coutOpenai, modeleOpenai, IMAGE, VIDEO, FORMATS_IMAGE, FORMATS_VIDEO, NOMBRES, DUREES, RESOLUTIONS, RESERVE_X,
                    MESURE, JOBS, EN_VOL, RYTHME, catalogue, images, lanceVideo, avance, etatVideo, reprendVideos, imageJointe, coutDe };

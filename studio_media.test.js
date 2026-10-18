@@ -423,7 +423,8 @@ const W = (x) => ethers.utils.parseUnits(String(x), 18);
 
     /* ---- ChatGPT Image, de bout en bout ---- */
     const cat2 = await (await fetch(base + '/studio/media/catalogue')).json();
-    ok(cat2.image.fournisseurs.map((f) => f.id + ':' + f.actif).join(',') === 'grok:true,openai:true', 'le catalogue propose Grok Imagine ET ChatGPT Image');
+    /* « Free » (18/10) suit : allume par defaut (sans cle), STUDIO_GRATUIT=0 l eteint. */
+    ok(cat2.image.fournisseurs.map((f) => f.id + ':' + f.actif).join(',') === 'grok:true,openai:true,gratuit:' + (process.env.STUDIO_GRATUIT !== '0'), 'le catalogue propose Grok Imagine ET ChatGPT Image (et Free)');
     const av2 = W(moteur.balanceStr(adr));
     const ro = await (await fetch(base + '/studio/media/image', { method: 'POST', headers: H,
       body: JSON.stringify({ fournisseur: 'openai', modele: 'qualite', prompt: 'a doge astronaut', n: 1, format: '9:16' }) })).json();

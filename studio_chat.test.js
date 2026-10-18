@@ -226,9 +226,10 @@ const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(
 
     const base = 'http://127.0.0.1:' + port;
     const cat = await (await fetch(base + '/studio/chat/catalogue')).json();
-    ok(cat.ouvert === true && cat.modeles.length === C.MODELES.length && cat.defaut === 'opus-5-5', 'le catalogue est ouvert, tous les modèles, Opus 5.5 par défaut');
+    /* Les gratuits (18/10) s'ajoutent a la fin du catalogue : tous les PAYANTS restent, et rien d'autre. */
+    ok(cat.ouvert === true && cat.modeles.filter((m) => !m.gratuit).length === C.MODELES.length && cat.modeles.length === C.MODELES.length + C.GRATUITS.length && cat.defaut === 'opus-5-5', 'le catalogue est ouvert, tous les modèles, Opus 5.5 par défaut');
     ok(['Claude', 'ChatGPT', 'Grok'].every((f) => cat.modeles.some((m) => m.nomFournisseur === f)), 'Claude, ChatGPT et Grok y sont');
-    ok(cat.modeles.every((m) => m.typiqueSwoge > 0 && m.maxSwoge > m.typiqueSwoge), 'chaque modèle annonce un prix typique et un maximum en $SWOGE');
+    ok(cat.modeles.filter((m) => !m.gratuit).every((m) => m.typiqueSwoge > 0 && m.maxSwoge > m.typiqueSwoge), 'chaque modèle payant annonce un prix typique et un maximum en $SWOGE');
 
     const sans = await fetch(base + '/studio/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     eq(sans.status, 401, 'sans jeton de session : 401, rien ne part');

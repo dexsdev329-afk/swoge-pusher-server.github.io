@@ -112,8 +112,32 @@ const MODELES = [
     entree: 0.5, sortie: 1.5, maxTokens: 8000, recherche: 'perplexity', effort: false, vision: false,
     note: 'Open-weights flagship, EU-based' },
 ];
+/* ---- LES MODELES GRATUITS (18 octobre 2026, demande du proprietaire) ----
+ * « Laisser le modele free ici » : des modeles ouverts servis SANS cle par
+ * OVHcloud AI Endpoints (studio_compat.js, FOURNISSEURS.gratuit). Ils ne coutent
+ * rien a la maison et ne facturent rien au joueur : ni cours, ni reserve. Ce qui
+ * les borne, c'est la limite anonyme d'OVH (2 requetes/minute par IP et par
+ * modele, IP du SERVEUR, donc partagee par tout le site) : chacun a des `repli`
+ * (un 429 passe au suivant) et chaque joueur a GRATUIT_JOUR reponses par jour.
+ * Ils restent HORS de MODELES : l'API des agents (agentic.js) et chat_x402 lisent
+ * MODELES et ne doivent pas revendre ce qui est gratuit ici. Pas de recherche web
+ * (Perplexity se paie), pas de photo (texte seul). Temps mesures le 18/10 pour une
+ * phrase courte : Llama 3.3 70B 1,3 s, gpt-oss-120b 3,5 s, gpt-oss-20b 3,6 s. */
+const GRATUITS = [
+  { id: 'free-llama-3-3-70b', nom: 'Llama 3.3 70B', api: 'Meta-Llama-3_3-70B-Instruct', fournisseur: 'gratuit', gratuit: true,
+    entree: 0, sortie: 0, maxTokens: 4000, recherche: null, effort: false, vision: false,
+    repli: ['gpt-oss-120b', 'gpt-oss-20b'], note: 'Free — fast open model (prompts may be logged by the host)' },
+  { id: 'free-gpt-oss-120b', nom: 'GPT-OSS 120B', api: 'gpt-oss-120b', fournisseur: 'gratuit', gratuit: true,
+    entree: 0, sortie: 0, maxTokens: 4000, recherche: null, effort: false, vision: false,
+    repli: ['Meta-Llama-3_3-70B-Instruct', 'gpt-oss-20b'], note: 'Free — OpenAI\'s open model, thinks first (prompts may be logged by the host)' },
+  { id: 'free-gpt-oss-20b', nom: 'GPT-OSS 20B', api: 'gpt-oss-20b', fournisseur: 'gratuit', gratuit: true,
+    entree: 0, sortie: 0, maxTokens: 3000, recherche: null, effort: false, vision: false,
+    repli: ['Meta-Llama-3_3-70B-Instruct', 'gpt-oss-120b'], note: 'Free — small and quick (prompts may be logged by the host)' },
+];
+/* Reponses gratuites par joueur et par jour UTC (comptees a la reponse reussie). */
+const GRATUIT_JOUR = () => Math.max(1, Number(process.env.STUDIO_GRATUIT_JOUR || 30));
 const NOMS_FOURNISSEURS = { anthropic: 'Claude', openai: 'ChatGPT', xai: 'Grok',
-  venice: 'Venice', openrouter: 'OpenRouter', deepseek: 'DeepSeek', mistral: 'Mistral' };
+  venice: 'Venice', openrouter: 'OpenRouter', deepseek: 'DeepSeek', mistral: 'Mistral', gratuit: 'Free' };
 const DEFAUT = 'opus-5-5';
 const EFFORTS = ['low', 'medium', 'high'];
 
@@ -137,6 +161,23 @@ const Pieces = require('./studio_pieces');     /* une photo ou un PDF joint a la
 const AlerteSolde = require('./alerte_solde'); /* credit epuise chez un fournisseur : alerte privee */
 
 function modele(id) { return MODELES.find((m) => m.id === id) || null; }
+/* Le chat de la page seul voit les gratuits (voir GRATUITS). */
+function modeleChat(id) { return modele(id) || GRATUITS.find((m) => m.id === id) || null; }
+
+/* Le quota gratuit : adresse (minuscules) -> { jour, n }. En memoire : un redeploiement le remet
+   a zero, ce qui ne coute rien a la maison (le gratuit ne lui coute rien). */
+const QUOTA_GRATUIT = new Map();
+const jourUtc = (t) => new Date(t).toISOString().slice(0, 10);
+function gratuitsRestants(addr, maintenant) {
+  const q = QUOTA_GRATUIT.get(String(addr).toLowerCase());
+  const pris = q && q.jour === jourUtc(maintenant || Date.now()) ? q.n : 0;
+  return Math.max(0, GRATUIT_JOUR() - pris);
+}
+function prendGratuit(addr, maintenant) {
+  const k = String(addr).toLowerCase(), j = jourUtc(maintenant || Date.now());
+  const q = QUOTA_GRATUIT.get(k);
+  QUOTA_GRATUIT.set(k, q && q.jour === j ? { jour: j, n: q.n + 1 } : { jour: j, n: 1 });
+}
 
 /** Le coût réel d'une réponse, en USD, lu dans `usage`. */
 function coutUsd(m, usage) {
@@ -304,7 +345,10 @@ const MESURE = { requetes: 0, echecs: 0, coutUsd: 0, factureUsd: 0, depassements
      chaque exécution contre le prix fixe encaissé, les arrêts par le plafond, et ce qui a
      été servi sans être encaissé (agentic.js / x402.js). Le prix ne se baisse QUE sur ces
      mesures — même règle que les images (studio_media.js, prixFixeImageUsd). */
-  horsSolde: { n: 0, coutUsd: 0, prixUsd: 0, arretsBudget: 0, nonRegles: 0, coutNonRegleUsd: 0 } };
+  horsSolde: { n: 0, coutUsd: 0, prixUsd: 0, arretsBudget: 0, nonRegles: 0, coutNonRegleUsd: 0 },
+  /* Les gratuits (18/10) : servis, servis par un repli, echecs, dont refus de limite (429). C'est la
+     mesure qui dira si la limite anonyme d'OVH tient le site, ou s'il faut OVH_AI_KEY. */
+  gratuits: { n: 0, replis: 0, echecs: 0, limites: 0 } };
 /* Les compteurs DURABLES (compteurs.js, 26 septembre 2026) : MESURE repart de
    zéro à chaque redéploiement. server.js pose `COMPTEUR.note` ; sans lui (essais), rien. */
 const COMPTEUR = { note: null };
@@ -321,11 +365,14 @@ function catalogue(cours, cle) {
   /* `cle` : { anthropic, openai, xai } — ou un booleen (l'ancien appel : Claude seul). */
   const a = (cle && typeof cle === 'object') ? cle : { anthropic: !!cle, openai: false, xai: false };
   const actif = !!(a.anthropic || a.openai || a.xai);
+  const gratuit = !!a.gratuit;
   const typique = (m) => 1500 * m.entree / 1e6 + 800 * m.sortie / 1e6;   /* une question courte */
   const enSwoge = (usd) => (cours > 0 ? Math.ceil(usd / cours) : null);
   return {
-    ouvert: actif && cours > 0,
-    note: !actif ? 'The AI provider key is not set on the server yet.'
+    /* Les gratuits ne lisent pas le cours : le chat reste ouvert pour eux seuls. */
+    ouvert: (actif && cours > 0) || gratuit,
+    gratuitJour: GRATUIT_JOUR(),
+    note: !actif ? (gratuit ? 'Only the free models are on right now.' : 'The AI provider key is not set on the server yet.')
       : !(cours > 0) ? 'The $SWOGE price is unavailable right now — requests are paused so nobody is overcharged.' : null,
     monnaie: '$SWOGE', coursUsd: cours || null, marge: MARGE(), defaut: DEFAUT, efforts: EFFORTS,
     fournisseurs: Object.keys(NOMS_FOURNISSEURS).map((f) => ({ id: f, nom: NOMS_FOURNISSEURS[f], actif: !!a[f] })),
@@ -341,7 +388,11 @@ function catalogue(cours, cle) {
       /* Les memes montants en dollars, pour le credit (credits.js) : il ne depend pas du cours. */
       typiqueUsd: Math.ceil(factureUsd(typique(m)) * 1e4) / 1e4,
       maxUsd: Math.ceil(factureUsd(pireCasUsd(m, [{ content: 'x'.repeat(4000) }], !!m.recherche)) * 1e4) / 1e4,
-    })),
+    })).concat(GRATUITS.map((m) => ({
+      id: m.id, nom: m.nom, note: m.note, fournisseur: m.fournisseur, nomFournisseur: NOMS_FOURNISSEURS[m.fournisseur],
+      actif: gratuit, effort: false, gratuit: true, pieces: { images: false, pdf: false }, recherche: false,
+      typiqueSwoge: 0, maxSwoge: 0, typiqueUsd: 0, maxUsd: 0,
+    }))),
   };
 }
 
@@ -358,8 +409,13 @@ function catalogue(cours, cle) {
 async function repond(q, deps) {
   const addr = q && q.addr;
   if (!addr) return { ok: false, code: 401, raison: 'sign in with your wallet first' };
-  const m0 = modele(q.modele || DEFAUT);
+  const m0 = modeleChat(q.modele || DEFAUT);
   if (!m0) return { ok: false, code: 400, raison: 'unknown model' };
+  /* Le gratuit ne se revend pas (x402) et ne pilote rien (agent, navigateur) : la page seule. */
+  if (m0.gratuit && (deps.horsSolde || deps.pireCas)) return { ok: false, code: 400, raison: 'unknown model' };
+  if (m0.gratuit && !gratuitsRestants(addr, q.maintenant)) {
+    return { ok: false, code: 429, gratuitRestant: 0, raison: 'you have used your ' + GRATUIT_JOUR() + ' free answers for today — they come back at midnight UTC, or pick a paid model' };
+  }
   /* `sortieMax` (le pilote du navigateur, 02/10) : une sortie plus courte que celle du modele.
      Le pire cas, donc la reserve, baisse d'autant ; les prix ne changent pas. Interne : la
      route du chat ne le transmet pas. */
@@ -407,6 +463,7 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
   /* `deps.horsSolde` : payé AILLEURS (x402, d'avance, ask_agent) — ni cours, ni réserve,
      ni règlement sur un solde de jeu ; le coût réel est quand même lu et compté. */
   const hors = !!deps.horsSolde;
+  if (m.gratuit) return repondGratuit(q, deps, { addr, m, messages, ctl, arreteAvant });
   const cours = hors ? null : await deps.cours();
   if (!hors && !(cours > 0)) return { ok: false, code: 503, raison: 'the $SWOGE price is unavailable — try again shortly' };
   if (ctl.signal.aborted) return arreteAvant();
@@ -526,7 +583,40 @@ async function repondSuite(q, deps, { addr, m, messages, pdf, recherche, effort,
   };
 }
 
+/* Une reponse gratuite : ni cours, ni reserve, ni facture. Le meme fournisseur (studio_compat),
+   les memes arrets ; le quota se prend a la reponse REUSSIE (une panne d'OVH ne le mange pas). */
+async function repondGratuit(q, deps, { addr, m, messages, ctl, arreteAvant }) {
+  if (ctl.signal.aborted) return arreteAvant();
+  EN_VOL.add(addr);
+  let r;
+  try {
+    r = await deps.fournisseur({ m, messages, recherche: false, effort: null, signal: ctl.signal,
+      surTexte: (t) => { if (!ctl.signal.aborted && deps.surTexte) deps.surTexte(t); },
+      surReflexion: deps.surReflexion || (() => {}), surRecherche: () => {} });
+  } catch (e) {
+    EN_VOL.delete(addr);
+    if (ctl.signal.aborted) return arreteAvant();
+    MESURE.gratuits.echecs++;
+    const limite = e && e.statut === 429;
+    if (limite) MESURE.gratuits.limites++;
+    return { ok: false, code: limite ? 429 : 502, gratuit: true,
+      raison: limite ? 'the free models are busy right now — try again in a minute, or pick a paid model' : 'the free model failed — try again, or pick a paid model',
+      detail: String(e && e.message || e).slice(0, 160) };
+  }
+  EN_VOL.delete(addr);
+  if (ctl.signal.aborted) return arreteAvant();
+  prendGratuit(addr, q.maintenant);
+  MESURE.gratuits.n++;
+  if (r.servi && r.servi !== m.api) MESURE.gratuits.replis++;
+  compte('chat_gratuit', { outil: 'chat:' + m.id, canal: 'chat', qui: addr, usd: 0, coutUsd: 0, sorte: r.servi || m.api });
+  return { ok: true, gratuit: true, texte: r.texte || '', sources: [], stop: r.stop || null, jetons: [],
+    modele: m.id, servi: r.servi || m.api, recherche: false, factureSwoge: '0', factureUsd: 0,
+    gratuitRestant: gratuitsRestants(addr, q.maintenant),
+    usage: { entree: (r.usage && r.usage.input_tokens) || 0, sortie: (r.usage && r.usage.output_tokens) || 0, recherches: 0 } };
+}
+
 module.exports = {
+  GRATUITS, GRATUIT_JOUR, QUOTA_GRATUIT, modeleChat, gratuitsRestants,
   MODELES, DEFAUT, EFFORTS, modele, coutUsd, pireCasUsd, factureUsd, nettoie,
   coursPrudent, coursSwoge, catalogue, repond, arrete, ARRETS, MESURE, COMPTEUR, EN_VOL, RYTHME, COURS,
   ENTREE_MAX_CAR, RECHERCHE_MAX, PRIX_RECHERCHE_USD, SYSTEME_JETONS,

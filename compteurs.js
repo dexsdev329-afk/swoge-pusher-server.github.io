@@ -16,7 +16,7 @@
  * ---- CE QU'ON COMPTE ----
  * note(evenement, { outil, canal, qui, usd, coutUsd, sorte })
  *   evenement : devis, demande402, paye_x402, paye_cle, refus_sans_cle,
- *               echec, chat_facture, image_facturee, video_facturee
+ *               echec, chat_facture, image_facturee, video_facturee, chat_gratuit, image_gratuite
  *   canal     : rest | mcp | chat | agent | studio
  *   qui       : sert SEULEMENT à compter les demandeurs DISTINCTS — l'adresse
  *               du payeur ou du propriétaire de la clé pour un paiement,
@@ -60,7 +60,9 @@ const path = require('path');
 const crypto = require('crypto');
 
 const SORTES_MAX = 200;
-const EVENEMENTS = ['devis', 'demande402', 'paye_x402', 'paye_cle', 'refus_sans_cle', 'echec', 'chat_facture', 'image_facturee', 'video_facturee'];
+const EVENEMENTS = ['devis', 'demande402', 'paye_x402', 'paye_cle', 'refus_sans_cle', 'echec', 'chat_facture', 'image_facturee', 'video_facturee',
+  /* Les gratuits (18/10/2026) : servis sans facture — comptes pour savoir combien le site en sert. */
+  'chat_gratuit', 'image_gratuite'];
 const CANAUX = ['rest', 'mcp', 'chat', 'agent', 'studio'];
 const DELAI_MS = 5000;
 const JOURS_GARDES = 400;

@@ -109,7 +109,8 @@ process.env.STUDIO_DEX = '0'; process.env.SWOGE_PRIX_USD = '0.00002801'; process
     const cat = C.catalogue(0.00002801, { anthropic: true, openai: true, xai: true, perplexity: false });
     ok(!cat.modeles.find((x) => x.id === 'grok-4-3').recherche && cat.modeles.find((x) => x.id === 'opus-5-5').recherche, 'sans cle Perplexity : « Search » eteint pour GPT et Grok, Claude garde le sien');
     const cat2 = C.catalogue(0.00002801, { anthropic: true, openai: true, xai: true, perplexity: true });
-    ok(cat2.modeles.filter((x) => x.fournisseur !== 'anthropic').every((x) => x.recherche), 'avec la cle : « Search » pour tous les modeles');
+    /* Les gratuits n'ont pas de recherche (Perplexity se paie, studio_chat.GRATUITS). */
+    ok(cat2.modeles.filter((x) => x.fournisseur !== 'anthropic' && !x.gratuit).every((x) => x.recherche), 'avec la cle : « Search » pour tous les modeles payants');
   }
 
   console.log('\n-- 1 ter. les modeles peu censures : chemin, en-tetes, cout exact, texte seul (05/10) --');

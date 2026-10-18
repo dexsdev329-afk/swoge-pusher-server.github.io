@@ -2625,7 +2625,7 @@ const depsMedia = () => ({
     regle: (a, rw, fw) => { const s2 = game.studioRegle(a, rw, fw); persistSoon(); toAddr(a, { type: 'balance', balance: s2 }); return s2; },
   },
   fournisseur: studioXai,
-  fournisseurs: { grok: studioXai, openai: studioOpenai },
+  fournisseurs: { grok: studioXai, openai: studioOpenai, gratuit: studioGratuit },
   range: (u) => studioFichiers.range(u),
   comprend: chatActif('anthropic') ? { deps: { client: clientComprend() } } : null,
   reference: () => studioComprend.referenceSwoge({ site: SITE_URL }),
@@ -3444,6 +3444,8 @@ const studioMedia = require('./studio_media');   /* images et videos Grok Imagin
 const studioXai = require('./studio_xai');
 const reprises = require('./reprises');
 const studioOpenai = require('./studio_openai');
+/* Les images gratuites, sans cle (Pollinations, SDXL chez OVH) : studio_gratuit.js, 18/10/2026. */
+const studioGratuit = require('./studio_gratuit').cree();
 const studioCompat = require('./studio_compat');   /* le chat ChatGPT et Grok (Chat Completions) */
 const studioRecherche = require('./studio_recherche');   /* la recherche web pour GPT et Grok (Perplexity Search API) */
 const studioVoix = require('./studio_voix');   /* le vocal du chat : transcription, repli serveur quand le navigateur ne sait pas */
@@ -4960,9 +4962,10 @@ const server = http.createServer(async (req, res) => {
       const cours = await studioChat.coursSwoge();
       const M = studioChat.MESURE;
       return json(200, Object.assign(studioChat.catalogue(cours, { anthropic: chatActif('anthropic'), openai: chatActif('openai'), xai: chatActif('xai'),
-        venice: chatActif('venice'), openrouter: chatActif('openrouter'), deepseek: chatActif('deepseek'), mistral: chatActif('mistral'), perplexity: chatActif('perplexity') }), {
+        venice: chatActif('venice'), openrouter: chatActif('openrouter'), deepseek: chatActif('deepseek'), mistral: chatActif('mistral'), perplexity: chatActif('perplexity'),
+        gratuit: chatActif('gratuit') }), {
         /* Ce qu'on mesure, public : coût réel payé contre facturé. */
-        mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements,
+        mesure: { requetes: M.requetes, echecs: M.echecs, depassements: M.depassements, gratuits: M.gratuits,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) },
         /* Le repli vocal serveur : la page s'en sert quand le navigateur ne sait
            pas transcrire (sinon elle prend son micro, gratuit). */
@@ -4999,7 +5002,7 @@ const server = http.createServer(async (req, res) => {
       if (payV.credit) rv = enCredit(rv, addr);
       return json(rv.ok ? 200 : (rv.code || 500), rv);
     }
-    if (!['anthropic', 'openai', 'xai', 'venice', 'openrouter', 'deepseek', 'mistral'].some(chatActif)) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
+    if (!['anthropic', 'openai', 'xai', 'venice', 'openrouter', 'deepseek', 'mistral', 'gratuit'].some(chatActif)) return json(503, { ok: false, raison: 'The AI provider key is not set on the server yet.' });
     let q;
     /* 20 Mo : un PDF de 10 Mo en base64 (13,4 Mo) et quatre photos reduites
        par la page. Lu APRES la session : un inconnu ne peut rien envoyer. */
@@ -7414,8 +7417,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
     if (path === '/studio/media/catalogue') {
       const M = studioMedia.MESURE;
-      return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), { grok: studioXai.actif(), openai: studioOpenai.actif() }), {
+      return json(200, Object.assign(studioMedia.catalogue(await studioChat.coursSwoge(), { grok: studioXai.actif(), openai: studioOpenai.actif(), gratuit: studioGratuit.actif() }), {
         mesure: { images: M.images, videos: M.videos, echecs: M.echecs, depassements: M.depassements, sansUsage: M.sansUsage, reprises: M.reprises, reprisesRendues: M.reprisesRendues,
+                  gratuites: M.gratuites,
                   coutUsd: Number(M.coutUsd.toFixed(4)), factureUsd: Number(M.factureUsd.toFixed(4)) } }));
     }
     const jeton = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
@@ -7426,7 +7430,7 @@ const server = http.createServer(async (req, res) => {
       return json(r.ok ? 200 : r.code, r);
     }
     if (req.method !== 'POST') return json(405, { ok: false, raison: 'POST only' });
-    if (!studioXai.actif() && !studioOpenai.actif()) return json(503, { ok: false, raison: 'Image and video generation is not switched on yet.' });
+    if (!studioXai.actif() && !studioOpenai.actif() && !studioGratuit.actif()) return json(503, { ok: false, raison: 'Image and video generation is not switched on yet.' });
     let q;
     try { q = JSON.parse((await corps(req, 9 * 1024 * 1024)).toString('utf8') || '{}'); }
     catch (e) { return json(400, { ok: false, raison: 'unreadable request (an attached image must stay under 6 MB)' }); }

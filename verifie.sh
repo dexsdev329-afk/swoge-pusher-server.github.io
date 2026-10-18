@@ -124,6 +124,7 @@ lance studio  "$SRV" node studio.test.js   # le paiement : double depense, fauss
 lance studiochat "$SRV" node studio_chat.test.js   # SWOGE AI Chat : jamais sous le cout, tout rendu si le fournisseur echoue, bout en bout
 lance courschaine "$SRV" node cours_chaine.test.js   # cours $SWOGE sur la chaine quand DexScreener se tait : piscine connue, clone refuse, pompe sans effet
 lance compat  "$SRV" node studio_compat.test.js   # le chat ChatGPT et Grok : requete conforme, usage lu, cout exact xAI, 503 sans cle
+lance gratuit "$SRV" node studio_gratuit.test.js   # les modeles gratuits (18/10) : ni cours ni reserve ni facture, repli sur 429 seulement, quota par jour pris a la reponse reussie, jamais revendus (x402, agent, cle), images Pollinations safe=true et SDXL derriere le garde Qwen3Guard
 lance jeton   "$SRV" node studio_jeton.test.js    # une adresse de jeton dans le chat : piscine la plus profonde, GoPlus tri-etat, colonie avec effectifs
 lance pieces  "$SRV" node studio_pieces.test.js   # photo ou PDF joint : en-tetes lus, pire cas borne, PDF a Claude seul sur compte exact
 lance histo   "$SRV" node studio_histo.test.js    # historique par portefeuille : chacun son fichier, la plus recente gagne, jamais un vide sur un illisible
@@ -324,6 +325,7 @@ lance scanpage "$SITE" node scan_page.test.js
 lance osintpage "$SITE" node osint_page.test.js
 lance studiopage "$SITE" node studio_page.test.js
 lance chatpage "$SITE" node chat_page.test.js   # SWOGE AI Chat : jeton et jamais adresse, texte echappe, 320 px
+lance gratuitpg "$SITE" node gratuit_pages.test.js   # les gratuits dans SwoleMind (feuille « Free », image Free, n = 1) et dans le Studio (cartes du catalogue, « Free », plafond du serveur, ×1) ; jamais OVH ni Pollinations depuis la page
 lance prodpage "$SITE" node production_page.test.js   # SwoleMind series et pubs : jeton jamais adresse, photo reduite, echappe, 320 px
 lance essaipage "$SITE" node essai_montage_page.test.js   # SwoleMind essai de montage : proprietaire seul, longueur refusee dans la page, jeton jamais adresse, 320 px
 lance klingpage "$SITE" node kling_edition_page.test.js   # kling_essai.html « Edit a clip » : Kling O1 et Wan sur le meme clip, duree refusee dans la page, resultat Wan lu avec la session, 320 px

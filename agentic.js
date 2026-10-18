@@ -673,6 +673,13 @@ function llmsTxt(cat, u) {
    .concat(['', 'Pay other x402 services with your key: `POST ' + u.api + '/agentic/pay` with `{"url": "...", "query": {...}, "max_usd": 0.01}` and an `Idempotency-Key` header. The key owner turns payments on for that key first (per-call cap up to $0.10, optional allowed sites); SWOGE pays, only if the service answers 200, and bills the owner (dollar credit or $SWOGE). The same Idempotency-Key never pays twice. Every attempt is on a hash-chained audit: `GET ' + u.api + '/agentic/audit`.',
      '', 'Agent passport: `GET ' + u.api + '/agentic/passport` with your key returns your agent\'s passport (owner wallet, what it pays from, daily cap, permissions, measured history), signed in Ed25519 by SWOGE. Show it to another agent; anyone verifies it with the public key at `' + u.api + '/.well-known/swoge-passport.json`. A published passport is public at `' + u.api + '/agentic/passport/<id>`.',
      '', 'Dollar credit: a key can be set to pay from its owner\'s dollar credit instead of $SWOGE. Read it with `GET ' + u.api + '/credit` and top it up with one x402 payment (USDC on Base or Solana): `POST ' + u.api + '/credit/topup` with `{"usd": 5}` and your key; credited once the payment settles.'])
+   /* Le launchpad : ajoute a la main dans le llms.txt du site (9012a8a) sous un H2 de prose, il
+      manquait ici — d'ou l'ecart publie/genere de l'essai. Il vit maintenant dans le generateur, en
+      paragraphe AVANT les H2 (le format veut des listes de liens sous les H2), mis a jour pour V5
+      (contrats/v5/README.md du site : Uniswap v4, 198 monnaies, LP gardee par le hook, taxe <= 5 %). */
+   .concat(['',
+    'Separate from the pay-per-call tools above: the [SWOGE launchpad](' + u.site + '/launchpad.html) lets anyone launch a token on Robinhood Chain with SWOGE V5 — a Uniswap v4 pool paired with ETH, $SWOGE or one of 198 quote assets (tokenized stocks included), liquidity locked by the pool\'s hook, an optional creator fee capped at 5%, contracts verified on Blockscout — or on Solana via Pump.fun, non-custodial. Every launched token can get its own autonomous AI agent: it posts on X and Telegram when a real on-chain event happens (price move, buy pressure, holder milestone), replies to holders, scans the token\'s own security (Powered by Go+ Security), simulates a sell before trusting a pump, remembers what it said (no repetition), and learns from its own X engagement. The creator owns and controls it from their wallet (persona, objective, pause, link X/Telegram) with a signed proof — no admin key. It never invents a number. On-chain buy-back-and-burn from the token treasury is built but stays off until the creator explicitly enables it; until then it is shown as simulated (paper). The official $SWOGE contract is `0x8a166Fb41Cd659a0a43396272FF73973Ce29F817` (Robinhood Chain).',
+   ])
    .concat(['',
     '## Docs',
     '',
@@ -689,6 +696,7 @@ function llmsTxt(cat, u) {
     '',
     '- [SwogeAgentic in the browser](' + u.page + '): the same agent for humans, and where API keys are created',
     '- [SWOGE AI colony](' + u.site + '/swoge_ai.html): the autonomous colony whose measurements these tools return',
+    '- [SWOGE launchpad](' + u.site + '/launchpad.html): launch a token (Robinhood Chain or Solana) and give it its own AI agent',
     '']).join('\n');
 }
 

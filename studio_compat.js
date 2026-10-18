@@ -68,8 +68,26 @@ const FOURNISSEURS = {
   deepseek: { base: () => process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com', cle: () => process.env.DEEPSEEK_API_KEY || '', chemin: '/chat/completions' },
   /* base nue → + /v1/chat/completions = api.mistral.ai/v1/chat/completions. */
   mistral: { base: () => process.env.MISTRAL_BASE_URL || 'https://api.mistral.ai', cle: () => process.env.MISTRAL_API_KEY || '' },
+  /* ---- LES MODELES GRATUITS (18 octobre 2026, demande du proprietaire) ----
+   * OVHcloud AI Endpoints accepte un appel SANS cle : essai du 18/10 sur
+   * oai.endpoints.kepler.ai.cloud.ovh.net, /v1/chat/completions en streaming
+   * avec stream_options — gpt-oss-120b 3,5 s, Llama 3.3 70B 1,3 s, gpt-oss-20b
+   * 3,6 s pour une phrase courte ; Qwen3.5-397B, lui, raisonnait encore a 90 s
+   * (ecarte). Limite annoncee sans cle : 2 requetes par minute, par IP et par
+   * modele — l'IP etant celle du serveur, c'est TOUT le site qui la partage :
+   * d'ou `repli` (un 429 passe au modele suivant) et le quota par joueur de
+   * studio_chat.js. Avec `OVH_AI_KEY` posee, la meme route sort de la limite
+   * anonyme. `STUDIO_GRATUIT=0` coupe tout. */
+  gratuit: { base: () => process.env.GRATUIT_BASE_URL || 'https://oai.endpoints.kepler.ai.cloud.ovh.net',
+    cle: () => process.env.OVH_AI_KEY || '', sansCle: true },
 };
-function actif(f) { return !!(FOURNISSEURS[f] && String(FOURNISSEURS[f].cle()).trim()); }
+function actif(f) {
+  const F = FOURNISSEURS[f];
+  if (F && F.sansCle) return process.env.STUDIO_GRATUIT !== '0';
+  return !!(F && String(F.cle()).trim());
+}
+/* Un refus qui merite le modele suivant (gratuits seulement) : limite, surcharge, panne. */
+const REPLI_STATUTS = [429, 500, 502, 503, 504];
 
 /* Le crochet du plancher légal, laissé volontairement NEUTRE (05/10) : il voit
    le texte au fil de l'eau et le rend tel quel. Le jour où le propriétaire pose
@@ -134,15 +152,25 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
      (DeepSeek : `/chat/completions`). Les en-têtes optionnels d'un fournisseur
      (OpenRouter) rejoignent les en-têtes de base. */
   const chemin = F.chemin || '/v1/chat/completions';
-  const entetes = Object.assign({ 'content-type': 'application/json', authorization: 'Bearer ' + F.cle() },
+  const cle = String(F.cle() || '').trim();
+  const entetes = Object.assign({ 'content-type': 'application/json' }, cle || !F.sansCle ? { authorization: 'Bearer ' + cle } : {},
     (typeof F.entetes === 'function' ? F.entetes() : null) || {});
-  const r = await fetch(String(F.base()).replace(/\/$/, '') + chemin, {
-    method: 'POST',
-    headers: entetes,
-    body: JSON.stringify(corps),
-    /* L'arrêt du joueur OU le délai : AbortSignal.any (Node ≥ 20.3) ; sans lui, le délai seul (l'arrêt libère quand même la place). */
-    signal: signal && AbortSignal.any ? AbortSignal.any([AbortSignal.timeout(180000), signal]) : AbortSignal.timeout(180000),
-  });
+  /* Les gratuits essaient leurs replis dans l'ordre, sur un refus de limite ou de panne
+     AVANT tout texte ; les payants n'ont qu'un essai, comme avant. */
+  const essais = [m.api].concat(F.sansCle && Array.isArray(m.repli) ? m.repli : []);
+  let r;
+  for (let i = 0; i < essais.length; i++) {
+    corps.model = essais[i];
+    r = await fetch(String(F.base()).replace(/\/$/, '') + chemin, {
+      method: 'POST',
+      headers: entetes,
+      body: JSON.stringify(corps),
+      /* L'arrêt du joueur OU le délai : AbortSignal.any (Node ≥ 20.3) ; sans lui, le délai seul (l'arrêt libère quand même la place). */
+      signal: signal && AbortSignal.any ? AbortSignal.any([AbortSignal.timeout(180000), signal]) : AbortSignal.timeout(180000),
+    });
+    if (r.ok || i === essais.length - 1 || !REPLI_STATUTS.includes(r.status)) break;
+    try { await r.body.cancel(); } catch (e) { /* rien a lire */ }
+  }
   /* Venice donne son solde sur CHAQUE reponse (x-venice-balance-usd, « before the
      request was processed », docs.venice.ai/api-reference/api-spec) : l'alerte de
      solde bas le lit au passage (09/10/2026). */
@@ -161,7 +189,7 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
       { statut: r.status, code: code === null ? null : String(code), type, message_fournisseur: String(msg).slice(0, 300) });
   }
   const lecteur = r.body.getReader(), dec = new TextDecoder();
-  let tampon = '', texte = '', usage = null, stop = null, servi = m.api;
+  let tampon = '', texte = '', usage = null, stop = null, servi = corps.model;
   for (;;) {
     const { done, value } = await lecteur.read();
     if (done) break;
@@ -187,4 +215,4 @@ async function repond({ m, messages, recherche, effort, surTexte, surReflexion, 
            stop: stop === 'content_filter' ? 'refusal' : stop, servi };
 }
 
-module.exports = { repond, actif, usageDe, filtreSortie, FOURNISSEURS };
+module.exports = { repond, actif, usageDe, filtreSortie, FOURNISSEURS, REPLI_STATUTS };
