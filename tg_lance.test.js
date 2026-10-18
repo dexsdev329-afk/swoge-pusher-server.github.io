@@ -104,7 +104,8 @@ const JETON = '0x' + '1f'.repeat(20), POOL = '0x' + '2e'.repeat(20);
   ok(i > 0 && /offreDebit\(req\)/.test(bloc) && /corps\(req, 1024\)/.test(bloc) && /tgLance\.annonce\(\{ tg: q\.tg, tx: q\.tx \}\)/.test(bloc), 'POST /launchpad/v4/lance : debit borne, corps de 1 Ko, deux champs seulement');
   ok(!/signer|Wallet\(|privateKey|MIROIR_CLE/.test(bloc) && /x\.status === 1/.test(src) && /String\(l\.address\)\.toLowerCase\(\) !== launchpad/.test(src),
      'aucune signature ; seul un recu REUSSI compte, et seul le journal emis par le launchpad de l offre');
-  ok(/tgCommandes\.planifie\(\{ lanceur: tgLance \}\)/.test(src), 'le bot est arme avec le lanceur au demarrage');
+  /* 18/10 : « Swoge me » rejoint le lanceur dans les memes options ; l'intention reste : le lanceur est arme. */
+  ok(/tgCommandes\.planifie\(\{ lanceur: tgLance[,} ]/.test(src), 'le bot est arme avec le lanceur au demarrage');
 
   try { fs.rmSync(DIR, { recursive: true, force: true }); } catch (e) {}
   console.log('\nVERIFICATIONS : ' + n + (rates ? ' — ' + rates + ' RATE(S)' : ' — tout passe'));

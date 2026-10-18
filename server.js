@@ -12124,7 +12124,13 @@ server.listen(cfg.PORT, () => {
      lus au moment du post, jamais ecrits en dur. */
   xQuotidien = xPost.planifie((p) => tg.notifyPhoto(p.image, p.texte + '\n' + p.url), { game, colonie: aiColonie });
   /* Le bot repond a /id en prive, et a /launch partout (tg_lance.js, 03/10). */
-  tgCmd = tgCommandes.planifie({ lanceur: tgLance });
+  /* « Swoge me » (tg_swogeme.js, 18/10) : la photo de profil d'un nouveau membre, en portrait SWOGE, s'il clique. */
+  const tgSwogeme = require('./tg_swogeme').cree({ jeton: () => cfg.TG_BOT_TOKEN, dossier: cfg.DATA_DIR, actif: () => studioOpenai.actif(),
+    retouche: async ({ image, prompt }) => {
+      const r = await studioOpenai.images({ prompt, n: 1, format: '1:1', image, qualite: 'medium' });
+      return { url: (r.urls || [])[0] || null, coutUsd: studioMedia.coutOpenai(r.usage) };
+    } });
+  tgCmd = tgCommandes.planifie({ lanceur: tgLance, swogeme: tgSwogeme });
   /* Les agents par jeton postent tout seuls SEULEMENT si AGENT_HORLOGE=1 : eteint
      par defaut, donc rien ne poste en prod tant que le proprietaire ne l allume pas. */
   horlogeAgents = agentHorloge.planifie({ registre: REGISTRE_AGENTS, feed: MUR_AGENTS, fuel: FUEL_AGENTS, pense: (a) => penseAgent(a) },

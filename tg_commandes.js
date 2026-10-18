@@ -60,6 +60,7 @@ async function envoie(chatId, texte, prendre) {
 
 let enCours = false;
 let LANCEUR = null;   /* tg_lance.cree(...), pose par planifie */
+let SWOGEME = null;   /* tg_swogeme.cree(...), pose par planifie */
 /** Un tour : lit ce qui est arrive depuis le dernier decalage, repond, avance. */
 async function tour(opts) {
   const o = opts || {};
@@ -69,7 +70,9 @@ async function tour(opts) {
   try {
     const f = o.prendre || fetch;
     const etat = litEtat();
-    const q = etat.decalage ? '?offset=' + etat.decalage : '';
+    /* allowed_updates : les messages ET les clics de boutons (« Swoge me ») ; Telegram garde le
+       dernier reglage demande, on le redit donc a chaque lecture plutot que de dependre du passe. */
+    const q = '?allowed_updates=' + encodeURIComponent('["message","callback_query"]') + (etat.decalage ? '&offset=' + etat.decalage : '');
     const r = await f(`https://api.telegram.org/bot${cfg.TG_BOT_TOKEN}/getUpdates${q}`, { signal: AbortSignal.timeout(15000) });
     const j = await r.json().catch(() => ({}));
     if (!j.ok) return { etat: 'erreur', detail: String(j.description || r.status).slice(0, 100) };
@@ -78,6 +81,14 @@ async function tour(opts) {
     for (const u of j.result || []) {
       etat.decalage = u.update_id + 1;
       /* Un message qui echoue ne bloque pas les suivants, ni le decalage : sinon il serait relu et repondu en boucle. */
+      /* « Swoge me » (tg_swogeme.js, 18/10) : l'accueil d'un nouveau membre et le clic sur son bouton. */
+      const swogeme = o.swogeme || SWOGEME;
+      if (swogeme) {
+        try {
+          if (u.callback_query) await swogeme.clic(u.callback_query);
+          else if (u.message && u.message.new_chat_members) await swogeme.message(u.message);
+        } catch (e) { console.error('[tg] swogeme : ' + String(e.message || e).slice(0, 120)); }
+      }
       try {
         let rep = reponseA(u.message);
         if (!rep && lanceur && u.message) rep = await lanceur.commande(u.message);
@@ -94,7 +105,8 @@ async function tour(opts) {
 function planifie(deps) {
   if (!enabled()) { console.log('[tg] commandes ETEINTES : TG_BOT_TOKEN absent'); return null; }
   LANCEUR = (deps && deps.lanceur) || null;
-  console.log('[tg] commandes ARMEES : /id en prive' + (LANCEUR ? ', /launch partout' : ''));
+  SWOGEME = (deps && deps.swogeme) || null;
+  console.log('[tg] commandes ARMEES : /id en prive' + (LANCEUR ? ', /launch partout' : '') + (SWOGEME ? ', « Swoge me » aux nouveaux membres' : ''));
   const t = () => tour().catch((e) => console.error('[tg] commandes : ' + (e.message || e)));
   const premier = setTimeout(t, 20000);
   const minuterie = setInterval(t, 30000);
