@@ -61,11 +61,7 @@ function poseMonstre(R, j, dx, dy, pv) {
               pv: pv || 100000, pvMax: pv || 100000, dir: 'down', cible: null,
               recharge: 999, rechargeT: 999, stase: 0,
               feu: 0, feuReste: 0, feuTaux: 0, feuPar: null,
-              /* errChrono immense, errX = errY = 0 : le monstre ne flane pas. Mesure du 18/10 :
-                 avec errChrono 0, il tirait une direction au hasard (realm.js, « personne en vue »)
-                 et 1 passage sur 5 il avait erre a 259 px en 4 s — le familier, sans ennemi pres de
-                 lui, se taisait, et « elle part des qu il manque du mana » tombait. */
-              errX: 0, errY: 0, errChrono: 1e9 };
+errX: 0, errY: 0, errChrono: 0 };
   R.monstres.push(m);
   return m;
 }
@@ -215,14 +211,20 @@ console.log('\n-- ce qui ne sert a personne ne brule pas le delai --');
 console.log('\n-- mana plein : l emprise se tait --');
 {
   const { R, j } = scene('tenebre', 100);
-  poseMonstre(R, j, 40, 0);
+  /* Le monstre est TENU a 40 px : mesure du 19/10, 8 echecs sur 120 passages — il prenait le joueur
+     pour cible et reculait a 210-259 px (garder ses distances), hors du rayon du soutien
+     (realm.js, _autourDe) ; le familier se taisait et « elle part des qu il manque du mana »
+     tombait. Fige par `stase`, il ne declenche plus rien (0 sur 120) : on le replace donc a
+     chaque pas (avanceTenu) — il garde son comportement, pas sa distance. Ici seulement. */
+  const tenu = poseMonstre(R, j, 40, 0);
+  const avanceTenu = (sec) => { const evs = []; for (let t = 0; t < sec; t += 0.1) { tenu.x = j.x + 40; tenu.y = j.y; evs.push(R.pas(0.1)); } return evs; };
   eq(j.mp, j.mpMax, 'le joueur part avec sa reserve pleine');
-  const evs = avance(R, 0.5);
+  const evs = avanceTenu(0.5);
   eq(gestes(evs, 'emprise').length, 0, 'rien a verser, rien ne part');
   eq(j.famSoutienR, 0, 'et le delai reste entier');
   /* Des qu il manque du mana, elle part — sans avoir rien perdu a attendre. */
   j.mp = 10;
-  ok(gestes(avance(R, 4.0), 'emprise').length === 1, 'elle part des qu il manque du mana');
+  ok(gestes(avanceTenu(4.0), 'emprise').length === 1, 'elle part des qu il manque du mana');
 }
 
 /* ================== 5. IL PASSE DEVANT, ET IL N'EN FAIT QU'UN ============= */
