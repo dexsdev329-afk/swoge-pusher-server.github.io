@@ -22,6 +22,11 @@
  *      reponse a l'accueil. Le droit n'est pris qu'a la LIVRAISON : une panne ne
  *      le mange pas (deux essais au plus par personne).
  *
+ * DANS LE GROUPE, RIEN QUE LES IMAGES (proprietaire, 18/10 : « met pas toutes les notifs, juste
+ * pour les images OpenAI ») : l'accueil (il porte le bouton) et les portraits. Tout le reste —
+ * pas de photo, portrait rate, plafond, deja fait — est une fenetre du clic (answerCallbackQuery),
+ * que seul celui qui a clique voit. La photo est donc lue AVANT de repondre au clic.
+ *
  * Ce qui borne la depense : TG_SWOGEME_JOUR portraits par jour UTC pour toute
  * la maison (20). Le cout reel de chaque portrait (usage OpenAI, grille de
  * studio_media) est ecrit au journal : c'est lui qui dira si 20 est trop.
@@ -37,8 +42,8 @@ const ESSAIS_MAX = 2;
 const PHOTO_MAX_OCTETS = 5 * 1024 * 1024;
 const ACCUEILLIS_MAX = 5000;
 const JOUR = () => Math.max(0, Number(process.env.TG_SWOGEME_JOUR || 20));
-/* Les groupes ou le bot accueille : @swoleswoge, plus TG_SWOGEME_CHATS (noms ou identifiants). */
-const GROUPES = () => ['swoleswoge'].concat(String(process.env.TG_SWOGEME_CHATS || '').split(',').map((x) => x.trim().replace(/^@/, '').toLowerCase()).filter(Boolean));
+/* Le seul groupe ou le bot accueille : @swoleswoge (« juste swoleswoge », proprietaire, 18/10). */
+const GROUPES = () => ['swoleswoge'];
 
 /* Le portrait : le personnage SWOGE (le meme que les posts X, x_post.js PERSONNAGE), en gardant de
    la photo ce qui fait qu'on s'y reconnait sans montrer de visage humain. */
@@ -55,12 +60,12 @@ const TEXTES = {
   bouton: (nom) => '🐶 Swoge me' + (nom ? ' — ' + nom : ''),
   pasPourToi: 'This button is for the new member 🙂',
   dejaFait: 'You already got your SWOGE portrait 🐶',
-  enCours: 'Working on it — about a minute ⏳',
-  file: 'In the queue — your portrait is coming ⏳',
+  enCours: 'Working on it — your portrait appears here in about a minute ⏳ (nothing after 5 minutes? tap again)',
+  file: 'In the queue — your portrait is coming ⏳ (nothing after 5 minutes? tap again)',
   sansPhoto: 'I can\'t see a profile photo. Set one visible to Everyone (Settings → Privacy → Profile photos), then tap again.',
+  epuiseLecture: 'I couldn\'t read your profile photo right now — tap again in a minute.',
   plein: 'Today\'s SWOGE portraits are all done — tap again tomorrow!',
   eteint: 'SWOGE portraits are off right now.',
-  rate: 'The portrait didn\'t come out — tap the button again in a few minutes.',
   epuise: 'The portrait didn\'t come out twice — sorry, it won\'t retry.',
   legende: (nom) => '🐶 ' + nom + ' just got SWOGED! Welcome to the pack 💪',
 };
@@ -148,11 +153,9 @@ function cree(deps) {
   }
 
   /* Le portrait lui-meme, dans la file (un a la fois pour tout le serveur). */
-  async function fabrique(q, uid) {
+  async function fabrique(q, uid, photo) {
     const t = maintenant();
     try {
-      const photo = await photoDe(uid);
-      if (!photo) { MESURE.sansPhoto++; await api('sendMessage', { chat_id: q.message.chat.id, text: nomDe(q.from) + ': ' + TEXTES.sansPhoto, reply_parameters: { message_id: q.message.message_id, allow_sending_without_reply: true } }); return 'sans photo'; }
       const r = await d.retouche({ image: photo, prompt: PROMPT });
       if (!r || !r.url) throw new Error('aucune image rendue');
       await envoiePhoto(q.message.chat.id, r.url, TEXTES.legende(nomDe(q.from)), q.message.message_id);
@@ -166,8 +169,8 @@ function cree(deps) {
     } catch (x) {
       MESURE.echecs++;
       console.error('[swogeme] portrait rate (' + uid + ') : ' + String(x && x.message || x).slice(0, 160));
+      /* Rien dans le groupe : le bouton reste, la fenetre du clic avait dit de recliquer. */
       const e = lis(); e.essais[uid] = (e.essais[uid] || 0) + 1; ecris(e);
-      try { await api('sendMessage', { chat_id: q.message.chat.id, text: nomDe(q.from) + ': ' + (e.essais[uid] >= ESSAIS_MAX ? TEXTES.epuise : TEXTES.rate) }); } catch (y) { /* rien de plus a dire */ }
       return 'rate';
     } finally {
       enVol.delete(uid);
@@ -193,8 +196,12 @@ function cree(deps) {
     if (faitsJour + enVol.size >= JOUR()) { MESURE.pleins++; await repond(TEXTES.plein, true); return 'plein'; }
     const attente = enVol.size > 0;
     enVol.add(uid);
+    let photo;
+    try { photo = await photoDe(uid); }
+    catch (x) { enVol.delete(uid); console.error('[swogeme] photo illisible (' + uid + ') : ' + String(x && x.message || x).slice(0, 120)); await repond(TEXTES.epuiseLecture, true); return 'photo illisible'; }
+    if (!photo) { enVol.delete(uid); MESURE.sansPhoto++; await repond(TEXTES.sansPhoto, true); return 'sans photo'; }
     await repond(attente ? TEXTES.file : TEXTES.enCours);
-    const travail = file.then(() => fabrique(q, uid));
+    const travail = file.then(() => fabrique(q, uid, photo));
     file = travail.catch(() => {});
     return d.attendre ? travail : 'lance';
   }

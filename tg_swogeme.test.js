@@ -8,7 +8,9 @@
  *   3. le portrait part dans le groupe, en reponse a l'accueil, et UNE seule fois
  *      par personne ; une panne ne prend pas le droit, deux pannes l'epuisent ;
  *   4. le plafond du jour compte les portraits en route ; TG_SWOGEME=0 eteint ;
- *   5. aucune photo n'est ecrite sur le disque, seulement l'identifiant, l'heure et le cout.
+ *   5. aucune photo n'est ecrite sur le disque, seulement l'identifiant, l'heure et le cout ;
+ *   6. dans le groupe, RIEN que l'accueil et les portraits (proprietaire, 18/10) : le reste est
+ *      une fenetre du clic, vue de celui qui a clique seulement ; @swoleswoge seul.
  */
 const fs = require('fs');
 const os = require('os');
@@ -74,7 +76,9 @@ const clicDe = (uid, deQui, msgId) => ({ id: 'cb' + Math.random(), data: 'swogem
   eq(await M.X.clic(clicDe(11, 12)), 'pas pour toi', 'un autre membre ne peut pas cliquer');
   eq(M.retouches.length, 0, 'et rien n est fabrique');
   eq(await M.X.clic(clicDe(13, 13)), 'sans photo', 'sans photo visible : on le dit');
-  ok(/Privacy/.test(M.appels.filter((a) => a.methode === 'sendMessage').pop().corps.text), 'avec le chemin du reglage');
+  const fen = M.appels.filter((a) => a.methode === 'answerCallbackQuery').pop();
+  ok(fen && fen.corps.show_alert === true && /Privacy/.test(fen.corps.text), 'dans une fenetre du clic, avec le chemin du reglage');
+  eq(M.appels.filter((a) => a.methode === 'sendMessage').length, 0, 'et rien dans le groupe');
   ok(!M.X.lis().faits[13] && !M.X.lis().essais[13], 'et rien n est consomme');
 
   console.log('-- 3. le portrait');
@@ -95,7 +99,8 @@ const clicDe = (uid, deQui, msgId) => ({ id: 'cb' + Math.random(), data: 'swogem
   M = monde({ retoucheCasse: true });
   eq(await M.X.clic(clicDe(12, 12)), 'rate', 'une panne d OpenAI');
   ok(!M.X.lis().faits[12] && M.X.lis().essais[12] === 1, 'le droit n est pas pris, l essai est compte');
-  ok(/tap the button again/.test(M.appels.filter((a) => a.methode === 'sendMessage').pop().corps.text), 'on lui dit de recliquer');
+  ok(/tap again/.test(M.appels.filter((a) => a.methode === 'answerCallbackQuery')[0].corps.text), 'la fenetre du clic avait dit : rien apres 5 minutes, recliquez');
+  eq(M.appels.filter((a) => a.methode === 'sendMessage').length, 0, 'et la panne ne dit rien dans le groupe');
   eq(await M.X.clic(clicDe(12, 12)), 'rate', 'deuxieme panne');
   eq(await M.X.clic(clicDe(12, 12)), 'epuise', 'apres deux essais : plus de nouvel essai (la depense reste bornee)');
   M = monde({ sendPhotoCasse: true });
@@ -113,7 +118,10 @@ const clicDe = (uid, deQui, msgId) => ({ id: 'cb' + Math.random(), data: 'swogem
   /* Deux clics en meme temps : le second attend dans la file, et le plafond compte celui en route. */
   process.env.TG_SWOGEME_JOUR = '1';
   const M3 = monde();
-  const X3 = S.cree({ jeton: () => 'J', dossier: M3.dossier, prendre: async (u, i) => ({ ok: true, json: async () => ({ ok: true, result: /getUserProfilePhotos/.test(u) ? { photos: [] } : true }) }), retouche: async () => ({}), actif: () => true, maintenant: Date.now });
+  /* La photo est lue AVANT de repondre au clic (18/10) : le faux Telegram en a une pour chacun. */
+  const X3 = S.cree({ jeton: () => 'J', dossier: M3.dossier, prendre: async (u) => (/\/file\/bot/.test(u) ? { ok: true, arrayBuffer: async () => JPEG }
+    : { ok: true, json: async () => ({ ok: true, result: /getUserProfilePhotos/.test(u) ? { photos: [[{ file_id: 'f', width: 1, height: 1 }]] } : /getFile/.test(u) ? { file_path: 'p.jpg' } : true }) }),
+    retouche: () => new Promise(() => {}), actif: () => true, maintenant: Date.now });
   const a = X3.clic(clicDe(31, 31)), b = X3.clic(clicDe(32, 32));
   const ra = await a, rb = await b;
   ok(ra === 'lance' && rb === 'plein', 'deux clics simultanes, plafond 1 : le second est refuse [' + ra + ', ' + rb + ']');
@@ -125,10 +133,16 @@ const clicDe = (uid, deQui, msgId) => ({ id: 'cb' + Math.random(), data: 'swogem
   delete process.env.TG_SWOGEME;
   M = monde({ actif: false });
   eq(await M.X.clic(clicDe(11, 11)), 'eteint', 'sans OpenAI : eteint, rien ne part');
+  console.log('-- 6. rien que les images, @swoleswoge seul');
   process.env.TG_SWOGEME_CHATS = '@MonGroupe,-1009';
   M = monde();
-  eq((await M.X.message({ chat: { id: -1009, type: 'group' }, new_chat_members: [membre(41)] })).accueil, 1, 'TG_SWOGEME_CHATS : un groupe ajoute par identifiant');
-  eq((await M.X.message({ chat: { id: -3, type: 'supergroup', username: 'mongroupe' }, new_chat_members: [membre(42)] })).accueil, 1, 'et par nom (@, casse ignores)');
+  eq(await M.X.message({ chat: { id: -3, type: 'supergroup', username: 'mongroupe' }, new_chat_members: [membre(42)] }), null, 'un autre groupe, meme nomme dans l environnement : rien');
+  delete process.env.TG_SWOGEME_CHATS;
+  ok((await M.X.message({ chat: { id: -4, type: 'supergroup', username: 'SwoleSwoge' }, new_chat_members: [membre(43)] })).accueil === 1, '@swoleswoge, casse ignoree : accueil');
+  M = monde({ photos: { 11: true } });
+  await M.X.clic(clicDe(11, 12)); await M.X.clic(clicDe(13, 13)); await M.X.clic(clicDe(11, 11)); await M.X.clic(clicDe(11, 11));
+  const auGroupe = M.appels.filter((a) => a.methode === 'sendMessage' || a.methode === 'sendPhoto').map((a) => a.methode);
+  eq(auGroupe.join(','), 'sendPhoto', 'autre membre, sans photo, portrait, deja fait : une seule chose dans le groupe, le portrait');
 
   console.log(rates ? 'RATES : ' + rates + '/' + n : n + ' verifications OK');
   process.exit(rates ? 1 : 0);
