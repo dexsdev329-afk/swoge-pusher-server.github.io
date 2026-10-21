@@ -244,17 +244,31 @@ function cree(deps) {
    *  5 eth_call par jeton, 4 jetons = un lot de 20 = une requete HTTP. Une erreur (budget, noeud)
    *  laisse la file telle quelle : elle est relue au cycle suivant. */
   async function metasDuCarnet(bilan) {
+    /* le carnet ne prend JAMAIS les derniers 10 % du plafond du jour : le detecteur passe d'abord */
+    const jr = R.jour ? R.jour() : null;
+    if (jr && jr.http >= JOUR_HTTP * 0.9) { bilan.carnetMetas = 'reserve du jour'; return; }
     const q = deps.carnet.aLire();
-    if (!q.length) return;
+    const sol = typeof deps.carnet.soldesALire === 'function' ? deps.carnet.soldesALire(q.length) : [];
+    if (!q.length && !sol.length) return;
     try {
-      const rs = await R.lot(q.flatMap(({ jeton: j }) => [SEL_NAME, SP.SELECTEUR.SYMBOL, SP.SELECTEUR.DESCRIPTION, SP.SELECTEUR.SOCIALS, SP.SELECTEUR.LOGO]
-        .map((s) => ({ method: 'eth_call', params: [{ to: j, data: s }, 'latest'] }))));
-      q.forEach(({ jeton: j }, i) => {
-        const r = (k) => { const x = rs[i * 5 + k]; return (x && x.result) || null; };
+      /* 6 lectures par jeton : nom, symbole, description, reseaux, logo, et la taxe du createur
+         lue sur la courbe (un jeton sans courbe connue : balanceOf(0) sur lui-meme, ignore) */
+      const appels = q.flatMap(({ jeton: j, courbe }) => [SEL_NAME, SP.SELECTEUR.SYMBOL, SP.SELECTEUR.DESCRIPTION, SP.SELECTEUR.SOCIALS, SP.SELECTEUR.LOGO]
+        .map((s) => ({ method: 'eth_call', params: [{ to: j, data: s }, 'latest'] }))
+        .concat([{ method: 'eth_call', params: [{ to: courbe || j, data: courbe ? SP.SELECTEUR.CREATOR_TAX : '0x70a08231' + '0'.repeat(64) }, 'latest'] }]))
+        /* le solde du createur : balanceOf(dev) sur le jeton */
+        .concat(sol.map(({ jeton: j, dev }) => ({ method: 'eth_call', params: [{ to: j, data: '0x70a08231' + '0'.repeat(24) + dev.slice(2) }, 'latest'] })));
+      const rs = await R.lot(appels);
+      q.forEach(({ jeton: j, courbe }, i) => {
+        const r = (k) => { const x = rs[i * 6 + k]; return (x && x.result) || null; };
         const nom = SP.chaineAbi(r(0)), symbole = SP.chaineAbi(r(1)), description = SP.chaineAbi(r(2)), socials = SP.decodeSocials(r(3)), logo = SP.chaineAbi(r(4));
-        deps.carnet.meta(j, nom == null && symbole == null ? null : { nom, symbole, description, socials: socials || [], logo });
+        let taxePct = null;
+        const t = r(5);
+        if (courbe && t && /^0x[0-9a-f]{1,64}$/i.test(t)) { const b = Number(BigInt(t)); if (b >= 0 && b <= 10000) taxePct = b / 100; }
+        deps.carnet.meta(j, nom == null && symbole == null ? null : { nom, symbole, description, socials: socials || [], logo, taxePct });
       });
-      bilan.carnetMetas = q.length;
+      sol.forEach(({ jeton: j, h }, k) => { const x = rs[q.length * 6 + k]; deps.carnet.solde(j, h, x && x.result ? x.result : null); });
+      bilan.carnetMetas = q.length; bilan.carnetSoldes = sol.length;
     } catch (e) { bilan.carnetMetas = 'erreur : ' + String((e && e.message) || e).slice(0, 60); }
   }
 

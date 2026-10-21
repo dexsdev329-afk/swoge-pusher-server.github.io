@@ -275,7 +275,10 @@ function instance(w, o) {
     const co = r.cycles.map((x) => x.appels);
     ok(r.cycles.every((x) => x.statut === 'ok' && x.appels <= 7), 'chaque cycle dans son budget : ' + co.join(', ') + ' requetes HTTP');
     egal(r.w.dsAppels.length, 1, 'une seule lecture DexScreener orders (au lancement)');
-    egal(r.w.autres.length, 0, 'aucune autre requete exterieure');
+    /* le carnet des lancements (21/10, lancements_carnet.js) lit DexScreener de son cote, sur ses
+       routes documentees seulement : le DETECTEUR, lui, ne fait toujours aucune autre requete */
+    const carnetDs = (u) => /^https:\/\/api\.dexscreener\.com\/(tokens\/v1\/robinhood\/|orders\/v1\/robinhood\/|metas\/(trending\/v1|meta\/v1\/))/.test(u);
+    egal(r.w.autres.filter((u) => !carnetDs(String(u))).length, 0, 'aucune autre requete exterieure (hors carnet : ' + r.w.autres.filter((u) => carnetDs(String(u))).length + ' lectures du carnet sur ses routes)');
     const v = r.I.vue().lancements;
     ok(v && v.courbes.suivies === 1 && v.ignition.nonce === 91, 'la vue : une courbe suivie, le nonce d’IGNITION');
     ok(!JSON.stringify(r.I.vue()).includes('Pas un conseil'), 'la vue publique ne porte aucun texte d’alerte');

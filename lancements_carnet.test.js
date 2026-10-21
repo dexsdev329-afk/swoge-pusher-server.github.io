@@ -31,6 +31,8 @@ function banc(o) {
   const marche = o.marche || new Map();         // jeton -> { prix, fdv, liq }
   const appels = [];
   const prendre = async (url) => {
+    /* le banc ne compte que tokens/v1 ; commandes et metas rendent du vide */
+    if (!/\/tokens\/v1\//.test(String(url))) return { ok: true, status: 200, text: async () => (/orders/.test(String(url)) ? '{"orders":[],"boosts":[]}' : '[]') };
     const l = String(url).split('/').pop().split(',');
     appels.push(l.length);
     const corps = l.filter((j) => marche.has(j)).map((j) => ({ chainId: 'robinhood', dexId: 'uniswap', pairAddress: A(9999), baseToken: { address: j }, priceUsd: String(marche.get(j).prix),
@@ -54,14 +56,14 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
 
   console.log('-- 2. les metadonnees');
   for (let i = 2; i <= 7; i++) b.C.naissance({ jeton: A(i), t: T0 + i * 1000, deployer: A(500) });
-  eq(b.C.aLire().length, K.META_PAR_CYCLE, 'au plus 4 jetons par cycle');
+  eq(b.C.aLire().length, K.META_PAR_CYCLE, 'au plus 3 jetons par cycle (6 lectures chacun, un lot de 20 avec 2 soldes)');
   b.C.meta(A(1), { nom: 'Doge AI Agent', symbole: 'DAGI', description: 'The first AI dog on Robinhood Chain', socials: ['https://x.com/dagi', 'https://t.me/dagi', 'https://dagi.xyz'], logo: 'ipfs://x' });
   const f1 = b.C._fiches.get(A(1));
   ok(f1.th.includes('ai') && f1.th.includes('dog') && f1.th.includes('robinhood'), 'themes tires du nom et de la description : ' + f1.th.join(','));
   ok(f1.res.x && f1.res.tg && f1.res.site && f1.res.n === 3, 'reseaux : X, Telegram, site');
   ok(!b.C.aLire().some((x) => x.jeton === A(1)), 'lu : il quitte la file');
   b.C.meta(A(2), null); b.C.meta(A(2), null);
-  ok(b.C.aLire().length === 4 && b.C._etat().file.some((x) => x.jeton === A(2)), 'deux lectures vides : encore en file (en fin)');
+  ok(b.C.aLire().length === K.META_PAR_CYCLE && b.C._etat().file.some((x) => x.jeton === A(2)), 'deux lectures vides : encore en file (en fin)');
   b.C.meta(A(2), null);
   ok(!b.C._etat().file.some((x) => x.jeton === A(2)) && b.C.vue().compteurs.metasAbandonnees === 1, 'la troisieme : abandonne, compte');
   eq(K.themesDe('Bob', 'BOB', null).join(), 'other', 'aucun mot connu : « other »');
@@ -120,6 +122,60 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
   ok(B.parDevDejaVivant['a previous one lived 24 h'].n === 29, 'le createur de 30 lancements : 29 viennent apres un jeton vivant a 24 h');
   ok(B['7j'] === undefined && B.tout['7j'].mesures === 0 && B.tout['7j'].vivantsPct === null, '7 j : rien de mesure, rien de dit');
 
+  console.log('-- 6 bis. qui tient le projet : createur, taxe, CTO, metas DexScreener');
+  {
+    const g2 = banc();
+    const ordres = new Map();      // jeton -> orders
+    const metas = { trending: [{ slug: 'dog' }, { slug: 'cat' }], dog: [A(2)], cat: [] };
+    const prendre0 = g2.C;          // (le banc garde son prendre ; on en refait un qui sert aussi orders et metas)
+    void prendre0;
+    const H = { now: T0 };
+    const appels = [];
+    const prendre = async (url) => {
+      const u = String(url); appels.push(u);
+      let corps;
+      if (/\/orders\/v1\/robinhood\//.test(u)) { const j = u.split('/').pop(); corps = { orders: ordres.get(j) || [], boosts: [] }; }
+      else if (/\/metas\/trending\/v1$/.test(u)) corps = metas.trending;
+      else if (/\/metas\/meta\/v1\//.test(u)) { const sl = u.split('/').pop(); corps = { name: sl, tokenCount: 3, pairs: (metas[sl] || []).map((j) => ({ chainId: 'robinhood', baseToken: { address: j } })).concat([{ chainId: 'solana', baseToken: { address: 'So1' } }]) }; }
+      else { const l = u.split('/').pop().split(','); corps = l.map((j) => ({ chainId: 'robinhood', baseToken: { address: j }, priceUsd: '1', fdv: 1e5, liquidity: { usd: j === A(4) ? 100 : 20000 } })); }
+      return { ok: true, status: 200, text: async () => JSON.stringify(corps) };
+    };
+    const D = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-g-'));
+    const C2 = K.cree({ dossier: D, prendre, horloge: () => H.now });
+    for (let i = 1; i <= 4; i++) C2.naissance({ jeton: A(i), t: T0, deployer: A(700 + i), plateforme: 'pons' });
+    ok(C2._etat().soldes.length === 4 && C2._etat().soldes.every((x) => x.h === 't2'), 'chaque naissance Pons : son solde de createur a T+2 en file');
+    const p = (pct) => '0x' + (BigInt(pct) * 10n ** 25n).toString(16);    // pct % de 1e27
+    for (let i = 1; i <= 4; i++) C2.solde(A(i), 't2', p(10));
+    eq(C2._fiches.get(A(1)).soldeMax, 10, 'solde a T+2 : 10 % de l offre');
+    C2.solde(A(9), 't2', p(1));
+    C2.solde(A(1), 'x', 'pas-hex');
+    ordres.set(A(3), [{ type: 'communityTakeover', status: 'approved' }, { type: 'tokenProfile', status: 'approved' }]);
+    H.now = T0 + 1441 * 60e3;
+    await C2.tic();       // la liste des metas (1er tic), le suivi 24 h (tokens/v1)
+    ok(appels.some((u) => /metas\/trending/.test(u)), 'la liste des metas DexScreener : lue une fois');
+    ok(C2._etat().ordres.length === 3 && !C2._etat().ordres.some((x) => x.jeton === A(4)), '24 h : les commandes DexScreener en file pour les 3 jetons VIVANTS seulement');
+    ok(C2._etat().soldes.filter((x) => x.h === '24h').length === 4, '24 h : le solde des 4 createurs en file');
+    /* le createur : A1 garde tout, A2 a tout vendu, A3 a tout vendu (CTO DexScreener), A4 a tout vendu et le jeton est mort */
+    C2.solde(A(1), '24h', p(10)); C2.solde(A(2), '24h', '0x0'); C2.solde(A(3), '24h', '0x0'); C2.solde(A(4), '24h', '0x0');
+    await C2.tic(); await C2.tic();
+    ok(appels.filter((u) => /orders\/v1/.test(u)).length === 3, 'commandes lues, 2 par tic au plus');
+    ok(appels.filter((u) => /metas\/meta\/v1/.test(u)).length === 2, 'une meta par tic');
+    eq(C2._fiches.get(A(2)).dsMetas.join(), 'dog', 'A2 est dans la meta « dog » de DexScreener (les autres chaines ignorees)');
+    eq(C2.gouvernance(C2._fiches.get(A(1)), '24h'), 'team', 'A1 : createur encore la, vivant -> team');
+    eq(C2.gouvernance(C2._fiches.get(A(2)), '24h'), 'cto', 'A2 : createur parti, vivant -> cto (hypothese)');
+    eq(C2.gouvernance(C2._fiches.get(A(3)), '24h'), 'cto', 'A3 : commande communityTakeover -> cto');
+    eq(C2.gouvernance(C2._fiches.get(A(4)), '24h'), 'rug', 'A4 : createur parti, jeton mort -> rug');
+    const Bg = C2.bilan();
+    ok(Bg.gouvernance['24h'].n === 4 && Bg.gouvernance['24h'].parts === null && Bg.gouvernance['24h'].comptes.cto === 2, 'gouvernance 24 h : 4 fiches comptees, part refusee sous 40');
+    C2.meta(A(1), { nom: 'X', symbole: 'X', taxePct: 0 });
+    C2.meta(A(2), { nom: 'Y', symbole: 'Y', taxePct: 2.5 });
+    const Bt = C2.bilan();
+    ok(Bt.parTaxe === undefined || Bt.parTaxe, 'bilan par taxe present');
+    eq(C2._fiches.get(A(2)).taxe, 2.5, 'taxe du createur gardee (2,5 %)');
+    const C3 = K.cree({ dossier: D, prendre, horloge: () => H.now });
+    ok(C3._fiches.get(A(2)).dsMetas.includes('dog') && C3._fiches.get(A(4)).soldes['24h'] === 0 && C3.gouvernance(C3._fiches.get(A(3)), '24h') === 'cto', 'redemarrage : soldes, commandes et metas relus du disque');
+  }
+
   console.log('-- 6. branche dans les lancements et le serveur');
   const src = fs.readFileSync(path.join(__dirname, 'smart_lancements.js'), 'utf8');
   ok(/s\.t2 = \{ acheteurs: j2\.acheteurs[^\n]*\n[^\n]*\n\s*if \(deps\.carnet\) \{ try \{ deps\.carnet\.naissance\(/.test(src), 'au T+2 de CHAQUE courbe (pas seulement les alertees) : naissance au carnet');
@@ -137,7 +193,7 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
   eq(lots.length, 0, 'un cycle coupe avant la fin (noeud absent) : pas de lecture du carnet');
   const bl = {};
   await LZ._metasDuCarnet(bl);
-  ok(lots.length === 1 && lots[0] === 10, 'deux jetons : UN lot de 10 eth_call (nom, symbole, description, reseaux, logo)');
+  ok(lots.length === 1 && lots[0] === 12, 'deux jetons : UN lot de 12 eth_call (nom, symbole, description, reseaux, logo, taxe)');
   const m1 = pris.find((x) => x.meta === A(1)), m2 = pris.find((x) => x.meta === A(2));
   ok(m1 && m1.m && m1.m.nom === 'Dog One' && m1.m.symbole === 'DOG1' && m1.m.description === 'hello' && m1.m.logo === 'ipfs://l', 'A1 : nom, symbole, description, logo decodes');
   ok(m2 && m2.m === null && bl.carnetMetas === 2, 'A2 sans reponse : null (relu plus tard)');
@@ -145,6 +201,23 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
   const bl2 = {};
   await LZ._metasDuCarnet(bl2);
   ok(/^erreur/.test(bl2.carnetMetas), 'un lot refuse : note, rien ne casse');
+  /* les soldes du createur dans le meme lot, et la reserve du jour */
+  const faux2 = { aLire: () => [{ jeton: A(1), courbe: A(101) }], meta: (j, m) => pris.push({ meta2: j, m }), soldesALire: (n) => [{ jeton: A(1), dev: A(500), h: '24h' }].slice(0, 20 - 6 * n), solde: (j, h, brut) => pris.push({ solde: j, h, brut }) };
+  const appelsLot = [];
+  const R2 = { lot: async (q) => { appelsLot.push(q); return q.map((x, i) => ({ result: i === 5 ? '0x' + (250).toString(16).padStart(64, '0') : i === 6 ? '0x' + (10n ** 26n).toString(16).padStart(64, '0') : '0x' })); },
+    nouvellePasse() {}, etat: { passe: {} }, pointe: async () => { throw new Error('non'); }, jour: () => ({ http: 100 }) };
+  const LZ2 = SLZ.cree({ R: R2, B: { meta() { return null; }, pose() {}, sauve() {} }, horloge: () => T0, dors: async () => {}, prendre: async () => { throw new Error('non'); }, env: {}, note() {}, envoie: async () => false, carnet: faux2 });
+  await LZ2._metasDuCarnet({});
+  const q = appelsLot[0];
+  ok(q.length === 7 && q[5].params[0].to === A(101) && q[5].params[0].data === '0xc1bb8901', 'la taxe du createur lue sur la COURBE (creatorTaxBps)');
+  ok(q[6].params[0].to === A(1) && q[6].params[0].data === K.SEL_BALANCE + '0'.repeat(24) + A(500).slice(2), 'le solde : balanceOf(createur) sur le jeton');
+  const pm = pris.find((x) => x.meta2 === A(1)), ps = pris.find((x) => x.solde === A(1));
+  ok(pm && pm.m === null, 'sans nom ni symbole : meta vide (relue plus tard)');
+  ok(ps && ps.h === '24h' && BigInt(ps.brut) === 10n ** 26n, 'le solde lu passe au carnet');
+  R2.jour = () => ({ http: SLZ.JOUR_HTTP * 0.95 });
+  const bl3 = {};
+  await LZ2._metasDuCarnet(bl3);
+  ok(appelsLot.length === 1 && bl3.carnetMetas === 'reserve du jour', 'au-dela de 90 % du plafond du jour : le carnet ne lit plus rien (le detecteur passe d abord)');
   const M = require('./smart_money');
   ok(typeof M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements === 'function' && M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements().actif === false, 'smart_money : carnetLancements (inactif avant l allumage)');
   ok(/path === '\/ai\/smart\/lancements'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')), 'la route /ai/smart/lancements (meme debit que /ai/smart)');

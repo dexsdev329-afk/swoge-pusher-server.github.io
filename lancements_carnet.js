@@ -31,6 +31,27 @@
  * vit en memoire (reconstruite au demarrage depuis les JOURS_GARDES derniers
  * jours) : le bilan se calcule sur elle, pas en relisant les fichiers.
  *
+ * ---- QUI TIENT LE PROJET (21/10/2026, le proprietaire) ----
+ * « Un memecoin sans taxe, sans utilite, avec un narratif, se fait souvent rug
+ * par le dev, et parfois il est repris en CTO par la communaute : il faut savoir
+ * differencier un projet gere par une equipe et un projet gere par la
+ * communaute. » Lectures de plus, toutes en LECTURE :
+ *   - les AVOIRS DU CREATEUR (balanceOf du deployer) a +1 h, +24 h, +7 j,
+ *     +30 j : un dev qui a tout vendu n'est plus l'equipe ;
+ *   - la TAXE du createur (creatorTaxBps de la courbe Pons) a la naissance ;
+ *   - les commandes DexScreener (orders/v1) d'un jeton qui a encore un marche a
+ *     +24 h, +7 j, +30 j : `communityTakeover` est la marque d'un CTO
+ *     (type verifie dans la doc DexScreener le 21/10), `tokenProfile`, pubs ;
+ *   - les METAS de DexScreener (/metas/trending/v1 puis /metas/meta/v1/<slug>),
+ *     une fois par jour : leur propre classement de narratifs (cat, dog, ai,
+ *     trump, stonks…), qui listait 9 jetons robinhood le 21/10 (5 metas lues).
+ * La GOUVERNANCE est une HYPOTHESE (`gouvernance`), a juger sur la mesure :
+ *   cto      : commande communityTakeover, OU createur parti (moins de 10 % de son
+ *              plus haut) et jeton vivant ;
+ *   team     : createur encore la (au moins 50 % de son plus haut) et vivant ;
+ *   rug      : createur parti et jeton mort (pas de marche, ou < VIVANT_LIQ) ;
+ *   abandoned: createur encore la et jeton mort ; le reste est dit tel quel.
+ *
  * Le bilan (`bilan()`, route /ai/lancements) groupe les lancements par trait
  * (theme du nom, reseaux, description, achat du dev, acheteurs a T+2, passe du
  * createur, heure) et dit, par groupe, la part VIVANTE a 24 h et a 7 j. Sous
@@ -49,10 +70,22 @@ const HORIZONS = [['1h', 60], ['6h', 360], ['24h', 1440], ['7j', 10080], ['30j',
 const retardAdmisMin = (h) => Math.max(15, h * 0.25);
 /* Budget du noeud, lu en direct le 21/10 a 20:59 UTC : le client des lancements
    avait fait 4 997 requetes HTTP sur son plafond de 8 000 (JOUR_HTTP), soit
-   ~5 700 projetees sur 24 h. 4 jetons x 5 lectures = 20 eth_call = UN lot (LOT
-   de smart_rpc) = une requete HTTP par cycle au plus ; ~1 664 lancements par
-   jour (smart_lancements.js) / 4 = ~420 requetes par jour. CHOISI. */
-const META_PAR_CYCLE = 4;
+   ~5 700 projetees sur 24 h. 3 jetons x 6 lectures (nom, symbole, description,
+   reseaux, logo, taxe) + 2 soldes = 20 eth_call = UN lot (LOT de smart_rpc) = une
+   requete HTTP par cycle au plus ; ~1 664 lancements par jour / 3 = ~555
+   requetes, et 4 soldes par jeton (1 h, 24 h, 7 j, 30 j) = ~6 650 eth_call
+   groupes par 20 = ~330 requetes : ~6 600 sur 8 000 au total. CHOISI. */
+const LOT_RPC = 20;
+const SOLDES_H = ['1h', '24h', '7j', '30j'];
+const SOLDES_FILE_MAX = 5000;
+/* Les commandes DexScreener (orders/v1, 60 par minute, doc) : un jeton VIVANT a
+   +24 h, +7 j, +30 j ; au plus 2 appels par tic (un tic par minute). CHOISI. */
+const ORDRES_H = ['24h', '7j', '30j'];
+const ORDRES_PAR_TIC = 2;
+/* Les metas de DexScreener : la liste une fois par 24 h, puis une meta par tic. CHOISI. */
+const METAS_DS_MS = 24 * 3600e3;
+const PONS_OFFRE = 1e9;                 // offre d'un jeton Pons, en unites entieres (sonde du 15/10 : totalSupply 1e27, 18 decimales)
+const META_PAR_CYCLE = 3;
 const META_ESSAIS = 3;                 // un jeton sans metadonnee lisible apres 3 lots : abandonne, compte
 const META_FILE_MAX = 3000;            // ~2 jours de lancements en retard au plus : au-dela les plus vieux partent, comptes
 const DS_LOT = 30;                     // DexScreener tokens/v1 : 30 adresses par appel (doc, smart_sources.js)
@@ -66,6 +99,7 @@ const BILAN_CACHE_MS = 10 * 60e3;
    veut savoir ce qui EXISTE encore, pas ce qu'on achete. */
 const VIVANT_LIQ = 5000;
 const DS = 'https://api.dexscreener.com';
+const SEL_BALANCE = '0x70a08231';      // balanceOf(address) — keccak verifie (ethers utils.id) le 21/10
 
 /* Les themes : des HYPOTHESES de depart, mots entiers sur nom + symbole +
    description. Un jeton peut en avoir plusieurs, ou aucun (« other »). Le bilan
@@ -118,7 +152,7 @@ function cree(deps) {
   /* la fiche compacte de chaque jeton, et l'ordre de naissance (pour les curseurs) */
   const F = new Map();
   let ordre = [];
-  let etat = { curseurs: {}, file: [], essais: {} };
+  let etat = { curseurs: {}, file: [], essais: {}, soldes: [], ordres: [], metasDS: { t: 0, slugs: [] } };
   let bilanCache = null;
   let enCours = false;
 
@@ -135,11 +169,12 @@ function cree(deps) {
   /** Applique une ligne du journal a la fiche compacte (au demarrage comme en direct). */
   function applique(o) {
     const j = o && adr(o.jeton);
-    if (!j) return;
+    if (!j && !(o && o.k === 'dsmeta')) return;
     if (o.k === 'n') {
       if (F.has(j)) return;
       F.set(j, { t: o.t, plat: o.plateforme || 'pons', dev: adr(o.deployer), devEth: num(o.achatDevEth), t2a: o.t2 ? num(o.t2.acheteurs) : null, t2e: o.t2 ? num(o.t2.eth) : null,
-        ex: o.exemptions || 0, vd: o.ventesDev || 0, nom: null, sym: o.symbole || null, desc: 0, th: null, res: null, logo: null, s: {} });
+        ex: o.exemptions || 0, vd: o.ventesDev || 0, nom: null, sym: o.symbole || null, desc: 0, th: null, res: null, logo: null, s: {},
+        taxe: null, soldes: {}, soldeMax: null, ordres: {}, dsMetas: [] });
       /* ordre de naissance : presque toujours en fin ; une naissance plus ancienne (IGNITION, rattrapage) prend sa place */
       let i = ordre.length;
       while (i > 0 && F.get(ordre[i - 1]).t > o.t) i--;
@@ -148,14 +183,27 @@ function cree(deps) {
       const f = F.get(j); if (!f) return;
       f.nom = o.nom || null; f.sym = o.symbole || f.sym; f.desc = o.description ? o.description.length : 0;
       f.th = themesDe(o.nom, o.symbole, o.description); f.res = reseauxDe(o.socials); f.logo = !!o.logo;
+      f.taxe = fini(o.taxePct) ? o.taxePct : null;
     } else if (o.k === 's') {
       const f = F.get(j); if (!f) return;
       f.s[o.h] = { m: !!o.marche, liq: num(o.liq), fdv: num(o.fdv), vol: num(o.vol24) };
+    } else if (o.k === 'manque') {
+      const f = F.get(j); if (!f) return;
+      (f.mq = f.mq || {})[o.h] = true;
+    } else if (o.k === 'solde') {
+      const f = F.get(j); if (!f || !fini(o.part)) return;
+      f.soldes[o.h] = o.part;
+      f.soldeMax = Math.max(f.soldeMax == null ? 0 : f.soldeMax, o.part);
+    } else if (o.k === 'ordres') {
+      const f = F.get(j); if (!f) return;
+      f.ordres[o.h] = { cto: !!o.cto, profil: !!o.profil, pubs: o.pubs || 0, boosts: o.boosts || 0 };
+    } else if (o.k === 'dsmeta') {
+      for (const x of (Array.isArray(o.jetons) ? o.jetons : [])) { const f = F.get(adr(x)); if (f && !f.dsMetas.includes(o.slug)) f.dsMetas.push(String(o.slug).slice(0, 40)); }
     }
   }
   /** Au demarrage : les fiches des JOURS_MEMOIRE derniers jours, l'etat, le menage des vieux fichiers. */
   function charge() {
-    try { etat = Object.assign({ curseurs: {}, file: [], essais: {} }, JSON.parse(fs.readFileSync(ETAT, 'utf8'))); } catch (e) { /* premier demarrage */ }
+    try { etat = Object.assign(etat, JSON.parse(fs.readFileSync(ETAT, 'utf8'))); } catch (e) { /* premier demarrage */ }
     let fichiers = [];
     try { fichiers = fs.readdirSync(D).filter((x) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(x)).sort(); } catch (e) { return; }
     const now = maintenant();
@@ -185,11 +233,32 @@ function cree(deps) {
     applique(o);
     C.naissances++;
     etat.file.push({ jeton: j, courbe: adr(r.courbe) });
+    /* le solde du createur a sa naissance (T+2) : la reference de « parti » ou « encore la » */
+    if (o.deployer && o.plateforme === 'pons') etat.soldes.push({ jeton: j, dev: o.deployer, h: 't2' });
     if (etat.file.length > META_FILE_MAX) { C.metaFileDebordee += etat.file.length - META_FILE_MAX; etat.file.splice(0, etat.file.length - META_FILE_MAX); }
     return true;
   }
   /** Les jetons dont lire les metadonnees ce cycle-ci. */
   const aLire = (n) => etat.file.slice(0, Math.min(n || META_PAR_CYCLE, META_PAR_CYCLE));
+  /** Les soldes du createur a lire ce cycle-ci : ce qui reste du lot apres les metadonnees
+   *  (6 eth_call par jeton). [{ jeton, dev, h }] */
+  const soldesALire = (nMetas) => etat.soldes.slice(0, Math.max(0, LOT_RPC - 6 * (nMetas || 0)));
+  /** Un solde lu : `brut` (hex de balanceOf) -> part de l'offre Pons en %, ou null (relu une fois). */
+  function solde(jeton, h, brut) {
+    const j = adr(jeton); if (!j) return;
+    const i = etat.soldes.findIndex((x) => x.jeton === j && x.h === h);
+    const x = i >= 0 ? etat.soldes[i] : null;
+    if (brut == null || !/^0x[0-9a-f]{1,64}$/i.test(String(brut))) {
+      if (x) { x.essais = (x.essais || 0) + 1; if (x.essais >= 2) { etat.soldes.splice(i, 1); C.soldesRates = (C.soldesRates || 0) + 1; } }
+      return;
+    }
+    if (i >= 0) etat.soldes.splice(i, 1);
+    /* la part de l'offre, sans perdre la precision des grands entiers : 1e27 unites = 100 % */
+    const part = Number(BigInt(brut) * 1000000n / (BigInt(PONS_OFFRE) * 10n ** 18n)) / 10000;
+    const o = { k: 'solde', t: maintenant(), jeton: j, h, dev: x ? x.dev : null, part };
+    ecrisLigne(o); applique(o);
+    C.soldes = (C.soldes || 0) + 1;
+  }
   /** Le resultat de la lecture : m = { nom, symbole, description, socials, logo } ou null. */
   function meta(jeton, m) {
     const j = adr(jeton); if (!j) return;
@@ -204,35 +273,83 @@ function cree(deps) {
     if (i >= 0) etat.file.splice(i, 1);
     delete etat.essais[j];
     const o = { k: 'm', t: maintenant(), jeton: j, nom: texte(m.nom, 64), symbole: texte(m.symbole, 24), description: texte(m.description, 600),
-      socials: (Array.isArray(m.socials) ? m.socials : []).map((x) => texte(x, 200)).filter(Boolean).slice(0, 8), logo: texte(m.logo, 200) };
+      socials: (Array.isArray(m.socials) ? m.socials : []).map((x) => texte(x, 200)).filter(Boolean).slice(0, 8), logo: texte(m.logo, 200),
+      taxePct: fini(m.taxePct) && m.taxePct >= 0 && m.taxePct <= 100 ? m.taxePct : null };
     ecrisLigne(o);
     applique(o);
     C.metas++;
   }
 
   /** Les echeances dues, dans l'ordre des horizons, au plus `max`. */
+  /* Une echeance est FAITE quand la fiche a son suivi ou sa marque « manquee » ; le curseur
+     n'est qu'un raccourci : tout ce qui est ne AVANT lui est fait. Deux jetons nes a la meme
+     milliseconde (meme bloc IGNITION) sont donc suivis tous les deux. */
+  const fait = (f, h) => !!(f.s[h] || (f.mq && f.mq[h]));
   function dues(now, max) {
     const out = [];
     for (const [h, min] of HORIZONS) {
-      let cur = Number(etat.curseurs[h]) || 0;
+      const cur = Number(etat.curseurs[h]) || 0;
+      let contigu = true;
       for (const j of ordre) {
-        if (out.length >= max) break;
         const f = F.get(j);
-        if (f.t <= cur) continue;
+        if (f.t < cur) continue;
+        if (fait(f, h)) { if (contigu) etat.curseurs[h] = f.t; continue; }
         if (f.t + min * 60e3 > now) break;
-        if ((now - f.t) / 60e3 - min > retardAdmisMin(min)) { C.manques++; cur = f.t; etat.curseurs[h] = cur; continue; }
+        contigu = false;
+        if ((now - f.t) / 60e3 - min > retardAdmisMin(min)) {
+          const o = { k: 'manque', t: now, jeton: j, h };
+          ecrisLigne(o); applique(o); C.manques++;
+          continue;
+        }
+        if (out.length >= max) break;
         out.push({ j, h, f });
-        cur = f.t;
       }
     }
     return out;
   }
-  /** Un pas du suivi (appele a chaque cycle des lancements) : AU PLUS un appel DexScreener. */
+  async function dsJson(url) {
+    const r = await prendre(url, { headers: { accept: 'application/json', 'user-agent': 'swoge-launch-book/1.0 (read-only)' }, signal: AbortSignal.timeout(DS_DELAI_MS) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return JSON.parse(await r.text());
+  }
+  /** Les commandes DexScreener de 2 jetons vivants au plus, puis une meta DexScreener. */
+  async function ordresEtMetas(now) {
+    for (let k = 0; k < ORDRES_PAR_TIC && etat.ordres.length; k++) {
+      const x = etat.ordres.shift();
+      try {
+        C.dsOrdres = (C.dsOrdres || 0) + 1;
+        const j = await dsJson(DS + '/orders/v1/robinhood/' + x.jeton);
+        const ok = (Array.isArray(j && j.orders) ? j.orders : []).filter((o) => o && o.status !== 'rejected' && o.status !== 'cancelled');
+        const o = { k: 'ordres', t: now, jeton: x.jeton, h: x.h, cto: ok.some((q) => q.type === 'communityTakeover'), profil: ok.some((q) => q.type === 'tokenProfile'),
+          pubs: ok.filter((q) => q.type === 'tokenAd' || q.type === 'trendingBarAd').length, boosts: Array.isArray(j && j.boosts) ? j.boosts.length : 0,
+          types: [...new Set(ok.map((q) => texte(q.type, 30)).filter(Boolean))] };
+        ecrisLigne(o); applique(o);
+      } catch (e) { C.dsErreurs++; }
+    }
+    try {
+      const M = etat.metasDS;
+      if (now - (M.t || 0) >= METAS_DS_MS) {
+        const l = await dsJson(DS + '/metas/trending/v1');
+        M.t = now; M.slugs = (Array.isArray(l) ? l : []).map((x) => String((x && x.slug) || '')).filter((x) => /^[a-z0-9-]{1,40}$/.test(x)).slice(0, 40);
+        C.dsMetasListes = (C.dsMetasListes || 0) + 1;
+      } else if (M.slugs && M.slugs.length) {
+        const slug = M.slugs.shift();
+        const j = await dsJson(DS + '/metas/meta/v1/' + slug);
+        const paires = Array.isArray(j && j.pairs) ? j.pairs : [];
+        const jetons = [...new Set(paires.filter((p) => p && p.chainId === 'robinhood').map((p) => adr(p.baseToken && p.baseToken.address)).filter(Boolean))];
+        const o = { k: 'dsmeta', t: now, slug, nom: texte(j && j.name, 40), jetons, tokenCount: num(j && j.tokenCount) };
+        ecrisLigne(o); applique(o);
+        C.dsMetas = (C.dsMetas || 0) + 1;
+      }
+    } catch (e) { C.dsErreurs++; }
+  }
+  /** Un pas du suivi (appele a chaque cycle des lancements) : AU PLUS un appel DexScreener tokens/v1. */
   async function tic() {
     if (enCours) return { fait: 'deja' };
     enCours = true;
     try {
       const now = maintenant();
+      await ordresEtMetas(now);
       const l = dues(now, DS_LOT);
       if (!l.length) { sauveEtat(); return { fait: 'rien' }; }
       const jetons = [...new Set(l.map((x) => x.j))];
@@ -261,9 +378,11 @@ function cree(deps) {
           info: p.info ? { sites: (p.info.websites || []).length, socials: (p.info.socials || []).length, image: !!p.info.imageUrl } : null });
         ecrisLigne(o);
         applique(o);
-        etat.curseurs[h] = Math.max(Number(etat.curseurs[h]) || 0, f.t);
         C.suivis++;
+        if (SOLDES_H.includes(h) && f.dev && f.plat === 'pons') etat.soldes.push({ jeton: j, dev: f.dev, h });
+        if (ORDRES_H.includes(h) && o.marche && (o.liq || 0) >= VIVANT_LIQ) etat.ordres.push({ jeton: j, h });
       }
+      if (etat.soldes.length > SOLDES_FILE_MAX) { C.soldesDebordes = (C.soldesDebordes || 0) + etat.soldes.length - SOLDES_FILE_MAX; etat.soldes.splice(0, etat.soldes.length - SOLDES_FILE_MAX); }
       sauveEtat();
       bilanCache = null;
       return { fait: 'lu', suivis: l.length };
@@ -271,6 +390,19 @@ function cree(deps) {
   }
 
   // ---------------------------------------------------------- le bilan
+  /** La gouvernance d'une fiche a l'echeance `h` (HYPOTHESE, voir l'en-tete) ; null si pas de suivi. */
+  function gouvernance(f, h) {
+    const s = f.s[h];
+    if (!s) return null;
+    const vivant = s.m && (s.liq || 0) >= VIVANT_LIQ;
+    if (Object.values(f.ordres).some((o) => o.cto)) return 'cto';
+    const sol = f.soldes[h];
+    if (!fini(sol) || f.soldeMax == null || !(f.soldeMax > 0)) return vivant ? 'alive, creator unknown' : 'dead, creator unknown';
+    const parti = sol < f.soldeMax * 0.1, la = sol >= f.soldeMax * 0.5;
+    if (parti) return vivant ? 'cto' : 'rug';
+    if (la) return vivant ? 'team' : 'abandoned';
+    return vivant ? 'alive, creator partly out' : 'dead, creator partly out';
+  }
   /** Une ligne de groupe : vivants a 24 h et a 7 j, capitalisation mediane des vivants. */
   function ligne(fs_) {
     const out = { n: fs_.length };
@@ -318,13 +450,24 @@ function cree(deps) {
       parHeureUtc: groupe((f) => tranche(new Date(f.t).getUTCHours(), [6, 12, 18, 24], ['00-06', '06-12', '12-18', '18-24'])),
       parPlateforme: groupe((f) => f.plat),
       parVenteDevT2: groupe((f) => (f.vd > 0 ? 'dev sold by T+2' : 'dev held at T+2')),
+      parTaxe: groupe((f) => (f.taxe == null ? (f.th ? 'tax unknown' : null) : f.taxe === 0 ? 'no creator tax' : f.taxe <= 1 ? 'tax <= 1%' : 'tax > 1%')),
+      parMetaDexscreener: groupe((f) => (f.dsMetas.length ? f.dsMetas : null)),
+      /* la gouvernance compte les fiches par categorie (pas une part vivante : elle est
+         definie PAR le vivant) */
+      gouvernance: Object.fromEntries(['24h', '7j', '30j'].map((h) => {
+        const c = {}; let n = 0;
+        for (const f of F.values()) { const g = gouvernance(f, h); if (g) { c[g] = (c[g] || 0) + 1; n++; } }
+        return [h, { n, assez: n >= BILAN_ASSEZ, parts: n >= BILAN_ASSEZ ? Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Math.round(v / n * 1000) / 10])) : null, comptes: c }];
+      })),
+      /* ce que chaque gouvernance a 7 j devient : vivant a 30 j ? (ligne : 24h et 7j de la fiche) */
+      parGouvernance7j: groupe((f) => gouvernance(f, '7j')),
     };
     bilanCache = { t: maintenant(), b };
     return b;
   }
 
-  const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES });
-  return { naissance, aLire, meta, tic, bilan, vue, _fiches: F, _etat: () => etat };
+  const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES });
+  return { naissance, aLire, meta, soldesALire, solde, tic, bilan, vue, gouvernance, _fiches: F, _etat: () => etat };
 }
 
-module.exports = { cree, themesDe, reseauxDe, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin };
+module.exports = { cree, themesDe, reseauxDe, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };
