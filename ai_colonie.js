@@ -4677,6 +4677,8 @@ function noteCarnet(p, prix, r, gainTotal, quand, comment, aberrant) {
     /* Et quand il manque, le motif et la phrase du quoteur (rapport du 27
        septembre 2026 : 11 achats sur 21 sans devis, raison perdue). */
     devisEchec: p.devisEchec || null,
+    /* L'entree devisee sur la chaine (21/10) : le rapport devis / indexeur, et s'il a ete applique. */
+    entreeDevis: p.prixDevis ? { ratio: p.prixDevis.ratio, applique: !!p.prixDevis.applique } : null,
     exploration: p.exploration || null,
     tenueBase: p.tenueBase || null,
     /* Une position exploratoire se relit a part : sinon sa duree inhabituelle
@@ -4906,6 +4908,43 @@ function entreeReelle(x) {
        + '% vs the paper entry — the paper now starts from that price' });
   sauve();
   return true;
+}
+/* ---- L'ENTREE PAPIER AU PRIX DEVISE SUR LA CHAINE (21/10/2026) ----
+ * Mesure : quand un miroir a VRAIMENT achete, il a paye en moyenne 3,4 % de plus
+ * que l'entree du papier, et plus cher dans 82 % des cas (`entree`, n=67, du
+ * 13/09 au 02/10). La relecture GeckoTerminal juste avant d'ouvrir (voir
+ * `noteDerive`) reste un INDEXEUR : DexScreener avait 30 a 60 s de retard sur la
+ * chaine (sonde du 17/10, prix_chaine.js). Or le Cobaye vient de deviser, SUR LA
+ * CHAINE, un achat de sonde (MIROIR_SONDE_ETH, 0,01 ETH) dans la meilleure place :
+ * c'est le prix qu'un ordre aurait eu a cet instant, frais de la piscine et
+ * impact compris. Decision du proprietaire (21/10) : le papier part de ce
+ * prix-la. On compare les deux en ETH (le devis en ETH par jeton, l'indexeur en
+ * `base_token_price_native_currency`) et on applique le rapport au prix en
+ * dollars. Un rapport hors [0,3 ; 3] decrit une lecture abimee : compte, ignore.
+ * Un miroir qui achete vraiment ensuite remplace toujours ce prix (`entreeReelle`).
+ * COLONIE_ENTREE_DEVIS=observe mesure sans appliquer. */
+const entreeDevisMode = () => (String(process.env.COLONIE_ENTREE_DEVIS || '').trim().toLowerCase() === 'observe' ? 'observe' : 'applique');
+function entreeDevisee(t, frais) {
+  const a = t && t.epreuve && t.epreuve.retour && t.epreuve.retour.achat;
+  if (!a || !(a.ethParJeton > 0)) { compte('entreeDevisAbsent'); return null; }
+  if (!frais || !(frais.natif > 0)) { compte('entreeDevisSansNatif'); return null; }
+  const ratio = a.ethParJeton / frais.natif;
+  if (!isFinite(ratio) || ratio < ENTREE_RATIO_MIN || ratio > ENTREE_RATIO_MAX) { compte('entreeDevisAberrante'); return null; }
+  if (!E.entreeDevis || typeof E.entreeDevis !== 'object') E.entreeDevis = { n: 0, s: 0, hausse: 0, pire: 0 };
+  const T = E.entreeDevis, d = (ratio - 1) * 100;
+  T.n++; T.s += d; if (d > 0) T.hausse++;
+  if (Math.abs(d) > Math.abs(T.pire)) T.pire = Math.round(d * 10) / 10;
+  compte('entreeDevis');
+  const base = prixDEntree(t);
+  if (!(base > 0)) return null;
+  t.prixDevis = { ratio: Math.round(ratio * 10000) / 10000, prixIndexeur: base, applique: entreeDevisMode() === 'applique' };
+  if (t.prixDevis.applique) t.prixAchat = base * ratio;
+  return ratio;
+}
+function ecartEntreeDevis() {
+  const T = E.entreeDevis;
+  return { mode: entreeDevisMode(), n: T ? T.n : 0, moyenne: T && T.n ? Math.round(T.s / T.n * 10) / 10 : null,
+           hausse: T && T.n ? Math.round(T.hausse / T.n * 100) : null, pire: T ? T.pire : null };
 }
 /** Ce que la page montre : de combien le prix reellement paye s'ecarte de
  *  celui que le papier avait booke. */
@@ -6889,7 +6928,8 @@ async function allerRetourMiroir(t, opts) {
     ]);
     if (!r || typeof r.pct !== 'number' || !isFinite(r.pct) || typeof r.min !== 'number') return rate('the quoter gave no figure');
     if (!hors) compte('devisOk');
-    return { pct: r.pct, min: r.min, ver: r.ver || null, pool: r.pool || null, sonde: r.sonde || null };
+    const a = r.achat && typeof r.achat.ethParJeton === 'number' && isFinite(r.achat.ethParJeton) && r.achat.ethParJeton > 0 ? { ethParJeton: r.achat.ethParJeton } : null;
+    return { pct: r.pct, min: r.min, ver: r.ver || null, pool: r.pool || null, sonde: r.sonde || null, achat: a };
   } catch (e) { return rate((e && e.message) || e); }
   finally { if (minuteur) clearTimeout(minuteur); }
 }
@@ -7330,6 +7370,7 @@ function ouvre(t) {
     prixLu: Date.now(),
     mise: b.mise, methode: b.methode, regime: b.regime, raisonMise: b.raison,
     liq0: t.liq || 0, tenueBase: tenue.min,
+    prixDevis: t.prixDevis || null,
     tenueExplore: !!tenue.explore,
     tenueRaison: tenue.explore
       ? 'exploring ' + tenue.min + ' min: the least tried duration (' + tenue.vues
@@ -9833,6 +9874,8 @@ async function lisPiscine(pool) {
        zero : les deux se ressemblent une fois passes par `nn`, et confondre
        « pas lu » avec « piscine vide » ferait inventer une perte. */
     return { prix: nn(a.base_token_price_usd),
+             /* le prix en ETH (devise native de la chaine), pour le comparer au devis d'achat */
+             natif: nn(a.base_token_price_native_currency),
              liq: (a.reserve_in_usd === undefined || a.reserve_in_usd === null) ? null : nn(a.reserve_in_usd) };
   } catch (e) {
     if (/^404$/.test(String(e.message || ''))) return { prix: 0, liq: 0, absente: true };
@@ -10968,6 +11011,7 @@ async function tour() {
               compte('deriveAberrante');
             }
           }
+          entreeDevisee(t, frais);
         } catch (e) { compte('deriveNonLue'); }
       }
       /* ---- LE RACHAT TROP AU-DESSUS DE CE QU'ON A DEJA PAYE ----
@@ -11273,6 +11317,7 @@ function vue() {
     /* ---- CE QUE LE MIROIR A VRAIMENT PAYE, CONTRE CE QUE LE PAPIER AVAIT BOOKE ----
        Voir `entreeReelle`. */
     entree: ecartEntree(),
+    entreeDevis: ecartEntreeDevis(),
     /* ---- CE QUE LE PRIX BOUGE ENTRE LE FLUX ET L'ACHAT ----
        Le papier achetait au prix du debut de tour ; le miroir, minutes plus
        tard, au prix du moment. Voir `noteDerive`. */
@@ -11608,6 +11653,7 @@ module.exports = {
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
   SANS_ACHAT_DESSERRE,
+  entreeDevisee, ecartEntreeDevis, lisPiscine,
   signalSmart, fournisseurPrixCourbe, fournisseurAgentlife, smartLigneDe, mesureSourceSmart, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
   SMART_ACHAT_MIN_OBS, SMART_LIGNES, SMART_PAR_TOUR,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc, _lisChaine: lisChaine,

@@ -1007,11 +1007,29 @@ async function meilleurePlace(jeton, poolColonie, mise) {
  * Rien n'est signe : ce sont les quoteurs qui repondent, comme pour le
  * miroir. */
 const SONDE_ETH = String(process.env.MIROIR_SONDE_ETH || '0.01');
+/* Les decimales d'un jeton, lues une fois (21/10/2026 : le prix d'achat devise en a besoin). */
+const DECIMALES = {};
+async function decimalesDe(jeton) {
+  const k = String(jeton).toLowerCase();
+  if (DECIMALES[k] !== undefined) return DECIMALES[k];
+  let dec = null;
+  try { dec = Number(await new ethers.Contract(jeton, ERC20_ABI, provider()).decimals()); } catch (e) { dec = null; }
+  if (!isFinite(dec) || dec < 0 || dec > 36) dec = null;
+  if (dec !== null) DECIMALES[k] = dec;
+  return dec;
+}
 async function allerRetour(jeton, pool) {
   const mise = ethers.utils.parseUnits(SONDE_ETH, 18);
   const { choix, compare } = await meilleurePlace(jeton, pool, mise);
   const pct = Math.round(Number(choix.retour.mul(10000).div(mise)) / 100 * 10) / 10;
-  return { pct, min: Math.round(RETOUR_MIN * 100), ver: choix.route.ver, pool: choix.pool, sonde: SONDE_ETH, compare };
+  /* La jambe d'ACHAT du meme devis (21/10/2026) : combien de jetons la sonde aurait
+     recus, donc le prix d'entree reel en ETH par jeton, lu sur la chaine au moment
+     d'acheter. La colonie s'en sert pour booker son entree papier (point 1 du
+     proprietaire). Sans decimales lisibles, rien : on ne devine pas. */
+  const dec = await decimalesDe(jeton);
+  const achat = dec === null || !choix.sortie || choix.sortie.lte(0) ? null
+    : { jetons: choix.sortie.toString(), dec, ethParJeton: Number(SONDE_ETH) / Number(ethers.utils.formatUnits(choix.sortie, dec)) };
+  return { pct, min: Math.round(RETOUR_MIN * 100), ver: choix.route.ver, pool: choix.pool, sonde: SONDE_ETH, compare, achat };
 }
 
 /** Le portefeuille d'un miroir, dechiffre le temps d'une signature. */

@@ -75,6 +75,10 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
       console.log('  themes  ', Object.entries(b.parTheme).map(([k, x]) => `${k} n=${x.n} 24h ${p(x['24h'])}`).join(' | '));
     } else console.log('lancem.    carnet inactif');
   } catch (e) { console.log('lancem.    illisible : ' + String(e.message || e).slice(0, 60)); }
+  /* L'entree papier au prix devise sur la chaine (21/10) : l'ecart devis / indexeur au moment d'acheter. */
+  const ED = d.entreeDevis;
+  if (ED) console.log('entree    ', `devis ${ED.mode} n=${ED.n} · ecart moyen ${ED.moyenne ?? '—'}% · au-dessus ${ED.hausse ?? '—'}% · pire ${ED.pire ?? '—'}%`
+    + (d.entree ? ` | miroir reel n=${d.entree.n} moyen ${d.entree.moyenne ?? '—'}%` : ''));
   const PFv = d.portefeuilles;
   if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};
