@@ -52,6 +52,16 @@
  *   rug      : createur parti et jeton mort (pas de marche, ou < VIVANT_LIQ) ;
  *   abandoned: createur encore la et jeton mort ; le reste est dit tel quel.
  *
+ * ---- LES DETENTEURS ET L'ACTIVITE (21/10/2026, la grille du proprietaire) ----
+ * « Pourcentage detenu par les 10 et 20 premiers portefeuilles, concentration
+ * reelle apres exclusion des contrats, pools et burn » ; « utilisateurs actifs,
+ * nouveaux portefeuilles, adresses qui reviennent reellement ». Pour un jeton
+ * VIVANT a +24 h, +7 j, +30 j : tous ses Transfer depuis sa naissance
+ * (eth_getLogs sur le noeud ; Blockscout repond un defi Cloudflare, sonde du
+ * 11/10, et on ne le contourne pas), un jeton par cycle au plus. On en tire :
+ * detenteurs, part du top 10 et du top 20 HORS courbe, piscines, PoolManager v4
+ * et burn, transferts, adresses actives, nouvelles et revenantes sur 24 h.
+ *
  * Le bilan (`bilan()`, route /ai/lancements) groupe les lancements par trait
  * (theme du nom, reseaux, description, achat du dev, acheteurs a T+2, passe du
  * createur, heure) et dit, par groupe, la part VIVANTE a 24 h et a 7 j. Sous
@@ -99,7 +109,14 @@ const BILAN_CACHE_MS = 10 * 60e3;
    veut savoir ce qui EXISTE encore, pas ce qu'on achete. */
 const VIVANT_LIQ = 5000;
 const DS = 'https://api.dexscreener.com';
-const SEL_BALANCE = '0x70a08231';      // balanceOf(address) — keccak verifie (ethers utils.id) le 21/10
+const SEL_BALANCE = '0x70a08231';
+const TOPIC_TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';   // keccak verifie le 21/10
+/* Jamais des detenteurs : le burn, et le PoolManager v4 (miroir.js PM4) ou dorment les jetons
+   de toute piscine v4, donc d'un jeton Pons gradue. */
+const EXCLUS_FIXES = ['0x0000000000000000000000000000000000000000', '0x000000000000000000000000000000000000dead', '0x8366a39cc670b4001a1121b8f6a443a643e40951'];
+const BLOCS_24H = Math.round(86400 / 0.1012);   // smart_lancements S_PAR_BLOC (sonde du 15/10 : 6 000 blocs = 607 s)
+const DET_H = ['24h', '7j', '30j'];
+const DET_FILE_MAX = 500;      // balanceOf(address) — keccak verifie (ethers utils.id) le 21/10
 
 /* Les themes : des HYPOTHESES de depart, mots entiers sur nom + symbole +
    description. Un jeton peut en avoir plusieurs, ou aucun (« other »). Le bilan
@@ -117,6 +134,28 @@ const THEMES = {
 };
 
 const lc = (x) => String(x == null ? '' : x).toLowerCase();
+/** Les detenteurs et l'activite d'un jeton depuis ses Transfer (pur). `logs` : eth_getLogs bruts. */
+function analyseTransferts(logs, o) {
+  const exclus = new Set(EXCLUS_FIXES.concat((o && o.exclus) || []).map(lc));
+  const pointe = Number(o && o.pointe) || 0, depuis24 = pointe - BLOCS_24H;
+  const solde = new Map(), premier = new Map();
+  let transferts24 = 0;
+  const actifs24 = new Set();
+  const l = (Array.isArray(logs) ? logs : []).filter((x) => x && x.topics && lc(x.topics[0]) === TOPIC_TRANSFER && x.topics.length >= 3)
+    .sort((a, b) => parseInt(a.blockNumber, 16) - parseInt(b.blockNumber, 16) || parseInt(a.logIndex || '0x0', 16) - parseInt(b.logIndex || '0x0', 16));
+  for (const x of l) {
+    const de = '0x' + lc(x.topics[1]).slice(-40), a = '0x' + lc(x.topics[2]).slice(-40), bloc = parseInt(x.blockNumber, 16);
+    let v = 0n; try { v = BigInt(x.data && x.data !== '0x' ? x.data : '0x0'); } catch (e) { v = 0n; }
+    solde.set(de, (solde.get(de) || 0n) - v); solde.set(a, (solde.get(a) || 0n) + v);
+    for (const w of [de, a]) if (!exclus.has(w) && !premier.has(w)) premier.set(w, bloc);
+    if (bloc > depuis24) { transferts24++; for (const w of [de, a]) if (!exclus.has(w)) actifs24.add(w); }
+  }
+  const tenus = [...solde].filter(([w, v]) => !exclus.has(w) && v > 0n).sort((p, q) => (q[1] > p[1] ? 1 : q[1] < p[1] ? -1 : 0));
+  const total = tenus.reduce((s, [, v]) => s + v, 0n);
+  const part = (k) => (total > 0n ? Number(tenus.slice(0, k).reduce((s, [, v]) => s + v, 0n) * 10000n / total) / 100 : null);
+  const nouveaux = [...actifs24].filter((w) => premier.get(w) > depuis24).length;
+  return { transferts: l.length, detenteurs: tenus.length, top10: part(10), top20: part(20), transferts24, actifs24: actifs24.size, nouveaux24: nouveaux, revenants24: actifs24.size - nouveaux };
+}
 const adr = (a) => (/^0x[0-9a-f]{40}$/.test(lc(a)) ? lc(a) : null);
 const fini = (x) => typeof x === 'number' && isFinite(x);
 const num = (x) => { const n = Number(x); return isFinite(n) ? n : null; };
@@ -152,7 +191,7 @@ function cree(deps) {
   /* la fiche compacte de chaque jeton, et l'ordre de naissance (pour les curseurs) */
   const F = new Map();
   let ordre = [];
-  let etat = { curseurs: {}, file: [], essais: {}, soldes: [], ordres: [], metasDS: { t: 0, slugs: [] } };
+  let etat = { curseurs: {}, file: [], essais: {}, soldes: [], ordres: [], metasDS: { t: 0, slugs: [] }, det: [] };
   let bilanCache = null;
   let enCours = false;
 
@@ -172,9 +211,9 @@ function cree(deps) {
     if (!j && !(o && o.k === 'dsmeta')) return;
     if (o.k === 'n') {
       if (F.has(j)) return;
-      F.set(j, { t: o.t, plat: o.plateforme || 'pons', dev: adr(o.deployer), devEth: num(o.achatDevEth), t2a: o.t2 ? num(o.t2.acheteurs) : null, t2e: o.t2 ? num(o.t2.eth) : null,
+      F.set(j, { t: o.t, bloc: num(o.bloc), courbe: adr(o.courbe), plat: o.plateforme || 'pons', dev: adr(o.deployer), devEth: num(o.achatDevEth), t2a: o.t2 ? num(o.t2.acheteurs) : null, t2e: o.t2 ? num(o.t2.eth) : null,
         ex: o.exemptions || 0, vd: o.ventesDev || 0, nom: null, sym: o.symbole || null, desc: 0, th: null, res: null, logo: null, s: {},
-        taxe: null, soldes: {}, soldeMax: null, ordres: {}, dsMetas: [] });
+        taxe: null, soldes: {}, soldeMax: null, ordres: {}, dsMetas: [], det: {}, pools: [] });
       /* ordre de naissance : presque toujours en fin ; une naissance plus ancienne (IGNITION, rattrapage) prend sa place */
       let i = ordre.length;
       while (i > 0 && F.get(ordre[i - 1]).t > o.t) i--;
@@ -187,6 +226,10 @@ function cree(deps) {
     } else if (o.k === 's') {
       const f = F.get(j); if (!f) return;
       f.s[o.h] = { m: !!o.marche, liq: num(o.liq), fdv: num(o.fdv), vol: num(o.vol24) };
+      if (o.pool && !f.pools.includes(o.pool)) f.pools.push(o.pool);
+    } else if (o.k === 'det') {
+      const f = F.get(j); if (!f) return;
+      f.det[o.h] = { n: o.detenteurs, top10: o.top10, top20: o.top20, actifs24: o.actifs24, nouveaux24: o.nouveaux24, revenants24: o.revenants24 };
     } else if (o.k === 'manque') {
       const f = F.get(j); if (!f) return;
       (f.mq = f.mq || {})[o.h] = true;
@@ -243,6 +286,29 @@ function cree(deps) {
   /** Les soldes du createur a lire ce cycle-ci : ce qui reste du lot apres les metadonnees
    *  (6 eth_call par jeton). [{ jeton, dev, h }] */
   const soldesALire = (nMetas) => etat.soldes.slice(0, Math.max(0, LOT_RPC - 6 * (nMetas || 0)));
+  /** Le jeton dont lire les Transfer ce cycle-ci : { jeton, h, bloc, exclus } ou null. */
+  function detenteursALire() {
+    /* une lecture deja faite (etat sauve avant elle, puis redemarrage) n'est pas refaite */
+    while (etat.det.length && (() => { const f = F.get(etat.det[0].jeton); return !f || !f.bloc || f.det[etat.det[0].h]; })()) etat.det.shift();
+    const x = etat.det[0]; if (!x) return null;
+    const f = F.get(x.jeton);
+    return { jeton: x.jeton, h: x.h, bloc: f.bloc, exclus: [f.courbe].concat(f.pools).filter(Boolean) };
+  }
+  /** Les Transfer lus (ou null : relu une fois, puis abandonne). */
+  function detenteurs(jeton, h, logs, pointe) {
+    const j = adr(jeton); if (!j) return;
+    const i = etat.det.findIndex((x) => x.jeton === j && x.h === h);
+    if (!Array.isArray(logs)) {
+      if (i >= 0) { const x = etat.det[i]; x.essais = (x.essais || 0) + 1; etat.det.splice(i, 1); if (x.essais < 2) etat.det.push(x); else C.detRates = (C.detRates || 0) + 1; }
+      return;
+    }
+    if (i >= 0) etat.det.splice(i, 1);
+    const f = F.get(j);
+    const o = Object.assign({ k: 'det', t: maintenant(), jeton: j, h, pointe: num(pointe) }, analyseTransferts(logs, { exclus: f ? [f.courbe].concat(f.pools).filter(Boolean) : [], pointe }));
+    ecrisLigne(o); applique(o);
+    C.det = (C.det || 0) + 1;
+    sauveEtat();
+  }
   /** Un solde lu : `brut` (hex de balanceOf) -> part de l'offre Pons en %, ou null (relu une fois). */
   function solde(jeton, h, brut) {
     const j = adr(jeton); if (!j) return;
@@ -381,7 +447,9 @@ function cree(deps) {
         C.suivis++;
         if (SOLDES_H.includes(h) && f.dev && f.plat === 'pons') etat.soldes.push({ jeton: j, dev: f.dev, h });
         if (ORDRES_H.includes(h) && o.marche && (o.liq || 0) >= VIVANT_LIQ) etat.ordres.push({ jeton: j, h });
+        if (DET_H.includes(h) && o.marche && (o.liq || 0) >= VIVANT_LIQ && f.bloc) etat.det.push({ jeton: j, h });
       }
+      if (etat.det.length > DET_FILE_MAX) { C.detDebordes = (C.detDebordes || 0) + etat.det.length - DET_FILE_MAX; etat.det.splice(0, etat.det.length - DET_FILE_MAX); }
       if (etat.soldes.length > SOLDES_FILE_MAX) { C.soldesDebordes = (C.soldesDebordes || 0) + etat.soldes.length - SOLDES_FILE_MAX; etat.soldes.splice(0, etat.soldes.length - SOLDES_FILE_MAX); }
       sauveEtat();
       bilanCache = null;
@@ -406,7 +474,7 @@ function cree(deps) {
   /** Une ligne de groupe : vivants a 24 h et a 7 j, capitalisation mediane des vivants. */
   function ligne(fs_) {
     const out = { n: fs_.length };
-    for (const h of ['24h', '7j']) {
+    for (const h of ['24h', '7j', '30j']) {
       const m = fs_.filter((f) => f.s[h]);
       const viv = m.filter((f) => f.s[h].m && (f.s[h].liq || 0) >= VIVANT_LIQ);
       const assez = m.length >= BILAN_ASSEZ;
@@ -461,13 +529,17 @@ function cree(deps) {
       })),
       /* ce que chaque gouvernance a 7 j devient : vivant a 30 j ? (ligne : 24h et 7j de la fiche) */
       parGouvernance7j: groupe((f) => gouvernance(f, '7j')),
+      /* la grille du proprietaire, lue a 24 h, jugee a 7 j et 30 j */
+      parTop10a24h: groupe((f) => (f.det['24h'] && fini(f.det['24h'].top10) ? tranche(f.det['24h'].top10, [20, 40, 60], ['top10 < 20%', '20-40%', '40-60%', '60%+']) : null)),
+      parDetenteursA24h: groupe((f) => (f.det['24h'] ? tranche(f.det['24h'].n, [50, 200, 1000], ['< 50 holders', '50-200', '200-1000', '1000+']) : null)),
+      parRevenantsA24h: groupe((f) => { const d = f.det['24h']; if (!d || !d.actifs24) return null; return tranche(d.revenants24 / d.actifs24 * 100, [25, 50, 75], ['returning < 25%', '25-50%', '50-75%', '75%+']); }),
     };
     bilanCache = { t: maintenant(), b };
     return b;
   }
 
-  const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES });
-  return { naissance, aLire, meta, soldesALire, solde, tic, bilan, vue, gouvernance, _fiches: F, _etat: () => etat };
+  const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileDetenteurs: etat.det.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES });
+  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, _fiches: F, _etat: () => etat };
 }
 
-module.exports = { cree, themesDe, reseauxDe, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };
+module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };

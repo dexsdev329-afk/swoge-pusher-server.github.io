@@ -176,10 +176,62 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     ok(C3._fiches.get(A(2)).dsMetas.includes('dog') && C3._fiches.get(A(4)).soldes['24h'] === 0 && C3.gouvernance(C3._fiches.get(A(3)), '24h') === 'cto', 'redemarrage : soldes, commandes et metas relus du disque');
   }
 
+  console.log('-- 6 ter. detenteurs et activite (la grille du proprietaire)');
+  {
+    const pad = (x) => '0x' + '0'.repeat(24) + x.slice(2);
+    const v = (n) => '0x' + (BigInt(n) * 10n ** 18n).toString(16);
+    const ZERO = '0x0000000000000000000000000000000000000000', COURBE = A(101), POOL = A(102), PM4 = '0x8366a39cc670b4001a1121b8f6a443a643e40951';
+    const P = 100000000;
+    const log = (de, a, n, bloc, i) => ({ topics: [K.TOPIC_TRANSFER, pad(de), pad(a)], data: v(n), blockNumber: '0x' + bloc.toString(16), logIndex: '0x' + (i || 0).toString(16) });
+    const vieux = P - K.BLOCS_24H - 1000;
+    const logs = [
+      log(ZERO, COURBE, 1000000, vieux - 10),                 // frappe vers la courbe
+      log(COURBE, A(1), 300, vieux), log(COURBE, A(2), 100, vieux, 1), log(COURBE, A(3), 50, vieux, 2),
+      log(COURBE, POOL, 500000, vieux + 5), log(COURBE, PM4, 400000, vieux + 6),
+      log(A(1), '0x000000000000000000000000000000000000dead', 100, vieux + 7),   // burn
+      log(POOL, A(4), 40, P - 100), log(A(2), POOL, 100, P - 50),            // 24 h : A4 nouveau, A2 revient (et vend tout)
+    ];
+    const r = K.analyseTransferts(logs, { exclus: [COURBE, POOL], pointe: P });
+    eq(r.detenteurs, 3, 'detenteurs hors courbe, piscine, PoolManager v4, burn et zero : A1 (200), A3 (50), A4 (40) ; A2 a tout vendu');
+    eq(r.top10, 100, 'top 10 = 100 % des jetons tenus hors exclus');
+    ok(r.transferts24 === 2 && r.actifs24 === 2 && r.nouveaux24 === 1 && r.revenants24 === 1, '24 h : 2 transferts, 2 adresses actives hors piscine, 1 nouvelle (A4), 1 qui revient (A2)');
+    const many = []; for (let i = 0; i < 30; i++) many.push(log(COURBE, A(200 + i), i < 10 ? 100 : 1, vieux, i));
+    const r2 = K.analyseTransferts(many, { exclus: [COURBE], pointe: P });
+    ok(r2.detenteurs === 30 && r2.top10 === Math.floor(1000 / 1020 * 10000) / 100 && r2.top20 === Math.floor(1010 / 1020 * 10000) / 100, 'top 10 et top 20 : ' + r2.top10 + ' % et ' + r2.top20 + ' % (10 gros a 100, 20 petits a 1)');
+    /* le carnet : un jeton vivant a 24 h entre en file, ses Transfer passent au bilan */
+    const H = { now: T0 };
+    const pr = async (url) => {
+      const u = String(url);
+      if (!/tokens\/v1/.test(u)) return { ok: true, status: 200, text: async () => (/orders/.test(u) ? '{"orders":[],"boosts":[]}' : '[]') };
+      const l = u.split('/').pop().split(',');
+      return { ok: true, status: 200, text: async () => JSON.stringify(l.map((j) => ({ chainId: 'robinhood', baseToken: { address: j }, pairAddress: POOL, priceUsd: '1', fdv: 1e5, liquidity: { usd: 20000 } }))) };
+    };
+    const D = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-d-'));
+    const C4 = K.cree({ dossier: D, prendre: pr, horloge: () => H.now });
+    C4.naissance({ jeton: A(1), courbe: COURBE, bloc: vieux - 10, t: T0, deployer: A(700) });
+    H.now = T0 + 1441 * 60e3; await C4.tic();
+    const x = C4.detenteursALire();
+    ok(x && x.jeton === A(1) && x.h === '24h' && x.bloc === vieux - 10 && x.exclus.includes(COURBE) && x.exclus.includes(POOL), 'vivant a 24 h : en file, avec son bloc de naissance, sa courbe et sa piscine a exclure');
+    C4.detenteurs(A(1), '24h', logs, P);
+    const f = C4._fiches.get(A(1));
+    ok(f.det['24h'] && f.det['24h'].n === 3 && f.det['24h'].revenants24 === 1 && !C4.detenteursALire(), 'le resultat entre dans la fiche ; la file est vide');
+    const b = C4.bilan();
+    ok(b.parTop10a24h['60%+'] && b.parTop10a24h['60%+'].n === 1 && b.parDetenteursA24h['< 50 holders'].n === 1 && b.parRevenantsA24h['25-50%'] || b.parRevenantsA24h['50-75%'], 'bilan : par top 10, par detenteurs, par part de revenants (lus a 24 h)');
+    ok(b.tout['30j'] && b.tout['30j'].mesures === 0, 'le bilan va jusqu a 30 j');
+    const C5 = K.cree({ dossier: D, prendre: pr, horloge: () => H.now });
+    ok(C5._fiches.get(A(1)).det['24h'].top10 === 100, 'redemarrage : relu du disque');
+    C5.naissance({ jeton: A(2), courbe: COURBE, bloc: vieux, t: T0 + 5, deployer: A(701) });
+    H.now = T0 + 1442 * 60e3; await C5.tic();
+    C5.detenteurs(A(2), '24h', null, P);
+    ok(C5.detenteursALire() && C5.detenteursALire().jeton === A(2), 'une lecture ratee : relue une fois');
+    C5.detenteurs(A(2), '24h', null, P);
+    ok(!C5.detenteursALire() && C5.vue().compteurs.detRates === 1, 'deux : abandonnee, comptee');
+  }
+
   console.log('-- 6. branche dans les lancements et le serveur');
   const src = fs.readFileSync(path.join(__dirname, 'smart_lancements.js'), 'utf8');
   ok(/s\.t2 = \{ acheteurs: j2\.acheteurs[^\n]*\n[^\n]*\n\s*if \(deps\.carnet\) \{ try \{ deps\.carnet\.naissance\(/.test(src), 'au T+2 de CHAQUE courbe (pas seulement les alertees) : naissance au carnet');
-  ok(/if \(deps\.carnet\) await metasDuCarnet\(bilan\);/.test(src) && /catch \(e\) \{ bilan\.carnetMetas = 'erreur/.test(src), 'les metadonnees en fin de cycle ; une erreur ne coupe rien');
+  ok(/if \(deps\.carnet\) await metasDuCarnet\(bilan, a\);/.test(src) && /catch \(e\) \{ bilan\.carnetMetas = 'erreur/.test(src), 'les metadonnees en fin de cycle ; une erreur ne coupe rien');
   ok(/plateforme: 'ignition'[^\n]*deployer: l\.createur/.test(src), 'les lancements IGNITION aussi');
   const SLZ = require('./smart_lancements');
   const pris = [];
@@ -218,6 +270,19 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
   const bl3 = {};
   await LZ2._metasDuCarnet(bl3);
   ok(appelsLot.length === 1 && bl3.carnetMetas === 'reserve du jour', 'au-dela de 90 % du plafond du jour : le carnet ne lit plus rien (le detecteur passe d abord)');
+  /* les detenteurs : un eth_getLogs Transfer du jeton, de sa naissance a la pointe du cycle */
+  const getLogs = [];
+  const faux3 = { aLire: () => [], soldesALire: () => [], detenteursALire: () => ({ jeton: A(5), h: '7j', bloc: 1000, exclus: [] }), detenteurs: (j, h, logs, p) => pris.push({ det: j, h, n: logs ? logs.length : null, p }) };
+  const R3 = { lot: async () => [], appel: async (m, params) => { getLogs.push({ m, params }); return { result: [{ topics: [] }, { topics: [] }] }; }, nouvellePasse() {}, etat: { passe: {} }, pointe: async () => { throw new Error('non'); }, jour: () => ({ http: 0 }) };
+  const LZ3 = SLZ.cree({ R: R3, B: { meta() { return null; }, pose() {}, sauve() {} }, horloge: () => T0, dors: async () => {}, prendre: async () => { throw new Error('non'); }, env: {}, note() {}, envoie: async () => false, carnet: faux3 });
+  const bl4 = {};
+  await LZ3._metasDuCarnet(bl4, 5000);
+  const g0 = getLogs[0];
+  ok(getLogs.length === 1 && g0.m === 'eth_getLogs' && g0.params[0].address === A(5) && g0.params[0].topics[0] === K.TOPIC_TRANSFER && g0.params[0].fromBlock === '0x3e8' && g0.params[0].toBlock === '0x1388', 'un eth_getLogs : Transfer du jeton, de sa naissance (bloc 1000) a la pointe (5000)');
+  ok(pris.some((x) => x.det === A(5) && x.h === '7j' && x.n === 2 && x.p === 5000) && bl4.carnetDetenteurs === 2, 'les Transfer passent au carnet (rien d autre a lire ce cycle : la lecture a lieu quand meme)');
+  R3.appel = async () => { throw new Error('noeud'); };
+  await LZ3._metasDuCarnet({}, 5000);
+  ok(pris.some((x) => x.det === A(5) && x.n === null), 'une panne : null au carnet (relu une fois), le cycle continue');
   const M = require('./smart_money');
   ok(typeof M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements === 'function' && M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements().actif === false, 'smart_money : carnetLancements (inactif avant l allumage)');
   ok(/path === '\/ai\/smart\/lancements'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')), 'la route /ai/smart/lancements (meme debit que /ai/smart)');

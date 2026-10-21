@@ -243,14 +243,13 @@ function cree(deps) {
   /** Nom, symbole, description, reseaux, logo des jetons en file du carnet (lancements_carnet.js) :
    *  5 eth_call par jeton, 4 jetons = un lot de 20 = une requete HTTP. Une erreur (budget, noeud)
    *  laisse la file telle quelle : elle est relue au cycle suivant. */
-  async function metasDuCarnet(bilan) {
+  async function metasDuCarnet(bilan, pointe) {
     /* le carnet ne prend JAMAIS les derniers 10 % du plafond du jour : le detecteur passe d'abord */
     const jr = R.jour ? R.jour() : null;
     if (jr && jr.http >= JOUR_HTTP * 0.9) { bilan.carnetMetas = 'reserve du jour'; return; }
     const q = deps.carnet.aLire();
     const sol = typeof deps.carnet.soldesALire === 'function' ? deps.carnet.soldesALire(q.length) : [];
-    if (!q.length && !sol.length) return;
-    try {
+    if (q.length || sol.length) try {
       /* 6 lectures par jeton : nom, symbole, description, reseaux, logo, et la taxe du createur
          lue sur la courbe (un jeton sans courbe connue : balanceOf(0) sur lui-meme, ignore) */
       const appels = q.flatMap(({ jeton: j, courbe }) => [SEL_NAME, SP.SELECTEUR.SYMBOL, SP.SELECTEUR.DESCRIPTION, SP.SELECTEUR.SOCIALS, SP.SELECTEUR.LOGO]
@@ -270,6 +269,14 @@ function cree(deps) {
       sol.forEach(({ jeton: j, h }, k) => { const x = rs[q.length * 6 + k]; deps.carnet.solde(j, h, x && x.result ? x.result : null); });
       bilan.carnetMetas = q.length; bilan.carnetSoldes = sol.length;
     } catch (e) { bilan.carnetMetas = 'erreur : ' + String((e && e.message) || e).slice(0, 60); }
+    /* les detenteurs et l'activite d'UN jeton vivant : tous ses Transfer depuis sa naissance */
+    const d = typeof deps.carnet.detenteursALire === 'function' && Number.isFinite(pointe) ? deps.carnet.detenteursALire() : null;
+    if (!d) return;
+    try {
+      const logs = await logsExacts({ address: d.jeton, topics: [require('./lancements_carnet').TOPIC_TRANSFER] }, d.bloc, pointe);
+      deps.carnet.detenteurs(d.jeton, d.h, logs, pointe);
+      bilan.carnetDetenteurs = logs.length;
+    } catch (e) { deps.carnet.detenteurs(d.jeton, d.h, null, pointe); bilan.carnetDetenteurs = 'erreur : ' + String((e && e.message) || e).slice(0, 60); }
   }
 
   // ---------------------------------------------------------- un lancement
@@ -558,7 +565,7 @@ function cree(deps) {
         ecris('lance_bloc', a);
         /* 14. le carnet des lancements : les metadonnees de quelques jetons, en UN lot, a la fin du
            cycle (un budget epuise ici ne coupe rien d'autre) */
-        if (deps.carnet) await metasDuCarnet(bilan);
+        if (deps.carnet) await metasDuCarnet(bilan, a);
       } catch (e) {
         bilan.statut = e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur';
         bilan.erreur = String((e && e.message) || e).slice(0, 200);
