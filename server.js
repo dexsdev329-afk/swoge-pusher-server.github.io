@@ -5718,6 +5718,12 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, entete);
       return res.end(JSON.stringify(I && I.alertesPubliques ? I.alertesPubliques(d) : { actif: false, raison: 'detector off', alertes: [], vivantes: [], bilan: null }));
     }
+    /* Le carnet des lancements (21/10/2026, lancements_carnet.js) : chaque lancement Pons et IGNITION,
+       ses metadonnees, son suivi a +1 h ... +30 j ; le bilan par trait refuse de conclure sous 40. */
+    if (path === '/ai/smart/lancements') {
+      res.writeHead(200, entete);
+      return res.end(JSON.stringify(I && I.carnetLancements ? I.carnetLancements() : { actif: false }));
+    }
     const genre = { '/ai/smart/jeton': 'jeton', '/ai/smart/wallet': 'wallet', '/ai/smart/createur': 'createur' }[path];
     const a = String(new URLSearchParams(req.url.split('?')[1] || '').get('a') || '');
     if (!genre) { res.writeHead(404, entete); return res.end(JSON.stringify({ erreur: 'not found' })); }

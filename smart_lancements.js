@@ -64,6 +64,7 @@ const JOUR_HTTP = 8000, JOUR_OCTETS = 400e6;
 const ESPACE_LEGER_MS = 2000;
 const LOT_TX_MAX = 60;                 // tx lues par cycle : CHOISI (1 664 lancements en 24 h = ~1,2 par cycle ; 30 min de rattrapage ~35)
 const META_PAR_CYCLE = 6;              // jetons dont on lit logo/socials/description par cycle : CHOISI
+const SEL_NAME = '0x06fdde03';         // name() — keccak verifie (ethers utils.id) le 21/10 : le carnet des lancements
 /* Une courbe alertee est suivie 150 min au plus (les ombres de la colonie se
    jugent jusqu'a 120 min), et lachee apres 30 min sans echange ou a la
    graduation. CHOISI. */
@@ -239,6 +240,24 @@ function cree(deps) {
     return out;
   }
 
+  /** Nom, symbole, description, reseaux, logo des jetons en file du carnet (lancements_carnet.js) :
+   *  5 eth_call par jeton, 4 jetons = un lot de 20 = une requete HTTP. Une erreur (budget, noeud)
+   *  laisse la file telle quelle : elle est relue au cycle suivant. */
+  async function metasDuCarnet(bilan) {
+    const q = deps.carnet.aLire();
+    if (!q.length) return;
+    try {
+      const rs = await R.lot(q.flatMap(({ jeton: j }) => [SEL_NAME, SP.SELECTEUR.SYMBOL, SP.SELECTEUR.DESCRIPTION, SP.SELECTEUR.SOCIALS, SP.SELECTEUR.LOGO]
+        .map((s) => ({ method: 'eth_call', params: [{ to: j, data: s }, 'latest'] }))));
+      q.forEach(({ jeton: j }, i) => {
+        const r = (k) => { const x = rs[i * 5 + k]; return (x && x.result) || null; };
+        const nom = SP.chaineAbi(r(0)), symbole = SP.chaineAbi(r(1)), description = SP.chaineAbi(r(2)), socials = SP.decodeSocials(r(3)), logo = SP.chaineAbi(r(4));
+        deps.carnet.meta(j, nom == null && symbole == null ? null : { nom, symbole, description, socials: socials || [], logo });
+      });
+      bilan.carnetMetas = q.length;
+    } catch (e) { bilan.carnetMetas = 'erreur : ' + String((e && e.message) || e).slice(0, 60); }
+  }
+
   // ---------------------------------------------------------- un lancement
   const txCourt = (t) => (t ? { from: lc(t.from), to: lc(t.to), value: t.value, gas: t.gas, maxFeePerGas: t.maxFeePerGas || null } : null);
   function quiTexte(l, tx, j) {
@@ -382,6 +401,8 @@ function cree(deps) {
           const tx = txs.get(l.tx) || null;
           const meta = (await metaDe([l.jeton])).get(l.jeton) || null;
           const j = SP.jugeLancement({ lancement: l, tx: txCourt(tx), achatDevEth: null, exemptions: null, meta, taxe: null, finances });
+          /* le carnet (21/10) : un lancement IGNITION n'a pas de T+2 ; il est ecrit a sa lecture */
+          if (deps.carnet) { try { deps.carnet.naissance({ jeton: l.jeton, plateforme: 'ignition', bloc: l.bloc, t: maintenant() - (a - l.bloc) * S_PAR_BLOC * 1000, deployer: l.createur || l.deployer, tx: txCourt(tx), symbole: meta && meta.symbole }); } catch (e) { /* rien */ } }
           const promo = await promoDe(l.jeton);
           const r = await alerte('ignition', 'ignition:' + l.jeton, l.jeton, {
             verdict: j.verdict === 'vert' ? 'jaune' : j.verdict, titre: 'IGNITION — lancement sur leur usine', symbole: meta && meta.symbole, jeton: l.jeton, ageMin: Math.max(0, (a - l.bloc) * S_PAR_BLOC / 60),
@@ -445,6 +466,10 @@ function cree(deps) {
           const coteEth = s.cote === SP.ADR.ETH;
           const j2 = SP.jugeT2({ acheteurs: s.acheteurs.length, achete: BigInt(s.achete), ventesDev: s.ventesDev, gradue: s.gradue }, { coteEth });
           s.t2 = { acheteurs: j2.acheteurs, eth: j2.eth, bon: j2.bon };
+          /* le carnet des lancements (21/10) : CHAQUE lancement, alerte ou non, a son T+2 */
+          if (deps.carnet) { try { deps.carnet.naissance({ jeton: s.jeton, courbe: s.courbe, plateforme: 'pons', bloc: s.bloc, t: maintenant() - (a - s.bloc) * S_PAR_BLOC * 1000, deployer: s.deployer,
+            coteEth, seuilEth: coteEth ? SP.versEth(BigInt(s.seuil)) : null, achatDevEth: s.achatDevEth, achatSource: s.achatSource, t2: { acheteurs: j2.acheteurs, eth: j2.eth }, acheteurs: s.acheteurs,
+            exemptions: s.exemptions, ventesDev: s.ventesDev, gradue: s.gradue, tx: s.tx, symbole: s.symbole }); } catch (e) { note('carnet', String((e && e.message) || e).slice(0, 80)); } }
           if (j2.bon) t2Bons.push(s);
           else if (s.suivre && s.alerte && s.alerte !== 'rouge') note('lancements', 'T+2 ' + s.jeton + ' : ' + j2.acheteurs + ' acheteurs, ' + (j2.eth == null ? '?' : j2.eth.toFixed(3)) + ' ETH — pas de bon signe');
         }
@@ -517,6 +542,9 @@ function cree(deps) {
         /* 13. le rebond */
         if (C.rebond) await rebond(bilan);
         ecris('lance_bloc', a);
+        /* 14. le carnet des lancements : les metadonnees de quelques jetons, en UN lot, a la fin du
+           cycle (un budget epuise ici ne coupe rien d'autre) */
+        if (deps.carnet) await metasDuCarnet(bilan);
       } catch (e) {
         bilan.statut = e.budget ? 'budget' : e.abandon ? 'abandon' : 'erreur';
         bilan.erreur = String((e && e.message) || e).slice(0, 200);
@@ -732,7 +760,7 @@ function cree(deps) {
       rebond: Object.keys(lis('rebond_surv', {})).length, eth_usd: etat.ethUsd };
   }
 
-  return { config: C, cycle, relay, copieDex, prixCourbe, vue, ethUsd, logsExacts };
+  return { config: C, cycle, relay, copieDex, prixCourbe, vue, ethUsd, logsExacts, _metasDuCarnet: metasDuCarnet };
 }
 
 module.exports = { cree, config, ESPACE_LEGER_MS, CYCLE_MS, RELAY_MS, CONFIRMATIONS, FENETRE_MAX, RATTRAPAGE_MAX, CYCLE_APPELS, CYCLE_OCTETS, JOUR_HTTP, JOUR_OCTETS, SUIVI_MIN, RELAY_LIMITE, RELAY_URL, DS_ORDERS };

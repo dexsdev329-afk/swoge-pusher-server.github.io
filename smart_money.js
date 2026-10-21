@@ -240,6 +240,7 @@ function cree(deps0) {
   const masque = (x) => { let t = String(x == null ? '' : x); if (C.rpcUrl) t = t.split(C.rpcUrl).join('<node>'); return t.replace(/URL: \S+/g, 'URL: <node>'); };
   const note = (genre, texte) => { journal.push({ t: deps.horloge(), genre, texte: masque(texte).slice(0, 300) }); if (journal.length > JOURNAL_MAX) journal.shift(); };
   let instantane = null;
+  let CARNET = null;
   /* le journal public (16/10) : il lit la base quand elle est ouverte */
   const PUB = SPUB.cree({ base: () => B, horloge: deps.horloge, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, tg: deps.tg, note,
     prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
@@ -266,7 +267,10 @@ function cree(deps0) {
        son plafond du jour a lui (smart_lancements.js, EXPLOITATION.md) */
     const RL = deps.rpcLancements || SR.cree(Object.assign({}, opts, { budgetAppels: SLZ.CYCLE_APPELS, budgetOctets: SLZ.CYCLE_OCTETS, prefixeHash: 'P', jourPropre: true,
       plafondJourHttp: SLZ.JOUR_HTTP, plafondJourOctets: SLZ.JOUR_OCTETS, espaceLegerMs: SLZ.ESPACE_LEGER_MS }, deps.rpcOptions || {}));
-    LZ = SLZ.cree({ R: RL, B, envoie, note, horloge: deps.horloge, dors: deps.dors, prendre: deps.prendre, env: deps.env, explorer: deps.explorer,
+    /* le carnet des lancements (21/10, lancements_carnet.js) : chaque lancement ecrit, suivi 30 jours */
+    if (!CARNET && String((deps.env || process.env).SMART_CARNET == null ? '' : (deps.env || process.env).SMART_CARNET).trim() !== '0')
+      CARNET = require('./lancements_carnet').cree({ dossier: deps.dossier, prendre: deps.prendre, horloge: deps.horloge, note });
+    LZ = SLZ.cree({ R: RL, B, envoie, note, horloge: deps.horloge, dors: deps.dors, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, carnet: CARNET,
       faits: deps.faits, surSignal: deps.surSignalV2, exclu: (j) => (SOCLE.has(j) ? 'stablecoin or ETH' : (actionsCache && actionsCache.has(j)) ? 'tokenized stock' : null) });
     if (!instantane) instantane = construitVue();
   }
@@ -1550,7 +1554,9 @@ function cree(deps0) {
        envois retardes et releves de prix, sans minuterie de plus */
     veille: async () => { const r = await veille(); await ticPublic(); return r; },
     /** Un cycle des lancements (60 s) ; les envois Relay (2 min). */
-    lancements: async () => { await allume(); const r = await LZ.cycle(); await ticPublic(); instantane = construitVue(); return r; },
+    lancements: async () => { await allume(); const r = await LZ.cycle(); await ticPublic(); if (CARNET) { try { await CARNET.tic(); } catch (e) { note('carnet', masque(e.message || e).slice(0, 120)); } } instantane = construitVue(); return r; },
+    /** Le carnet des lancements : GET /ai/lancements (bilan par trait, compteurs). */
+    carnetLancements: () => (CARNET ? { actif: true, vue: CARNET.vue(), bilan: CARNET.bilan() } : { actif: false }),
     /** Le journal public : GET /ai/smart/alertes?depuis=<id> (base locale seulement). */
     alertesPubliques: (depuis) => PUB.vue(depuis),
     ticPublic,

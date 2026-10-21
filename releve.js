@@ -66,6 +66,15 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   if (PC) console.log('chaine    ', `mode ${PC.mode} · ecart med ${PC.ecart.medianePct ?? '—'}% p90 ${PC.ecart.p90Pct ?? '—'}% (n=${PC.ecart.n})`
     + ` · retard ${PC.retard.minMedianS ?? '—'}-${PC.retard.maxMedianS ?? '—'} s (n=${PC.retard.n}, a jour ${PC.retard.aJour})`
     + ` · ${(PC.audit || []).map((a) => `${a.regle} n=${a.n}/${PC.assez} avance=${a.avanceMediane ?? '—'}s pts=${a.ptsMoyen ?? '—'}`).join(' | ') || 'aucune sortie appariee'}`);
+  /* Le carnet des lancements (21/10, lancements_carnet.js) : fiches, suivis, vivants a 24 h et 7 j par theme. */
+  try {
+    const L = await (await fetch(URL.replace(/\/ai\/colonie.*$/, '/ai/smart/lancements'))).json();
+    if (L && L.actif) {
+      const v = L.vue, b = L.bilan, p = (x) => (x && x.assez ? x.vivantsPct + '%' : '—');
+      console.log('lancem.   ', `${v.fiches} fiches · metas en file ${v.fileMeta} · suivis ${v.compteurs.suivis} · manques ${v.compteurs.manques} · vivants 24h ${p(b.tout['24h'])} (n=${b.tout['24h'].mesures}) 7j ${p(b.tout['7j'])} (n=${b.tout['7j'].mesures})`);
+      console.log('  themes  ', Object.entries(b.parTheme).map(([k, x]) => `${k} n=${x.n} 24h ${p(x['24h'])}`).join(' | '));
+    } else console.log('lancem.    carnet inactif');
+  } catch (e) { console.log('lancem.    illisible : ' + String(e.message || e).slice(0, 60)); }
   const PFv = d.portefeuilles;
   if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};
