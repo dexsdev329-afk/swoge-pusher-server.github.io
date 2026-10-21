@@ -4958,8 +4958,39 @@ function bilanReel() {
            parTenue: parTranchesDe(l, 'tenue', CARNET_TENUES),
            /* Le meme decoupage par frottement, sur l'argent reel : l'aller-retour
               que le miroir a devise sur SA mise, pas sur la sonde. */
-           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR) };
+           parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR),
+           ecartParAllerRetour: ecartParAllerRetour(l),
+           /* Les fermetures sans aller-retour devise (anterieures a sa transmission, ou
+              sans devis) : la tranche ne les voit pas, et il faut savoir combien. */
+           sansAllerRetour: l.filter((x) => typeof x.allerRetour !== 'number').length };
 }
+/* ---- OU SE PERD L'ECART PAPIER → REEL (21/10/2026) ----
+ * Releve du 21/10 : 7,3 points d'ecart moyen sur 291 fermetures appariees, et sur les
+ * 54 qui portent leur aller-retour, -0,3 % de moyenne reelle a 2-4 % (n=27) contre
+ * -16,2 % a 4-7 % (n=19) quand le papier donne +5,5 % et +0,6 % aux memes tranches.
+ * Les deux chiffres ne se lisaient jamais cote a cote : par tranche, l'ecart moyen
+ * papier moins reel, sur les seules lignes qui ont les deux. Il ne decide rien ; il
+ * dit si le plafond d'aller-retour vaut la peine (sous REEL_ASSEZ par tranche, on ne
+ * conclut pas : `assez`). */
+function ecartParAllerRetour(l) {
+  const out = [];
+  for (let i = 0; i < CARNET_ALLER_RETOUR.length; i++) {
+    const bas = CARNET_ALLER_RETOUR[i], haut = CARNET_ALLER_RETOUR[i + 1];
+    const t = l.filter((x) => typeof x.allerRetour === 'number' && x.allerRetour >= bas && (haut === undefined || x.allerRetour < haut)
+      && typeof x.papier === 'number' && isFinite(x.papier));
+    if (!t.length) continue;
+    const ecart = t.reduce((a, x) => a + (x.papier - x.r), 0) / t.length;
+    out.push({ de: bas, a: haut === undefined ? null : haut, n: t.length,
+               papier: Math.round(t.reduce((a, x) => a + x.papier, 0) / t.length * 10) / 10,
+               reel: Math.round(t.reduce((a, x) => a + x.r, 0) / t.length * 10) / 10,
+               ecart: Math.round(ecart * 10) / 10, assez: t.length >= REEL_ASSEZ_TRANCHE });
+  }
+  return out;
+}
+/* 30 fermetures reelles par tranche avant d'en tirer quoi que ce soit : CHOISI — la page
+   refuse deja de conclure sous REEL_ASSEZ (5) pour une ligne entiere ; une tranche qui
+   decide d'un plafond d'achat demande davantage. */
+const REEL_ASSEZ_TRANCHE = 30;
 
 /** Ce que la page montre : le cout reel, mesure, et sur combien de fermetures. */
 function coutReel() {
@@ -7856,9 +7887,77 @@ function joueEchelle(p, r, quand) {
   for (const n of paliersFranchis(p, r)) {
     p.paliers[n.k] = true;
     try { PRIX_CHAINE.palierReel(p, n.k, r, quand); } catch (e) { /* observation seule */ }
-    vendUneTranche(p, r, n.v / 100, quand, 'palier +' + n.a + '%');
+    const f = Math.min(n.v / 100, p.reste === undefined ? 1 : p.reste);
+    if (vendUneTranche(p, r, n.v / 100, quand, 'palier +' + n.a + '%')) notePalierSuite(p, n, r, f, quand);
   }
   return p.reste <= 0.001;
+}
+
+/* ==========================================================================
+ * LES PALIERS, JUGES A L'ECHEANCE (21/10/2026)
+ *
+ * « Vend-on trop tot ? » avait sa reponse pour la Sentinelle (`regleLesSuites`)
+ * mais pas pour l'echelle : 35 % a +15 %, 35 % a +40 %, 20 % a +80 % se
+ * vendaient sans que personne ne revienne voir. Releve du 21/10 : LOVOT vendu par
+ * paliers, +70 % au total, valait +218 % a l'echeance ; LYRO +49 %, valait +127 % ;
+ * et « gain pris a +120 % » (n=17) prenait +162 % quand tenir donnait +231 %.
+ *
+ * Chaque tranche vendue par un palier laisse une suite : a l'echeance de la position
+ * (la meme que `noteSuite`), on relit le prix VENDABLE et on note ce que garder CETTE
+ * tranche aurait rendu de plus (positif) ou de moins (negatif), en points de la
+ * tranche et en points de la position entiere (ponderes par sa part). Par palier :
+ * c'est ce qui dira, sur des centaines de tranches, lequel vend trop tot — et s'il
+ * faut garder une plus grosse part en course. On ne decide rien avec : on compte.
+ * ======================================================================== */
+const PALIERS_SUITES_MAX = 120;
+function notePalierSuite(p, n, r, f, quand) {
+  if (!Array.isArray(E.suitesPaliers)) E.suitesPaliers = [];
+  E.suitesPaliers.push({ adr: p.adr, sym: p.sym, prix0: p.prix0, k: n.k, a: n.a, part: Math.round(f * 1000) / 1000,
+    rVente: Math.round(r * 100) / 100, t: quand, echeance: p.t0 + (p.tenueMin || TENUE_DEFAUT_MIN) * 60000 });
+  if (E.suitesPaliers.length > PALIERS_SUITES_MAX) E.suitesPaliers = E.suitesPaliers.slice(-PALIERS_SUITES_MAX);
+}
+function regleLesPaliers(marche) {
+  if (!Array.isArray(E.suitesPaliers) || !E.suitesPaliers.length) return 0;
+  if (!E.verdictsPaliers || typeof E.verdictsPaliers !== 'object') E.verdictsPaliers = {};
+  const now = Date.now();
+  let n = 0;
+  E.suitesPaliers = E.suitesPaliers.filter((s) => {
+    const V = E.verdictsPaliers[s.a] || (E.verdictsPaliers[s.a] = { n: 0, sDelta: 0, sPondere: 0, mieuxTenir: 0, oubliees: 0, pire: 0, meilleur: 0 });
+    /* Une tranche qu'on n'a jamais pu recoter est COMPTEE : sans elle, on ne jugerait
+       que les jetons qui survivent assez pour etre relus. */
+    if (now - s.t > SUITE_OUBLI_MS) { V.oubliees++; return false; }
+    if (now < s.echeance) return true;
+    const brut = marche[s.adr];
+    const x = (typeof brut === 'number') ? { prix: brut } : brut;
+    if (!x || !(x.prix > 0)) return true;
+    const rTenu = rendementVendable((x.prix - s.prix0) / s.prix0 * 100, x.liq);
+    if (!isFinite(rTenu) || rTenu > REND_MAX || rTenu < REND_MIN) { V.oubliees++; return false; }
+    const delta = rTenu - s.rVente;               /* > 0 : garder cette tranche aurait mieux rendu */
+    V.n++; V.sDelta += delta; V.sPondere += delta * s.part;
+    if (delta > 0) V.mieuxTenir++;
+    if (delta < V.pire) V.pire = Math.round(delta * 10) / 10;
+    if (delta > V.meilleur) V.meilleur = Math.round(delta * 10) / 10;
+    compte('paliersJuges');
+    n++;
+    return false;
+  });
+  return n;
+}
+/** Par palier : ce que garder la tranche jusqu'a l'echeance aurait change. */
+function verdictsDesPaliers() {
+  const out = [];
+  for (const a in (E.verdictsPaliers || {})) {
+    const v = E.verdictsPaliers[a];
+    if (!v) continue;
+    out.push({ palier: Number(a), n: v.n, oubliees: v.oubliees,
+               /* points de la tranche, et points de la position entiere */
+               deltaTranche: v.n ? Math.round(v.sDelta / v.n * 10) / 10 : null,
+               deltaPosition: v.n ? Math.round(v.sPondere / v.n * 10) / 10 : null,
+               partMieuxTenir: v.n ? Math.round(v.mieuxTenir / v.n * 100) : null,
+               pire: v.pire, meilleur: v.meilleur, assez: v.n >= AUDIT_MIN_OBS });
+  }
+  out.sort((x, y) => x.palier - y.palier);
+  return out;
 }
 
 /* L'arret suiveur : il ne dit pas quand vendre, il dit quand ARRETER DE
@@ -8527,6 +8626,7 @@ function alertes() {
     if (j && j.envois >= 2 && j.suivis * 2 < j.envois) {
       const noms = { sansPortefeuille: 'no mirror running', dejaTenu: 'already held', solde: 'balance too low',
                      gaz: 'gas above its share of the stake', retourMin: 'selling back would return under the minimum',
+                     disjoncteur: 'the daily breaker (24 h loss or buy count) stopped new buys',
                      echecAchat: 'the buy failed', autre: 'other' };
       const raisons = Object.keys(j.raisons).filter((k) => k !== 'suivi')
         .sort((a, b) => j.raisons[b] - j.raisons[a])
@@ -10656,6 +10756,7 @@ async function tour() {
 
     /* On revient voir ce qu'on a vendu tot : c'est la que la lecon se forme. */
     regleLesSuites(prix);
+    regleLesPaliers(prix);
     regleLesOmbres(prix);
     const fermees = regle(prix);
     /* Les ombres du signal du brief, sur une COPIE des prix : leurs relectures
@@ -11148,6 +11249,7 @@ function vue() {
     /* ---- VEND-ON TROP TOT ? ----
        Le chiffre existait a chaque sortie et n'etait agrege nulle part. */
     verdicts: verdictsDesSorties(),
+    verdictsPaliers: verdictsDesPaliers(),
     /* ---- LE CARNET : CE QUE CHAQUE TRADE A VRAIMENT FAIT ----
        Les compteurs disaient combien de trades ; le carnet dit lesquels. */
     /* ---- LE CARNET NET DE L'ALLER-RETOUR ---- voir `carnetNet` */
@@ -11455,7 +11557,7 @@ module.exports = {
   rendementVendable, bancsDEssai, noteVariante, VARIANTES, MISE_OMBRE, OMBRE_LIQ_MORTE,
   seuilsAudit, refMontes, REF_PROTEGE, auditDe, SANS_ACHAT_DESSERRE, recadreLesBornes, buteesDuCode, BUTEES_AVANT,
   deriveDuPrix, noteDerive, DERIVE_MAX,
-  noteCarnet, bancMesure, noteBancSerie, BANC_SERIE_MAX, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, carnetNet, barreNet, NET_CASE_MIN, bilanReel, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
+  noteCarnet, bancMesure, noteBancSerie, BANC_SERIE_MAX, rythmeSilence, RYTHME_JOURS, RYTHME_ASSEZ, carnetBilan, carnetNet, barreNet, NET_CASE_MIN, bilanReel, ecartParAllerRetour, REEL_ASSEZ_TRANCHE, notePalierSuite, regleLesPaliers, verdictsDesPaliers, bilanDe, CARNET_MAX, CARNET_TENUES, CARNET_ALLER_RETOUR, CARNET_LIQ, CARNET_MC, ALLER_RETOUR_MAX, coutAllerRetour,
   TENUES, TENUE_EXPLORE, tenueAExplorer, cestUnTourDExploration,
   verdictsDesSorties, noteVerdictSortie,
   executionReelle, coutReel, entreeReelle, ecartEntree, ENTREE_RATIO_MIN, ENTREE_RATIO_MAX,

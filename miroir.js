@@ -150,6 +150,29 @@ const PERMIT2_ABI = [
 const nEnv = (k, d) => { const v = parseFloat(process.env[k]); return isFinite(v) ? v : d; };
 const EXECUTE     = String(process.env.MIROIR_EXECUTE || '0') === '1';
 const MIROIRS_MAX = Math.max(1, Math.round(nEnv('MIROIR_MAX', 25)));
+/* ---- LE DISJONCTEUR JOURNALIER (21/10/2026) ----
+ * Repris du controle de risque d'un pack de day trading (Jakeschincariol/
+ * day-trader-skill, trader-risk : perte maximale et nombre de trades par jour) :
+ * le miroir avait un plafond par ordre (MIROIR_ORDRE_MAX), par portefeuille
+ * (MIROIR_MAX_ETH) et une garde du gaz, mais RIEN par jour. Releve du 21/10 :
+ * 294 fermetures reelles, -3,8 % en moyenne, 28 % de gagnantes, 7,3 points sous le
+ * papier — une mauvaise journee enchaine les coupes sans que rien ne s'arrete.
+ *
+ * Sur 24 h glissantes, par portefeuille, il refuse les NOUVEAUX achats (jamais les
+ * ventes, jamais une position ouverte a la main) quand :
+ *   - la perte NETTE des fermetures des 24 h depasse MIROIR_PERTE_JOUR (10 %) du
+ *     capital au debut de la fenetre (solde + mises engagees + ce qui a ete perdu) ;
+ *   - ou que MIROIR_ACHATS_JOUR (8) achats ont deja ete faits.
+ * Les deux bornes sont CHOISIES, pas mesurees : 8, c'est 3,5 fois le rythme mesure
+ * de la colonie (16 achats en 7 jours le 21/10, 2,3 par jour) — il ne doit mordre
+ * que sur un emballement ; 10 %, c'est environ trois coupes completes a -35 % sur des
+ * mises de 3 a 10 % du solde. Chaque declenchement est compte (raison
+ * « disjoncteur » du suivi) : c'est ce compte qui dira s'il faut les bouger. Il se
+ * rearme tout seul quand la fenetre glisse. Un essai (MIROIR_EXECUTE=0) le joue
+ * aussi, pour que le papier du miroir montre ce que le reel ferait. */
+const PERTE_JOUR_PART = Math.min(0.9, Math.max(0.01, nEnv('MIROIR_PERTE_JOUR', 0.10)));
+const ACHATS_JOUR_MAX = Math.max(1, Math.round(nEnv('MIROIR_ACHATS_JOUR', 8)));
+const JOUR_MS = 24 * 3600e3;
 /* ---- LE MINIMUM POUR JOUER SUIT LE PLANCHER PAR ORDRE ----
  * « Vérifie qu'il respecte bien les mises par rapport à notre capital. »
  * Mesure le 4 septembre, en reel : un miroir a 0,0023 ETH. La reserve de gaz
@@ -1404,7 +1427,7 @@ async function reconcilie(c) {
     if (!Array.isArray(c.fermees)) c.fermees = [];
     c.fermees.push({ adr, sym: o.sym || null, entree: o.cout || o.entree, mise: o.entree,
                      sortie: null, devis: null, reel: true, horsMiroir: true,
-                     t0: o.t, t: now, simule: !!o.simule, tx: null });
+                     t0: o.t, t: now, simule: !!o.simule, tx: null, manuel: !!o.manuel });
     note(c, o.simule
       ? 'Position ' + (o.sym || adr) + ' dropped: it was opened in dry run, nothing was ever bought'
       : 'Position ' + (o.sym || adr) + ' closed outside the mirror: the wallet no longer holds the token, '
@@ -1459,6 +1482,8 @@ async function etat(joueur, lireChaine) {
     transit: (c.transit || []).map((t) => ({ sym: t.sym, adr: t.adr, montant: ethers.utils.formatUnits(t.montant, t.dec || 18), t: t.t })),
     journal: (c.journal || []).slice(0, 20),
     bilan: bilan(c),
+    /* Le disjoncteur journalier : ce qu'il voit, et s'il refuse les nouveaux achats. */
+    disjoncteur: disjoncteur(c, solde === null ? null : WEI(solde)),
   });
 }
 
@@ -1829,7 +1854,38 @@ function surVente(t) { return enFile(() => venteFile(t)); }
  * au plafond de 4 %. La mesure le dit ; la decision de les bloquer ou de
  * reparer la route appartient au proprietaire (rapport, section 6). */
 const SUIVI_RECENTS_MAX = 300;
-const SUIVI_RAISONS = ['sansPortefeuille', 'dejaTenu', 'solde', 'gaz', 'retourMin', 'echecAchat', 'suivi'];
+const SUIVI_RAISONS = ['sansPortefeuille', 'dejaTenu', 'solde', 'gaz', 'retourMin', 'disjoncteur', 'echecAchat', 'suivi'];
+
+/** Le disjoncteur d'un portefeuille, sur les 24 dernieres heures (voir PERTE_JOUR_PART).
+ *  `soldeWei` : le solde lu sur la chaine (BigNumber) ou null. Rend l'etat, et `coupe`
+ *  avec sa raison quand il refuse un achat. Ne lit rien, n'ecrit rien. */
+function disjoncteur(c, soldeWei, maintenant) {
+  const now = maintenant || Date.now();
+  const fermees = (c && c.fermees) || [];
+  let net = 0, nFermees = 0, achats = 0;
+  for (const x of fermees) {
+    if (x.transit) continue;
+    if (now - (Number(x.t0) || 0) < JOUR_MS && !x.manuel) achats++;
+    if (now - (Number(x.t) || 0) >= JOUR_MS) continue;
+    if (x.sortie === null || x.sortie === undefined) continue;   /* fermee hors du miroir : resultat inconnu, pas invente */
+    net += (Number(x.sortie) || 0) - (Number(x.entree) || 0);
+    nFermees++;
+  }
+  let engage = 0;
+  for (const o of Object.values((c && c.ouvertes) || {})) {
+    engage += Number(o.cout || o.entree) || 0;
+    if (!o.manuel && now - (Number(o.t) || 0) < JOUR_MS) achats++;
+  }
+  const solde = soldeWei ? Number(ethers.utils.formatUnits(soldeWei, 18)) : null;
+  /* Le capital au debut de la fenetre : ce qu'on a, ce qui est engage, et ce qui a ete perdu depuis. */
+  const capital = solde === null ? null : solde + engage - net;
+  const perteMax = capital === null ? null : PERTE_JOUR_PART * capital;
+  const etat = { net: Math.round(net * 1e6) / 1e6, fermees: nFermees, achats, capital: capital === null ? null : Math.round(capital * 1e6) / 1e6,
+                 perteMax: perteMax === null ? null : Math.round(perteMax * 1e6) / 1e6, part: PERTE_JOUR_PART, achatsMax: ACHATS_JOUR_MAX, coupe: null };
+  if (perteMax !== null && net < 0 && -net >= perteMax) etat.coupe = 'perte';
+  else if (achats >= ACHATS_JOUR_MAX) etat.coupe = 'achats';
+  return etat;
+}
 /** Ce que dit une exception d'achat : une route manquante n'a pas le meme
  *  remede qu'une transaction refusee. */
 function motifEchecAchat(e) {
@@ -1961,6 +2017,20 @@ async function achetePosition(c, t, issue) {
   if (!c.ouvertes) c.ouvertes = {};
   if (c.ouvertes[adr]) return pourquoi('dejaTenu');  /* une seule par jeton, comme la colonie */
   const solde = await provider().getBalance(c.adr);
+  /* Le disjoncteur journalier, AVANT toute depense (devis compris). Une ouverture a la main
+     est un choix du joueur : elle passe, et elle ne compte pas dans le nombre d'achats. */
+  if (!t.manuel) {
+    const dj = disjoncteur(c, solde);
+    if (dj.coupe) {
+      note(c, 'Skipped ' + (t.sym || adr) + ': daily breaker — '
+        + (dj.coupe === 'perte'
+          ? 'closed trades lost ' + (-dj.net).toFixed(5) + ' ETH in the last 24 h, over the ' + Math.round(PERTE_JOUR_PART * 100) + '% limit ('
+            + dj.perteMax.toFixed(5) + ' ETH of ' + dj.capital.toFixed(5) + ')'
+          : dj.achats + ' buys in the last 24 h, the limit is ' + ACHATS_JOUR_MAX)
+        + '. Sells and open positions carry on; new buys resume as the 24 h window moves', { adr });
+      return pourquoi('disjoncteur');
+    }
+  }
   const mise = miseDe(solde, t.part);
   if (mise.lte(0)) {
     note(c, 'Skipped ' + (t.sym || adr) + ': ' + pourquoiPasDeMise(solde));
@@ -2117,7 +2187,7 @@ async function vendPosition(c, adr, o) {
     c.fermees.push({ adr, sym: o.sym || null, entree: o.cout || o.entree, mise: o.entree,
                      sortie: ethers.utils.formatUnits(deja, 18), tranches: o.sortiesPartielles || null,
                      devis: ethers.utils.formatUnits(devisV, 18), reel: EXECUTE, poussiere: true,
-                     t0: o.t, t: Date.now(), simule: !EXECUTE, tx: null });
+                     t0: o.t, t: Date.now(), simule: !EXECUTE, tx: null, manuel: !!o.manuel });
     if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
     note(c, 'Kept ' + (o.sym || adr) + ': selling would return ' + ethers.utils.formatUnits(devisV, 18)
           + ' ETH (RH) for about ' + ethers.utils.formatUnits(gazV, 18) + ' ETH of gas — not worth it. The tokens '
@@ -2152,7 +2222,9 @@ async function vendPosition(c, adr, o) {
                    tranches: o.sortiesPartielles ? ethers.utils.formatUnits(deja, 18) : null,
                    devis: r.sortie ? ethers.utils.formatUnits(r.sortie, 18) : null,
                    reel: !!r.recuReel,
-                   t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null });
+                   t0: o.t, t: Date.now(), simule: !!r.simule, tx: r.tx || null,
+                   /* une ouverture a la main ne compte pas dans le disjoncteur */
+                   manuel: !!o.manuel });
   if (c.fermees.length > FERMEES_MAX) c.fermees.splice(0, c.fermees.length - FERMEES_MAX);
   /* Et la colonie apprend sur CE chiffre-la, pas sur le prix : voir
      `ditExecutionReelle`. */
@@ -2213,7 +2285,7 @@ async function ouvreFile(joueur, adr) {
 module.exports = {
   /* l'interface du serveur */
   charge, sauve, pret, cree, revele, etat, demarre, arrete, surAchat, surVente, surTour, allerRetour, pontConnu, pontsVus, effaceJournal,
-  suiviStats, SUIVI_RAISONS, _motifEchecAchat: motifEchecAchat,
+  suiviStats, SUIVI_RAISONS, disjoncteur, PERTE_JOUR_PART, ACHATS_JOUR_MAX, _motifEchecAchat: motifEchecAchat,
   poseColonie, PISCINE_MORTE, evalueFile, EVAL_TTL_MS,
   ORDRE_MIN_USD, litEthUsd, coursEth, plancherOrdre, minPourJouer,
   _poseSourceEthUsd: poseSourceEthUsd, _partSeule: partSeule, _oublieLeCours: oublieLeCours,

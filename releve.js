@@ -83,7 +83,10 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
     console.log(`  depuis ${dep}: n=${RL.length} moy=${n1(RL.reduce((s, x) => s + x.r, 0) / RL.length)}% gagnants=${RL.filter((x) => x.r > 0).length}/${RL.length} ETH net=${n1(1e5 * RL.reduce((s, x) => s + ((+x.rendu || 0) - (+x.cout || 0)), 0)) / 1e5}`);
     for (const l of RL.slice().sort((a, b) => a.t - b.t)) console.log(`    ${h(l.t)} ${String(l.sym).padEnd(10)} ${String(l.r).padStart(7)}%  papier ${l.papier === null ? '?' : n1(l.papier)}  AR ${l.allerRetour ?? '?'}  tenue ${l.tenue} min`);
   }
+  const EA = ((R.bilan || {}).ecartParAllerRetour || []);
+  if (EA.length) console.log('  ecart/AR ', EA.map((x) => `[${x.de}-${x.a ?? '∞'}] n=${x.n} papier=${x.papier} reel=${x.reel} ecart=${x.ecart}${x.assez ? '' : ' (trop peu)'}`).join(' | ') + ` · sans AR ${(R.bilan || {}).sansAllerRetour ?? '?'}`);
   console.log('\nverdicts  ', (d.verdicts || []).map((v) => `${v.sortie}: n=${v.n} tropTot=${v.partTropTot}% pris=${v.prisMoyen} tenu=${v.tenuMoyen}`).join(' | '));
+  console.log('paliers   ', (d.verdictsPaliers || []).map((v) => `+${v.palier}%: n=${v.n} (oubliees ${v.oubliees}) garder=${v.deltaTranche ?? '—'} pts tranche / ${v.deltaPosition ?? '—'} pts position, mieux tenu ${v.partMieuxTenir ?? '—'}%${v.assez ? '' : ' (trop peu)'}`).join(' | ') || 'rien encore');
   console.log('alertes   ', (d.alertes || []).map((a) => `[${a.gravite}] ${a.quoi}`).join(' | ') || 'aucune');
   console.log('journal');
   for (const j of (d.journalStructure || []).filter((j) => j.t > t0).slice(0, 12)) console.log(`  ${h(j.t)} ${j.quoi.padEnd(10)} ${(j.txt || '').slice(0, 110)}`);

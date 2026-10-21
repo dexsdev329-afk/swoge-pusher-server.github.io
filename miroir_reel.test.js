@@ -26,6 +26,12 @@ const { ethers } = require('ethers');
 const DOSSIER = fs.mkdtempSync(path.join(os.tmpdir(), 'miroir-reel-'));
 process.env.DATA_DIR = DOSSIER;
 process.env.MIROIR_CLE = 'une phrase de passe d essai';
+/* Le disjoncteur journalier (21/10/2026) a sa propre suite (colonie_mesures.test.js). Ici on
+   eprouve les AUTRES gardes : les scenarios enchainent des pertes sur de tres petits portefeuilles
+   (0,003 ETH, -31 % en quelques ordres), ce qui le declenche — a raison. Ses bornes sont donc
+   relevees, pour que chaque scenario mesure la garde qu'il nomme. */
+process.env.MIROIR_PERTE_JOUR = '0.9';
+process.env.MIROIR_ACHATS_JOUR = '100000';
 process.env.MIROIR_EXECUTE = '1';
 process.env.MIROIR_MAX = '3';
 process.env.MIROIR_PAUSE_MS = '0';
