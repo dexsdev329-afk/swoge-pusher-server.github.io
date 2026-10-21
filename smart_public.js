@@ -63,6 +63,21 @@ const OBS_MIN = 5;
 /* le prix de reference : lu a l'alerte, sinon au cycle suivant, au plus 3 min
    apres ; au-dela l'alerte n'a pas de reference et n'entre pas au bilan. CHOISI */
 const REF_RETARD_MAX_S = 180;
+/* La reference DIFFEREE (21/10/2026) : une alerte posee avant tout marche (IGNITION alerte au
+   deploiement du contrat : releve du 21/10, 63 alertes publiques, 0 mesuree — aucun prix dans les
+   180 s) prend pour reference son PREMIER prix lu dans les 6 h, et ses paliers comptent depuis ce
+   prix-la (la page dit combien de temps apres l'alerte il a ete lu). Une alerte sans prix en 6 h
+   reste sans mesure. 6 h : CHOISI, la fenetre ou un suiveur aurait encore l'alerte en tete. */
+const REF_DIFFEREE_S = 6 * 3600;
+/* Le vert se GAGNE par la mesure (21/10/2026). Releve du 21/10 : la ligne de la colonie
+   « smart launch: pons » (les verts publics de la categorie pons) : 343 observations, 14 % de
+   montees a +30 min contre 27 % pour « achete ou retenu », moyenne -30 % — publiees en vert.
+   Une categorie dont la ligne verte a au moins SMART_ACHAT_MIN_OBS (100) observations et monte
+   MOINS souvent que ce que la colonie achete part en JAUNE, avec sa mesure ecrite dans l'alerte.
+   Reversible : la colonie continue de recevoir le vert (son ombre), donc la ligne continue de se
+   mesurer, et l'alerte redevient verte le jour ou elle bat la reference. Jamais l'inverse : la
+   mesure ne promeut rien. La correspondance categorie -> source v2 (ai_colonie.js SMART_LIGNES_V2). */
+const SOURCE_DE_CAT = { pons: 'lancement', dev: 'dev', ignition: 'ignition', copie: 'copie', rebond: 'rebond' };
 /* Le bilan refuse de conclure sous 40 alertes mesurees a +30 min : AUDIT_ASSEZ
    (swoge_ai.html, « une part de montees sous 40 jetons est du bruit ») et
    AUDIT7_MIN (ai_colonie.js) — la meme question, une part de montees. */
@@ -86,6 +101,17 @@ const CATEGORIES = ['dev', 'pons', 'ignition', 'copie', 'rebond', 'analyste', 's
 const LIBELLE_CAT = { dev: 'Known dev', pons: 'Pons launch', ignition: 'IGNITION', copie: 'Wallet copy', rebond: 'Bounce', analyste: 'Analyst', smart: 'Smart wallets', rouge: 'Red flags (avoid / exit)' };
 const EMOJI = { vert: '🟢', jaune: '🟡', rouge: '🔴' };
 const FIN = 'Not financial advice.';
+
+/** Le verdict public d'apres la mesure de sa ligne (pure). `m` : ai_colonie.mesureSourceSmart.
+ *  Sous les seuils (min de la ligne, refMin de la reference) : rien ne change, rien n'est dit. */
+function jugeParMesure(verdict, m) {
+  if (verdict !== 'vert' || !m || !fini(m.n) || m.n < (m.min || 100) || !fini(m.partMontes)
+      || !m.ref || !fini(m.ref.n) || m.ref.n < (m.refMin || 12) || !fini(m.ref.partMontes)) return { verdict, mesure: null };
+  const retrograde = !(m.partMontes > m.ref.partMontes);
+  const texte = m.n + ' past green alerts of this kind: ' + m.partMontes + '% were up ' + (m.horizon || 30) + ' min later, vs ' + m.ref.partMontes + '% for what the SWOGE AI colony buys'
+    + (retrograde ? ' — shown yellow until it beats that' : '');
+  return { verdict: retrograde ? 'jaune' : verdict, mesure: { n: m.n, part: m.partMontes, ref: m.ref.partMontes, retrograde, texte } };
+}
 
 // ------------------------------------------------------------ reglages
 function entier(x, d, max) { const s = String(x == null ? '' : x).trim(); if (!/^\d{1,9}$/.test(s)) return d; const n = Number(s); return n > max ? max : n; }
@@ -296,6 +322,9 @@ function construitFiche(jeton, pub, o) {
     plan: plan(p.plan),
     liens: j ? { dexscreener: DEXSCREENER + j, explorer: expl + '/token/' + j } : null,
   };
+  const jm = jugeParMesure(f.verdict, o && o.mesure);
+  if (jm.mesure) { f.verdict = jm.verdict; f.mesure = jm.mesure; }
+  if (p.refDifferee) f.ref_differee = true;
   f.etat = etatTexte(f);
   return f;
 }
@@ -308,6 +337,7 @@ function textes(f) {
     ['Age and state', f.etat], ['Who', qui], ['DexScreener promo', f.promo], ['Main risk', f.risque],
     ['Plan', 'entry ' + p.entree + '; stop ' + p.stop + '; target ' + p.objectif],
   ];
+  if (f.mesure && f.mesure.texte) corps.push(['Track record', f.mesure.texte]);
   const html = [`${EMOJI[f.verdict]} <b>${esc(f.titre)} — ${esc(nom)}</b>`];
   const brut = [`${EMOJI[f.verdict]} ${f.titre} — ${nom}`];
   if (f.jeton) { html.push(`<code>${f.jeton}</code>`); brut.push(f.jeton); }
@@ -329,7 +359,9 @@ function mesureVue(r) {
     const v = m[x];
     paliers[x] = !v ? null : v.manque ? { manque: true } : { pct: pct(v.p), min: v.m, source: v.s };
   }
-  return { id: r.id, ref: ref ? { prix: ref, source: r.ref_source, retard_s: fini(r.ref_t) && fini(r.t) ? r.ref_t - r.t : null } : null,
+  const differee = !!(jsonOu(r.fiche, {}) || {}).ref_differee;
+  return { id: r.id, ref: ref ? { prix: ref, source: r.ref_source, retard_s: fini(r.ref_t) && fini(r.t) ? r.ref_t - r.t : null, differee: differee && fini(r.ref_t) && fini(r.t) && r.ref_t - r.t > REF_RETARD_MAX_S } : null,
+    ref_differee: differee,
     paliers, meilleur_pct: pct(r.haut), pire_pct: pct(r.bas), releves: r.obs_n || 0, fini: !!r.fini };
 }
 /** Le bilan par categorie. Une alerte ROUGE (eviter, sortir) n'entre pas dans
@@ -413,7 +445,11 @@ function cree(deps) {
     if (!C.actif || !B() || !pub) return null;
     if (B().un('SELECT id FROM publiques WHERE cle = ?', [cle])) return null;
     const now = maintenantS();
-    const f = construitFiche(jeton, pub, { explorer: deps.explorer, maintenant: deps.horloge() });
+    let mesure = null;
+    const src = SOURCE_DE_CAT[pub.categorie];
+    if (src && pub.verdict === 'vert' && typeof deps.mesure === 'function') { try { mesure = deps.mesure(src); } catch (e) { mesure = null; } }
+    const f = construitFiche(jeton, pub, { explorer: deps.explorer, maintenant: deps.horloge(), mesure });
+    if (f.mesure && f.mesure.retrograde) compte('retrogradees');
     const tx = textes(f);
     /* le prix de reference : celui que l'appelant a lu, la courbe suivie, sinon DexScreener */
     let ref = num(pub.prixUsd) !== null && pub.prixUsd > 0 ? { prix: pub.prixUsd, source: pub.capSource === 'curve' ? 'curve' : 'dex' } : (f.jeton ? prixCourbe(f.jeton) : null);
@@ -451,7 +487,14 @@ function cree(deps) {
       const vivantes = B().tous('SELECT * FROM publiques WHERE fini = 0 ORDER BY id ASC');
       const dues = [];
       for (const r of vivantes) {
-        const age = (now - r.t) / 60;
+        /* reference differee : rien ne court avant le premier prix ; puis les paliers comptent depuis lui */
+        const differee = !!(jsonOu(r.fiche, {}) || {}).ref_differee;
+        if (differee && r.ref_prix == null) {
+          if (now - r.t > REF_DIFFEREE_S) { B().ecris('UPDATE publiques SET fini = 1 WHERE id = ?', [r.id]); bilanTic.fermees++; continue; }
+          if (r.jeton && (!r.obs_t || now - r.obs_t >= OBS_MIN * 60)) dues.push({ r, m: jsonOu(r.mesures, {}), age: 0, ouvert: null, rang: 1, differee });
+          continue;
+        }
+        const age = (now - (differee && fini(r.ref_t) ? r.ref_t : r.t)) / 60;
         const m = jsonOu(r.mesures, {});
         let change = false;
         for (const x of PALIERS) if (!m[x] && age > x + tolerance(x)) { m[x] = { manque: true }; change = true; }
@@ -470,11 +513,12 @@ function cree(deps) {
       if (reste.length) { bilanTic.http++; for (const [k, v] of await prixDs(reste)) prix.set(k, v); }
       for (const d of lot) {
         const p = prix.get(d.r.jeton);
-        if (!p) continue;
+        /* une alerte differee sans prix : l'essai est note (obs_t), pour ne la relire que toutes les OBS_MIN */
+        if (!p) { if (d.differee) B().ecris('UPDATE publiques SET obs_t = ? WHERE id = ?', [now, d.r.id]); continue; }
         const r = d.r;
         let ref = r.ref_prix, refT = r.ref_t, refS = r.ref_source;
-        /* une reference lue plus de REF_RETARD_MAX_S apres l'alerte n'en est pas une */
-        if (ref == null && now - r.t <= REF_RETARD_MAX_S) { ref = p.prix; refT = now; refS = p.source; }
+        /* une reference lue plus de REF_RETARD_MAX_S apres l'alerte n'en est pas une — sauf differee */
+        if (ref == null && (d.differee || now - r.t <= REF_RETARD_MAX_S)) { ref = p.prix; refT = now; refS = p.source; }
         if (d.ouvert) d.m[d.ouvert] = { p: p.prix, m: arrondi(d.age, 1), s: p.source };
         const haut = ref == null ? null : Math.max(r.haut == null ? p.prix : r.haut, p.prix), bas = ref == null ? null : Math.min(r.bas == null ? p.prix : r.bas, p.prix);
         B().ecris('UPDATE publiques SET ref_prix = ?, ref_t = ?, ref_source = ?, mesures = ?, haut = ?, bas = ?, obs_t = ?, obs_n = ? WHERE id = ?',
@@ -503,7 +547,7 @@ function cree(deps) {
     const c = compteurs();
     return { actif: true, t: now, dernier_id: dernier, alertes: alertes.map(ligne), vivantes: vivantes.map(mesureVue), bilan: bilan(visibles),
       paliers: PALIERS, palier_bilan: PALIER_BILAN, seuil: BILAN_ASSEZ, fin_min: FIN_MIN, tg: C.tgLien ? { lien: C.tgLien } : null,
-      compteurs: { publiees: c.publiees, canal_envoyees: c.tg_envoyees, canal_plafond: c.tg_plafond, canal_refusees: c.tg_refusees }, max_h: C.maxH };
+      compteurs: { publiees: c.publiees, retrogradees: c.retrogradees || 0, canal_envoyees: c.tg_envoyees, canal_plafond: c.tg_plafond, canal_refusees: c.tg_refusees }, max_h: C.maxH };
   }
 
   return { config: C, publie, tic, vue };
@@ -516,4 +560,4 @@ function litDepuis(q) {
 }
 
 module.exports = { config, cree, construitFiche, textes, bilan, mesureVue, risque, risqueAnalyste, titre, plan, nomPublic, litDepuis, tolerance,
-  PALIERS, FIN_MIN, OBS_MIN, BILAN_ASSEZ, PALIER_BILAN, JOURNAL_MAX, PRIX_HTTP_H, LOT_DS, MAX_H_DEFAUT, REF_RETARD_MAX_S, CATEGORIES, FIN, SITE };
+  jugeParMesure, PALIERS, FIN_MIN, OBS_MIN, BILAN_ASSEZ, PALIER_BILAN, JOURNAL_MAX, PRIX_HTTP_H, LOT_DS, MAX_H_DEFAUT, REF_RETARD_MAX_S, REF_DIFFEREE_S, SOURCE_DE_CAT, CATEGORIES, FIN, SITE };

@@ -242,7 +242,10 @@ function cree(deps0) {
   let instantane = null;
   /* le journal public (16/10) : il lit la base quand elle est ouverte */
   const PUB = SPUB.cree({ base: () => B, horloge: deps.horloge, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, tg: deps.tg, note,
-    prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null) });
+    prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
+    /* 21/10 : la mesure de la colonie par source v2 (ai_colonie.mesureSourceSmart) — un vert qui monte
+       moins souvent que ce que la colonie achete part en jaune (smart_public.jugeParMesure) */
+    mesure: typeof deps.mesureSmart === 'function' ? deps.mesureSmart : null });
   async function ticPublic() { try { if (B) await PUB.tic(); } catch (e) { note('public', masque(e.message || e).slice(0, 120)); } }
 
   async function allume() {

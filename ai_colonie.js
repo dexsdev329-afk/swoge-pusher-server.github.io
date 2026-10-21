@@ -10516,6 +10516,18 @@ function smartLigne(cle) {
            nStrat: a.nStrat || 0, strat: a.nStrat ? Math.round(a.strat / a.nStrat * 10) / 10 : null, sansLecture: a.sansLecture || 0,
            n7: b.n, partMontes7: b.n ? Math.round(b.montes / b.n * 100) : null, moyenne7: b.n ? Math.round(b.s / b.n * 10) / 10 : null };
 }
+/** La mesure d'une source v2 pour le journal PUBLIC (smart_public.js, 21/10/2026) : sa ligne
+ *  verte (ACHETER) contre « achete ou retenu », au meme horizon (HORIZON_REF). null si la source
+ *  n'a pas de ligne. Le public s'en sert pour RETROGRADER un vert qui monte moins souvent que ce
+ *  que la colonie achete — jamais pour promouvoir. */
+function mesureSourceSmart(source) {
+  const cle = SMART_LIGNES_V2[source];
+  if (!cle) return null;
+  const l = smartLigne(cle) || { n: 0, partMontes: null };
+  const ref = auditComplet().find((x) => x.cle === 'achete ou retenu') || null;
+  return { cle, n: l.n || 0, partMontes: l.partMontes, moyenne: l.moyenne == null ? null : l.moyenne, min: SMART_ACHAT_MIN_OBS, horizon: HORIZON_REF,
+           ref: ref ? { n: ref.n, partMontes: ref.partMontes } : null, refMin: AUDIT_MIN_OBS };
+}
 /** Ce que /ai/colonie montre du signal (champ `smartSignal`). Des codes et des
  *  chiffres, en anglais : la page est publique. */
 function smartVue() {
@@ -11596,7 +11608,7 @@ module.exports = {
   ECART_TYPE_BRUIT, VARIANCE_MIN_OBS, ROSTER_DEPART, REORDONNABLES,
   VERSION_ETAT, SEUIL_MIN, SEUIL_MAX, REND_MAX, REND_MIN, CHUTE_COUPE, AGE_PRIX_MAX,
   SANS_ACHAT_DESSERRE,
-  signalSmart, fournisseurPrixCourbe, fournisseurAgentlife, smartLigneDe, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
+  signalSmart, fournisseurPrixCourbe, fournisseurAgentlife, smartLigneDe, mesureSourceSmart, SMART_LIGNES_V2, faitsPourSmart, prendLesSignauxSmart, secoursSmart, regleLesSmart, smartVue, smartPorte, smartMode, smartLigne, rendementVendablePur,
   SMART_ACHAT_MIN_OBS, SMART_LIGNES, SMART_PAR_TOUR,
   _etat: () => E, _pose: (x) => { E = x; }, _cache: CACHE, _prix: dernierPrix, _rpc: rpc, _lisChaine: lisChaine,
 };

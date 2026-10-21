@@ -12103,7 +12103,8 @@ server.listen(cfg.PORT, () => {
      n'a pas de prix DexScreener : la colonie lit celui de la courbe suivie. */
   /* 16/10 : le canal PUBLIC des alertes (SMART_PUBLIC_TG_CHAT, smart_public.js) part par notifyChat */
   smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t), notifyChat: (c, t) => tg.notifyChat(c, t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
-    faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v) });
+    faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v),
+    mesureSmart: (src) => aiColonie.mesureSourceSmart(src) });
   aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
   /* AgentLife (18/10/2026, agentlife.js) : les alertes de l'autre bot du proprietaire, lues toutes
      les 5 min, deviennent des OMBRES de la colonie par le meme `signalSmart` (une ligne d'audit par

@@ -386,7 +386,7 @@ function cree(deps) {
           const r = await alerte('ignition', 'ignition:' + l.jeton, l.jeton, {
             verdict: j.verdict === 'vert' ? 'jaune' : j.verdict, titre: 'IGNITION — lancement sur leur usine', symbole: meta && meta.symbole, jeton: l.jeton, ageMin: Math.max(0, (a - l.bloc) * S_PAR_BLOC / 60),
             courbe: null, qui: quiTexte(l, txCourt(tx), j), promo, risque: j.risque, plan: SP.plan('jaune'), lienX: meta && SP.lienX(meta.socials),
-            pub: { categorie: 'ignition', titre: { cle: 'ignition_usine' }, qui: quiPublic(l, txCourt(tx), j), risque: j.risqueCode, plan: { cle: 'jaune' } },
+            pub: { categorie: 'ignition', titre: { cle: 'ignition_usine' }, qui: quiPublic(l, txCourt(tx), j), risque: j.risqueCode, plan: { cle: 'jaune' }, refDifferee: true },
           });
           if (r.ok) bilan.alertes++;
           signal({ jeton: l.jeton, symbole: meta && meta.symbole, verdict: 'jaune', source: SP.SOURCES.IGNITION, courbe: false, inconnues: j.inconnues,
@@ -618,7 +618,10 @@ function cree(deps) {
       const r = await alerte('ignition', 'ignition:contrat:' + adrs[i], adrs[i], { verdict: 'jaune', titre: 'IGNITION — ' + (sym ? 'nouveau jeton' : 'nouveau contrat') + ' déployé par son wallet',
         symbole: sym, jeton: adrs[i], ageMin: 0, courbe: null, qui: ['wallet IGNITION ' + court(L.BRIEF2.IGNITION.wallet) + ', nonce ' + (vu + i)], promo: sym ? await promoDe(adrs[i]) : undefined,
         risque: sym ? 'jeton sans marché tant qu’aucune piscine n’est née' : 'un contrat n’est pas un jeton (pas de symbol())', plan: SP.plan('jaune'), lienX: null,
-        pub: { categorie: 'ignition', titre: { cle: 'ignition_contrat', val: !!sym }, qui: [{ adresse: L.BRIEF2.IGNITION.wallet, role: 'ignition_wallet' }], risque: { cle: sym ? 'sans_marche' : 'pas_jeton' }, plan: { cle: 'jaune' } } });
+        /* 21/10 : un contrat sans symbol() n'est pas un jeton (releve : IGNITION publiait ses contrats
+           utilitaires) — l'alerte privee reste, le public ne le voit plus. Un jeton sans marche est
+           mesure depuis son premier prix (smart_public, reference differee). */
+        pub: sym ? { categorie: 'ignition', titre: { cle: 'ignition_contrat', val: true }, qui: [{ adresse: L.BRIEF2.IGNITION.wallet, role: 'ignition_wallet' }], risque: { cle: 'sans_marche' }, plan: { cle: 'jaune' }, refDifferee: true } : null });
       if (r.ok) bilan.alertes++;
       if (sym) signal({ jeton: adrs[i], symbole: sym, verdict: 'jaune', source: SP.SOURCES.IGNITION, courbe: false, inconnues: ['marche'], wallets: [{ wallet: L.BRIEF2.IGNITION.wallet, role: 'IGNITION' }] });
     }

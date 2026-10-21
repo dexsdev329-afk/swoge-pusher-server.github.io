@@ -64,7 +64,7 @@ async function banc(env, o) {
   };
   const tg = { notifyChat: async (c, t) => { chats.push({ c, t, at: T.now }); return o.tgRefuse ? false : true; } };
   const I = P.cree({ base: () => B, horloge: () => T.now, prendre, env: Object.assign({ SMART_MONEY: '1' }, env || {}), explorer: 'https://robinhoodchain.blockscout.com', tg,
-    prixCourbe: (j) => (courbe.has(j) ? { prix: courbe.get(j), liq: null, gradue: false } : null) });
+    prixCourbe: (j) => (courbe.has(j) ? { prix: courbe.get(j), liq: null, gradue: false } : null), mesure: o.mesure || null });
   /* avance de `min` minutes, un tic par minute (le cycle des lancements) */
   const avance = async (min, sansTic) => { for (let k = 0; k < min; k++) { T.now += 60e3; if (!sansTic) await I.tic(); } };
   return { B, T, prix, courbe, ds, chats, autres, I, avance };
@@ -289,6 +289,69 @@ const PUB = (o) => Object.assign({ categorie: 'dev', verdict: 'vert', titre: { c
     ok(/public ETEINT \(SMART_PUBLIC=0\)/.test(M.cree({ env: { SMART_MONEY: '1', SMART_PUBLIC: '0' } }).ligneDemarrage()), 'SMART_PUBLIC=0 : la ligne le dit');
     ok(/ni au proprietaire ni au public/.test(M.cree({ env: { SMART_MONEY: 'observe' } }).ligneDemarrage()), 'observe : la ligne le dit');
     egal(M.cree({ env: { SMART_MONEY: '1' } }).alertesPubliques(0).raison, 'not ready', 'base pas encore ouverte : la route dit « not ready »');
+  }
+
+  // ================================================== 8. le vert se gagne ; la reference differee (21/10/2026)
+  console.log('-- 8. le vert se gagne par la mesure ; IGNITION mesure depuis son premier prix --');
+  {
+    const M0 = (n, part, refPart) => ({ n, partMontes: part, min: 100, horizon: 30, ref: { n: 500, partMontes: refPart }, refMin: 12 });
+    /* le releve du 21/10 : « smart launch: pons », 343 obs, 14 % contre 27 % */
+    let j = P.jugeParMesure('vert', M0(343, 14, 27));
+    ok(j.verdict === 'jaune' && j.mesure.retrograde && /343 past green alerts.*14% were up 30 min later, vs 27%.*shown yellow/.test(j.mesure.texte), 'pons 343 obs, 14 % contre 27 % : le vert part en jaune, la mesure est dite');
+    ok(!FR.test(j.mesure.texte), 'en anglais');
+    j = P.jugeParMesure('vert', M0(150, 27, 27));
+    egal(j.verdict, 'jaune', 'a egalite avec ce que la colonie achete : jaune (il faut BATTRE la reference)');
+    j = P.jugeParMesure('vert', M0(150, 35, 27));
+    ok(j.verdict === 'vert' && !j.mesure.retrograde && !/yellow/.test(j.mesure.texte), 'au-dessus de la reference : vert, avec sa mesure (reversible)');
+    ok(P.jugeParMesure('vert', M0(99, 5, 27)).mesure === null && P.jugeParMesure('vert', M0(99, 5, 27)).verdict === 'vert', 'sous 100 observations : rien ne change, rien n est dit');
+    ok(P.jugeParMesure('vert', Object.assign(M0(300, 5, 27), { ref: { n: 5, partMontes: 30 } })).mesure === null, 'reference sous 12 observations : rien ne change');
+    ok(P.jugeParMesure('jaune', M0(300, 5, 27)).mesure === null && P.jugeParMesure('rouge', M0(300, 5, 27)).verdict === 'rouge', 'jaune et rouge : jamais touches (la mesure ne promeut rien)');
+    /* publie : la mesure de SA source, demandee pour un vert seulement */
+    const demandes = [];
+    const b = await banc({}, { mesure: (src) => { demandes.push(src); return M0(343, 14, 27); } });
+    b.prix.set(J1, 1); b.prix.set(J2, 1);
+    const r = await b.I.publie('lancement', 'lancement:' + J1, J1, PUB({ categorie: 'pons' }));
+    ok(r.fiche.verdict === 'jaune' && r.fiche.mesure && r.fiche.mesure.n === 343, 'publie : un vert pons mesure sous la reference sort jaune');
+    ok(/^🟡/.test(r.texte.brut) && /• Track record: 343 past green alerts/.test(r.texte.brut) && /Not financial advice\.$/.test(r.texte.brut), 'le texte (canal et page) le dit, en jaune, avant « Not financial advice. »');
+    await b.I.publie('lancement', 'lancement:' + J2, J2, PUB({ categorie: 'pons', verdict: 'jaune' }));
+    egal(demandes.join(','), 'lancement', 'la mesure demandee a la source de la categorie (pons -> lancement), pour le vert seulement');
+    egal(b.I.vue(0).compteurs.retrogradees, 1, 'compte : 1 retrogradee');
+    const sans = await banc({});
+    b.prix.set(J3, 1); sans.prix.set(J3, 1);
+    egal((await sans.I.publie('lancement', 'lancement:' + J3, J3, PUB({ categorie: 'pons' }))).fiche.verdict, 'vert', 'sans fournisseur de mesure : rien ne change');
+    egal(P.SOURCE_DE_CAT.pons + P.SOURCE_DE_CAT.ignition + P.SOURCE_DE_CAT.copie, 'lancementignitioncopie', 'categories -> sources v2 de la colonie');
+    const C = require('./ai_colonie');
+    for (const [cat, src] of Object.entries(P.SOURCE_DE_CAT)) ok(C.SMART_LIGNES_V2[src] && C.mesureSourceSmart(src).cle === C.SMART_LIGNES_V2[src], cat + ' -> ' + src + ' : une ligne de la colonie (« ' + C.SMART_LIGNES_V2[src] + ' »)');
+    const ms = C.mesureSourceSmart('lancement');
+    ok(ms.min === C.SMART_ACHAT_MIN_OBS && ms.horizon === 30 && 'ref' in ms, 'la vraie colonie : seuil SMART_ACHAT_MIN_OBS, horizon 30 min, reference « achete ou retenu »');
+    ok(C.mesureSourceSmart('inconnue') === null, 'une source sans ligne : null');
+    /* la reference differee : aucun prix a l'alerte, un premier prix 40 min apres */
+    const d = await banc({});
+    await d.I.publie('ignition', 'ignition:contrat:' + J1, J1, PUB({ categorie: 'ignition', verdict: 'jaune', refDifferee: true }));
+    await d.avance(40);
+    let m = d.I.vue(0).alertes[0].mesure;
+    ok(m.ref === null && m.ref_differee === true && !m.fini && Object.values(m.paliers).every((x) => x === null), 'differee, sans marche a 40 min : aucun palier rate, rien ne court');
+    ok(d.ds.length <= 9, 'sans prix : relue toutes les 5 min au plus (' + d.ds.length + ' appels en 40 min)');
+    d.prix.set(J1, 2);
+    await d.avance(5);
+    m = d.I.vue(0).alertes[0].mesure;
+    ok(m.ref && m.ref.prix === 2 && m.ref.differee === true && m.ref.retard_s >= 40 * 60, 'premier prix lu : il devient la reference, son retard est dit (' + (m.ref && m.ref.retard_s) + ' s)');
+    d.prix.set(J1, 3);
+    await d.avance(35);
+    m = d.I.vue(0).alertes[0].mesure;
+    ok(m.paliers[30] && m.paliers[30].pct === 50 && m.paliers[30].min >= 30 && m.paliers[30].min < 38, '+30 min DEPUIS le premier prix : +50 % (' + JSON.stringify(m.paliers[30]) + ')');
+    await d.avance(130);
+    ok(d.I.vue(0).alertes[0].mesure.fini, 'close 150 min apres son premier prix');
+    egal(d.I.vue(0).bilan.ignition.mesurees, 1, 'elle entre au bilan de sa categorie');
+    const e = await banc({});
+    await e.I.publie('ignition', 'ignition:contrat:' + J2, J2, PUB({ categorie: 'ignition', verdict: 'jaune', refDifferee: true }));
+    await e.avance(6 * 60 + 2, false);
+    m = e.I.vue(0).alertes[0].mesure;
+    ok(m.fini && m.ref === null, 'aucun prix en 6 h : close, sans mesure');
+    const f = await banc({});
+    await f.I.publie('lancement', 'lancement:' + J3, J3, PUB());
+    await f.avance(10); f.prix.set(J3, 3); await f.avance(40);
+    ok(f.I.vue(0).alertes[0].mesure.ref === null, 'une alerte NON differee garde sa regle : pas de reference apres 3 min');
   }
 
   try { fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true }); } catch (e) { /* rien */ }

@@ -112,7 +112,7 @@ function instance(w, o) {
   const envoyes = [], signaux = [];
   const vus = new Set();
   const LZ = SLZ.cree({ R, B, horloge: () => T.now, dors: async (ms) => { T.now += ms; }, prendre: w.prendre, env: o.env || {}, explorer: 'https://robinhoodchain.blockscout.com',
-    envoie: async (genre, cle, jeton, texte) => { if (vus.has(cle)) return false; vus.add(cle); envoyes.push({ genre, cle, jeton, texte, t: T.now }); return true; },
+    envoie: async (genre, cle, jeton, texte, pub) => { if (vus.has(cle)) return false; vus.add(cle); envoyes.push({ genre, cle, jeton, texte, pub, t: T.now }); return true; },
     note: (g, t) => { (o.notes || []).push(g + ' ' + t); }, faits: o.faits, surSignal: (v) => signaux.push(v), exclu: o.exclu });
   return { LZ, B, T, R, envoyes, signaux };
 }
@@ -408,12 +408,15 @@ function instance(w, o) {
     ok(s.signaux.filter((x) => x.source === 'ignition').length === 3, 'trois signaux « ignition » a la colonie');
     /* les contrats du wallet */
     ok(s.B.meta('ignition_nonce') === 91, '1er cycle : le nonce est note, l’histoire n’alerte pas');
-    const a91 = utils.getContractAddress({ from: SL.BRIEF2.IGNITION.wallet, nonce: 91 }).toLowerCase(), a92 = utils.getContractAddress({ from: SL.BRIEF2.IGNITION.wallet, nonce: 92 }).toLowerCase();
-    w.nonce = 94; w.codes[a92] = '0x6080'; w.symboles = { [a92]: 'NEWIGN' }; w.pointe += 600;
+    const a91 = utils.getContractAddress({ from: SL.BRIEF2.IGNITION.wallet, nonce: 91 }).toLowerCase(), a92 = utils.getContractAddress({ from: SL.BRIEF2.IGNITION.wallet, nonce: 92 }).toLowerCase(), a93 = utils.getContractAddress({ from: SL.BRIEF2.IGNITION.wallet, nonce: 93 }).toLowerCase();
+    w.nonce = 94; w.codes[a92] = '0x6080'; w.codes[a93] = '0x6080'; w.symboles = { [a92]: 'NEWIGN' }; w.pointe += 600;
     const n0 = s.envoyes.length;
     await muet(() => s.LZ.cycle());
     const nv = s.envoyes.slice(n0);
-    ok(nv.length === 1 && nv[0].jeton === a92 && /nouveau jeton déployé par son wallet — NEWIGN/.test(nv[0].texte), 'nonce 91 -> 94 : le contrat du nonce 92 a un symbol() : « nouveau jeton » ; ' + a91.slice(0, 8) + '… (pas de code) : rien');
+    const n92 = nv.find((x) => x.jeton === a92), n93 = nv.find((x) => x.jeton === a93);
+    ok(nv.length === 2 && n92 && /nouveau jeton déployé par son wallet — NEWIGN/.test(n92.texte) && !nv.some((x) => x.jeton === a91), 'nonce 91 -> 94 : le contrat du nonce 92 a un symbol() : « nouveau jeton » ; ' + a91.slice(0, 8) + '… (pas de code) : rien');
+    ok(n92.pub && n92.pub.categorie === 'ignition' && n92.pub.refDifferee === true, 'le jeton part au public, mesure depuis son premier prix (reference differee, 21/10)');
+    ok(n93 && /nouveau contrat/.test(n93.texte) && n93.pub === null, 'un contrat sans symbol() : alerte privee seulement, jamais publique (21/10 : ses contrats utilitaires publies)');
     egal(s.B.meta('ignition_nonce'), 94, 'le nonce avance');
     /* panne de Relay : une requete, pause, aucune relance */
     w.relayPanne = true;
