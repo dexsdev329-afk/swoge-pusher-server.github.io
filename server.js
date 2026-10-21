@@ -5720,6 +5720,11 @@ const server = http.createServer(async (req, res) => {
     }
     /* Le carnet des lancements (21/10/2026, lancements_carnet.js) : chaque lancement Pons et IGNITION,
        ses metadonnees, son suivi a +1 h ... +30 j ; le bilan par trait refuse de conclure sous 40. */
+    /* L'histoire complete de Pons (21/10/2026, pons_histoire.js) : avancement du rapatriement. */
+    if (path === '/ai/smart/histoire') {
+      res.writeHead(200, entete);
+      return res.end(JSON.stringify(I && I.histoire ? I.histoire() : { actif: false }));
+    }
     if (path === '/ai/smart/lancements') {
       res.writeHead(200, entete);
       return res.end(JSON.stringify(I && I.carnetLancements ? I.carnetLancements() : { actif: false }));

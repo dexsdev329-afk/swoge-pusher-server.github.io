@@ -241,6 +241,7 @@ function cree(deps0) {
   const note = (genre, texte) => { journal.push({ t: deps.horloge(), genre, texte: masque(texte).slice(0, 300) }); if (journal.length > JOURNAL_MAX) journal.shift(); };
   let instantane = null;
   let CARNET = null;
+  let HISTOIRE = null;
   /* le journal public (16/10) : il lit la base quand elle est ouverte */
   const PUB = SPUB.cree({ base: () => B, horloge: deps.horloge, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, tg: deps.tg, note,
     prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
@@ -267,6 +268,15 @@ function cree(deps0) {
        son plafond du jour a lui (smart_lancements.js, EXPLOITATION.md) */
     const RL = deps.rpcLancements || SR.cree(Object.assign({}, opts, { budgetAppels: SLZ.CYCLE_APPELS, budgetOctets: SLZ.CYCLE_OCTETS, prefixeHash: 'P', jourPropre: true,
       plafondJourHttp: SLZ.JOUR_HTTP, plafondJourOctets: SLZ.JOUR_OCTETS, espaceLegerMs: SLZ.ESPACE_LEGER_MS }, deps.rpcOptions || {}));
+    /* l'histoire complete de Pons (21/10, pons_histoire.js) : un client du noeud a LUI (sa file, son
+       plafond du jour), qui se tait tant que le direct est en pause (rythme partage) */
+    const envH = (deps.env || process.env).PONS_HISTOIRE;
+    if (!HISTOIRE && (deps.rpcHistoire || String(envH == null ? '' : envH).trim() !== '0')) {
+      const PH = require('./pons_histoire');
+      const RH = deps.rpcHistoire || SR.cree(Object.assign({}, opts, { rythme: SR.nouveauRythme(), budgetAppels: 2, budgetOctets: 40e6, prefixeHash: 'H', jourPropre: true,
+        plafondJourHttp: PH.JOUR_HTTP, plafondJourOctets: PH.JOUR_OCTETS, espaceLegerMs: 3000, espaceLourdMs: 5000 }));
+      HISTOIRE = PH.cree({ R: RH, dossier: deps.dossier, horloge: deps.horloge, note, pauseDirect: () => rythme.pause > deps.horloge() });
+    }
     /* le carnet des lancements (21/10, lancements_carnet.js) : chaque lancement ecrit, suivi 30 jours */
     if (!CARNET && String((deps.env || process.env).SMART_CARNET == null ? '' : (deps.env || process.env).SMART_CARNET).trim() !== '0')
       CARNET = require('./lancements_carnet').cree({ dossier: deps.dossier, prendre: deps.prendre, horloge: deps.horloge, note });
@@ -1557,6 +1567,9 @@ function cree(deps0) {
     lancements: async () => { await allume(); const r = await LZ.cycle(); await ticPublic(); if (CARNET) { try { await CARNET.tic(); } catch (e) { note('carnet', masque(e.message || e).slice(0, 120)); } } instantane = construitVue(); return r; },
     /** Le carnet des lancements : GET /ai/lancements (bilan par trait, compteurs). */
     carnetLancements: () => (CARNET ? { actif: true, vue: CARNET.vue(), bilan: CARNET.bilan() } : { actif: false }),
+    /** L'histoire de Pons : un pas (appele par sa minuterie) et sa vue. */
+    histoirePas: async () => { await allume(); return HISTOIRE ? HISTOIRE.pas() : { fait: 'off' }; },
+    histoire: () => (HISTOIRE ? Object.assign({ actif: true }, HISTOIRE.vue()) : { actif: false }),
     /** Le journal public : GET /ai/smart/alertes?depuis=<id> (base locale seulement). */
     alertesPubliques: (depuis) => PUB.vue(depuis),
     ticPublic,
@@ -1598,6 +1611,13 @@ function planifie(deps) {
     const z = SLZ.config((deps || {}).env);
     if (z.lancements) { const c = setInterval(garde(I.lancements, 'lancements'), SLZ.CYCLE_MS); if (c.unref) c.unref(); m.push(['i', c]); }
     if (z.relay) { const r = setInterval(garde(I.relay, 'relay'), SLZ.RELAY_MS); if (r.unref) r.unref(); m.push(['i', r]); }
+    /* l'histoire de Pons (21/10) : un pas toutes les PONS_HISTOIRE_MS (30 s), le premier 90 s apres le demarrage */
+    const envH = ((deps || {}).env || process.env).PONS_HISTOIRE;
+    if (String(envH == null ? '' : envH).trim() !== '0') {
+      const ms = Math.max(5000, Number(((deps || {}).env || process.env).PONS_HISTOIRE_MS) || 30000);
+      const h0 = setTimeout(garde(I.histoirePas, 'histoire'), 90000); if (h0.unref) h0.unref(); m.push(['t', h0]);
+      const h = setInterval(garde(I.histoirePas, 'histoire'), ms); if (h.unref) h.unref(); m.push(['i', h]);
+    }
   }
   return {
     passe: () => I.passe(), veille: () => I.veille(), lancements: () => I.lancements(), relay: () => I.relay(), actif: true, instance: I,
