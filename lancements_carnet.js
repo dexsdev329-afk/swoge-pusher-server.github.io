@@ -196,7 +196,8 @@ function reseauxDe(liens) {
  *     (\p{Cf} : zero-width, soft hyphen, marques bidi, BOM ; plus les bouche-trous hangul), sosies replies
  *     vers le latin (SOSIES : cyrillique а о е р с х у і ј ѕ…, grec α ο ν ρ τ υ ι κ…, ı ł ø đ ß æ œ),
  *     puis seulement [a-z0-9] ;
- *   - LACHE : la meme base + leetspeak (0→o 1→i 3→e 4→a 5→s 7→t @→a $→s), mots de remplissage retires
+ *   - LACHE : la meme base + leetspeak (0→o 1→i 3→e 4→a 5→s 7→t @→a $→s ; le « $ » de TETE d'un cashtag, $PEPE, est
+ *     retire avant, il n'est pas un « s »), mots de remplissage retires
  *     (REMPLISSAGE, liste CHOISIE : un mot entier ; colles a un mot, seulement PREFIXES au debut et SUFFIXES a la
  *     fin — jamais jusqu'a vider la cle ni a ne laisser qu'un autre mot de remplissage), lettres repetees reduites seulement
  *     s'il reste ≥ 3 caracteres ; une cle lache de moins de 3 caracteres retombe sur la serree.
@@ -239,7 +240,8 @@ function cleDe(s, min) {
   const b = baseCle(s);
   const serree = b.replace(/[^a-z0-9]/g, '');
   if (serree.length < min) return null;
-  let mots = b.split(/[^a-z0-9@$]+/).filter(Boolean);
+  /* le « $ » de tete d'un cashtag ($PEPE, $DOGE) n'est pas un « s » en leetspeak : retire avant ; a l'interieur il le reste (P@PE$) */
+  let mots = b.split(/[^a-z0-9@$]+/).map((m) => m.replace(/^\$+/, '')).filter(Boolean);
   const pleins = mots.filter((m) => !remplissage(m));
   if (pleins.length) mots = pleins;
   let l = leet(mots.join(''));
@@ -296,21 +298,22 @@ function cree(deps) {
      surement plus complique d'avoir du volume » — on mesure si moins de lancements survivent, on ne decide rien. */
   const marcheA = typeof d.marche === 'function' ? d.marche : null;
   const ETAT = path.join(D, 'etat.json');
-  const C = { naissances: 0, doublons: 0, metas: 0, metasVides: 0, metasAbandonnees: 0, metaFileDebordee: 0, suivis: 0, manques: 0, dsAppels: 0, dsErreurs: 0, erreursEcriture: 0, clonesRevus: 0, clonesMigres: 0, clonesIncoherents: 0, erreursClone: 0 };
+  const C = { naissances: 0, doublons: 0, metas: 0, metasVides: 0, metasAbandonnees: 0, metaFileDebordee: 0, suivis: 0, manques: 0, dsAppels: 0, dsErreurs: 0, erreursEcriture: 0, clonesRevus: 0, clonesMigres: 0, clonesIncoherents: 0, erreursClone: 0, grappesReconstruites: 0, grappesEffacees: 0 };
   /* la fiche compacte de chaque jeton, et l'ordre de naissance (pour les curseurs) */
   const F = new Map();
   let ordre = [];
-  let etat = { curseurs: {}, file: [], essais: {}, soldes: [], ordres: [], metasDS: { t: 0, slugs: [] }, det: [] };
+  let etat = { curseurs: {}, file: [], essais: {}, soldes: [], ordres: [], metasDS: { t: 0, slugs: [] }, det: [], grappes: {} };
   let bilanCache = null;
   let enCours = false;
   /** Les copies de jetons (22/10, voir clesDe) : cles par jeton, index cle -> jetons, union-find dont la racine est le
-   *  PREMIER NE de la grappe, membres par racine. Tout se reconstruit au demarrage (charge) depuis les fiches. */
+   *  PREMIER NE de la grappe, membres par racine. Tout se reconstruit au demarrage (charge) depuis les fiches — sauf la
+   *  TAILLE des grappes, tenue dans etat.grappes (le registre, voir repere) parce que la memoire ne remonte qu'a 32 j. */
   const KJ = new Map();            // jeton -> clesDe(nom, sym), une fois indexe
   const INDEX = new Map();         // 'n:<cle>' | 's:<cle>' -> Set<jeton>
   const PARENT = new Map();        // union-find
   const MEMBRES = new Map();       // racine -> Set<jeton>
   const DANS = new Map();          // jeton -> la racine dont le Set le contient
-  const DERNIER = new Map();       // racine -> son membre ne le plus tard (le cas courant : le nouveau venu, rang = taille)
+  const DERNIER = new Map();       // racine -> son membre ne le plus tard (le cas courant : le nouveau venu, rang = n du registre)
   const PAR_DEV = new Map();       // createur -> ses fiches (le passe du createur sans parcourir toutes les fiches)
   const aReperer = [];             // fiches d'avant ce lot (nom lu, pas de ligne clone), reperees CLONE_MIGRE_PAR_TIC par tic
   let seq = 0;                     // index de journal des naissances (l'ordre des lignes « n »)
@@ -400,6 +403,7 @@ function cree(deps) {
     /* mesure (22/10) : une fiche dont la racine de l'union-find n'est pas le groupe note. Ne doit plus arriver depuis
        que la renumerotation s'ecrit en un seul appel (ecrisLignes) ; compte dans la vue (attendu 0), pas repare. */
     for (const j of ordre) { const f = F.get(j); if (f.cl && racine(j) !== f.cl.g) C.clonesIncoherents++; }
+    registreAuDemarrage();
   }
   charge();
 
@@ -499,8 +503,18 @@ function cree(deps) {
   // ---------------------------------------------------------- les copies (22/10)
   /** a est-il ne avant b ? bloc, puis instant, puis index de journal (fiches). */
   function avantF(fa, fb) { return fini(fa.bloc) && fini(fb.bloc) && fa.bloc !== fb.bloc ? fa.bloc < fb.bloc : fa.t !== fb.t ? fa.t < fb.t : fa.seq < fb.seq; }
-  /** Idem par jeton ; une fiche sortie de memoire (plus de 32 j) est la plus vieille. */
-  function avant(a, b) { const fa = F.get(a), fb = F.get(b); return !fa ? true : !fb ? false : avantF(fa, fb); }
+  /** Idem par jeton. Un jeton sorti de memoire (plus de 32 j ; les fichiers se relisent par jour) est ne avant tout ce qui
+   *  y est ; deux racines sorties se departagent par le bloc puis l'instant gardes au registre (etat.grappes), sinon par
+   *  l'adresse (CHOISI : deterministe ; l'index de journal ne survit pas a un redemarrage). */
+  function avant(a, b) {
+    const fa = F.get(a), fb = F.get(b);
+    if (fa && fb) return avantF(fa, fb);
+    if (fa || fb) return !fa;
+    const ga = etat.grappes[a] || {}, gb = etat.grappes[b] || {};
+    if (fini(ga.bloc) && fini(gb.bloc) && ga.bloc !== gb.bloc) return ga.bloc < gb.bloc;
+    if (fini(ga.t) && fini(gb.t) && ga.t !== gb.t) return ga.t < gb.t;
+    return a < b;
+  }
   function racine(j) {
     let r = j;
     while (PARENT.has(r) && PARENT.get(r) !== r) r = PARENT.get(r);
@@ -569,13 +583,72 @@ function cree(deps) {
       + (f.det['24h'] && fini(f.det['24h'].top10) && f.det['24h'].top10 >= 30 ? 1 : 0);
   }
   function clesIndex(c) { return [...new Set([].concat(c.nom ? ['n:' + c.nom.s, 'n:' + c.nom.l] : [], c.sym ? ['s:' + c.sym.s, 's:' + c.sym.l] : []))]; }
+  /* ---- LE REGISTRE DES GRAPPES (22/10/2026) : etat.grappes[racine] = { n, bloc, t, dt } ----
+   * La memoire ne remonte qu'a JOURS_MEMOIRE (32 j) : apres un mois de service, l'original et les premieres copies d'une
+   * grappe a cle exacte vivante (Pepe, Trump…) ne sont plus dans F ; MEMBRES n'a que la racine (fantome) et les membres
+   * relus. Compter la grappe sur les fiches en memoire la sous-compte, et DEDUIRE les sortis des rangs notes (version du
+   * 22/10 au matin) se trompe des que deux grappes aux racines sorties fondent : les sortis de la grappe absorbee n'ont
+   * aucun rang note en memoire qui les porte (banc du 22/10 : deux grappes de 4 dont 2 sorties chacune, fondues par un
+   * 9e -> sortis deduits 2, vrais 4, rangs 3-7 au lieu de 5-9). D'ou ce REGISTRE, persistant dans etat.json :
+   *   n       : membres detectes, toute memoire confondue ; le rang d'un nouveau venu est n apres increment ;
+   *   bloc, t : la naissance de la racine (departage de deux racines sorties, voir avant) ;
+   *   dt      : la naissance la plus recente detectee (information : quand la grappe a grossi pour la derniere fois).
+   * Une fusion additionne les n (plus le nouveau venu), la racine est la plus ancienne (bloc, instant, index de journal) et
+   * les entrees absorbees s'effacent. Seules les grappes de 2+ ont une entree (~100 octets ; un seul membre : la fiche
+   * suffit, et sorti de memoire il est hors d'atteinte).
+   * BORNE : au demarrage, une entree sans aucun membre NOTE en memoire est effacee, comptee (grappesEffacees) — tous ses
+   * membres sont sortis des 32 j, ou sa racine a ete absorbee par une fusion que la sauvegarde du tic n'avait pas vue :
+   * l'index des cles ne porte que les fiches en memoire, elle est hors d'atteinte dans les deux cas. Le registre ne peut
+   * donc pas depasser le nombre de grappes de 2+ en memoire : 1 664 lancements par jour x 32 j / 2 = 26 600 entrees au pire
+   * (tous en paires), ~2,7 Mo dans etat.json, ecrit a chaque tic ; en service continu sans redemarrage il grossit comme F.
+   * Registre absent ou en retard (premier demarrage sur des fichiers existants ; arret entre une detection et la sauvegarde
+   * du tic suivant) : reconstruit au demarrage depuis les lignes « clone » relues — n = max(registre, plus haut rang note,
+   * fiches en memoire), compte grappesReconstruites — puis complete au fil des tics. LIMITE : il vaut ce que valent les
+   * rangs notes (un rang faux ecrit avant ce lot le reste), la racine reconstruite n'a ni bloc ni instant (departage par
+   * l'adresse), et une grappe dont tous les membres sont sortis n'est pas reconstruite — hors d'atteinte de toute facon : un
+   * Pepe apres 32 j sans Pepe est un nouvel original. */
+  /** La taille connue d'une grappe : le registre, jamais moins que ce qui est en memoire (racine fantome comprise). */
+  function tailleDe(g) { const G = etat.grappes[g]; return Math.max(G && fini(G.n) ? G.n : 0, MEMBRES.has(g) ? MEMBRES.get(g).size : 0); }
+  /** Au demarrage : le registre relu, reconcilie avec les lignes relues (voir BORNE et LIMITE ci-dessus). */
+  function registreAuDemarrage() {
+    const anc = etat.grappes && typeof etat.grappes === 'object' && !Array.isArray(etat.grappes) ? etat.grappes : {};
+    const vu = new Map();                                      // groupe note -> { haut : plus haut rang note, n : fiches en memoire, dt : naissance la plus recente }
+    for (const f of F.values()) if (f.cl) { const x = vu.get(f.cl.g) || { haut: 0, n: 0, dt: 0 }; x.haut = Math.max(x.haut, f.cl.rang); x.n++; x.dt = Math.max(x.dt, f.t); vu.set(f.cl.g, x); }
+    const neuf = {};
+    for (const [g, x] of vu) {
+      const G = anc[g] && fini(anc[g].n) ? anc[g] : null, n = Math.max(G ? G.n : 0, x.haut, x.n);
+      if (n < 2 && F.has(g)) continue;                         // un seul membre, en memoire : la fiche suffit
+      if (!G || G.n < n) C.grappesReconstruites++;
+      const fg = F.get(g);
+      neuf[g] = { n, bloc: fg ? fg.bloc : G && fini(G.bloc) ? G.bloc : null, t: fg ? fg.t : G && fini(G.t) ? G.t : null, dt: Math.max(G && fini(G.dt) ? G.dt : 0, x.dt) };
+    }
+    C.grappesEffacees += Object.keys(anc).filter((g) => !neuf[g]).length;      // sans membre note en memoire, ou illisible : hors d'atteinte
+    etat.grappes = neuf;
+  }
+  /** Le registre apres une detection : la grappe de racine r compte n membres (dont un ne a tNaissance) ; les racines
+   *  absorbees (racines, sauf r) s'effacent ; une grappe d'un seul membre n'a pas d'entree. */
+  function registre(r, racines, n, tNaissance) {
+    let dt = tNaissance, bloc = null, t = null;
+    for (const x of racines) {
+      const G = etat.grappes[x];
+      if (G) { if (fini(G.dt)) dt = Math.max(dt, G.dt); if (x === r) { bloc = fini(G.bloc) ? G.bloc : null; t = fini(G.t) ? G.t : null; } }
+      if (x !== r) delete etat.grappes[x];
+    }
+    const fr = F.get(r);
+    if (fr) { bloc = fr.bloc; t = fr.t; }
+    if (n >= 2) etat.grappes[r] = { n, bloc, t, dt };
+  }
   /** Au meta() d'un jeton (nom et symbole arrives) : ses cles entrent dans l'index ; s'il n'a pas encore de grappe, on la
    *  cherche — meme cle de nom ou de symbole (sans limite d'age), ou cle lache a distance d'edition parmi les jetons nes
    *  a moins de 48 h — on l'unit, puis on ecrit une ligne « clone » { jeton, groupe (le premier ne), rang, douteux } pour
-   *  lui et pour chaque membre dont le groupe ou le rang change (un premier ne lu APRES ses copies prend la tete et les
-   *  renumerote). Le meme jeton relu ne bouge pas ; une fiche relue du disque garde la grappe notee. La memoire ne remonte
-   *  qu'a JOURS_MEMOIRE (32 j) : l'original et les premieres copies d'une grappe vivante depuis plus d'un mois ne sont plus
-   *  dans F, les rangs se deduisent alors des rangs NOTES, jamais de la taille en memoire (voir le calcul des lignes). */
+   *  lui et pour chaque membre EN MEMOIRE dont le groupe ou le rang change (un premier ne lu APRES ses copies prend la tete
+   *  et les renumerote). Le meme jeton relu ne bouge pas ; une fiche relue du disque garde la grappe notee. Rangs et taille
+   *  viennent du REGISTRE (etat.grappes, ci-dessus), jamais d'un compte des fiches en memoire.
+   *  LIMITE (dite aussi dans EXPLOITATION et dans l'essai) : une renumerotation ne touche que les membres en memoire ; les
+   *  rangs notes des membres sortis des 32 j ne sont PAS reecrits. Un membre en memoire est toujours ne apres eux (les
+   *  fichiers se relisent par jour), les membres en memoire sont donc renumerotes derriere eux, a partir de n − membres en
+   *  memoire ; mais apres la fusion de deux grappes aux racines sorties, la ligne de la racine absorbee dit toujours « rang
+   *  1, son propre groupe » sur le disque : seuls le registre et les lignes en memoire disent la grappe fondue. */
   function repere(j) {
     const f = F.get(j); if (!f || KJ.has(j)) return;
     const c = clesDe(f.nom, f.sym);
@@ -595,38 +668,27 @@ function cree(deps) {
     if (f.cl) return;                                          // relu du disque (applique a deja enregistre sa grappe)
     if (!PARENT.has(j)) enregistre(j, j);
     /* le cas courant (les metas arrivent presque dans l'ordre des naissances) : une seule grappe touchee et le nouveau
-       venu ne apres son dernier membre -> rang = taille, personne d'autre ne bouge, rien a trier. Sinon (premier ne lu
-       apres ses copies, deux grappes fondues par un troisieme) : la grappe entiere se renumerote. */
+       venu ne apres son dernier membre -> rang = n, personne d'autre ne bouge, rien a trier. Sinon (premier ne lu apres ses
+       copies, deux grappes fondues par un troisieme) : la grappe entiere se renumerote. */
     const racines = new Set([...voisins].map(racine));
     const simple = racines.size === 0 || (racines.size === 1 && avant(DERNIER.get([...racines][0]), j));
+    /* la taille apres cette detection : les membres de chaque grappe touchee, en memoire ou sortis, plus le nouveau venu —
+       lue AVANT l'union (unit fond les ensembles de membres) */
+    const total = [...racines].reduce((n, x) => n + tailleDe(x), 0) + 1;
     let r = j;
     for (const x of voisins) r = unit(r, x);
+    registre(r, racines, total, f.t);
     const douteux = douteuxDe(F.get(r)) >= 2, t = maintenant();
     const ligne = (m, rang) => ({ k: 'clone', t, jeton: m, groupe: r, rang, douteux });
     const lignes = [];
-    if (simple) {
-      /* rang = la taille de la grappe en memoire, ou le plus haut rang note + 1 quand des membres sont sortis des 32 j de
-         memoire (JOURS_MEMOIRE : apres un mois de service, l'original et les premieres copies d'une grappe a cle exacte
-         vivante — Pepe, Trump… — ne sont plus dans F, MEMBRES n'a que la racine et les membres relus). Mesure du 22/10
-         (banc « hors memoire » : original jour 0 et copie #2 jour 1 sortis, #3 et #4 relues, horloge jour 62) : le 5e
-         recevait rang = taille = 4, en DOUBLE avec #4 ; attendu 5. */
-      let haut = 0;
-      for (const m of MEMBRES.get(r)) { const fm = F.get(m); if (fm && fm.cl && fm.cl.rang > haut) haut = fm.cl.rang; }
-      lignes.push(ligne(j, Math.max(MEMBRES.get(r).size, haut + 1)));
-    } else {
-      const membres = [...MEMBRES.get(r)].sort((a, b) => (a === b ? 0 : avant(a, b) ? -1 : 1));
-      /* des membres ne manquent en memoire que si la racine manque (ils sont tous nes avant ce qui est en memoire, les
-         fichiers se relisent par jour) ; leur nombre se deduit des rangs notes : un membre note rang ρ, q-ieme des notes de
-         la grappe en memoire (q des 0), en a ρ − 1 − q devant lui hors memoire ; le plus grand l'emporte, un rang note
-         n'est jamais abaisse. Racine en memoire : rien ne manque, rang = position. Meme mesure du 22/10 : un original
-         tardif ne avant #3 recevait rang 2 (en double avec la copie #2 sortie) et #3/#4 ne bougeaient pas ; attendu 3,
-         #3/#4 renumerotees 4/5. */
-      let sortis = F.has(r) ? 0 : 1, q = 0;
-      if (sortis) for (const m of membres) { const fm = F.get(m); if (fm && fm.cl && fm.cl.g === r) { sortis = Math.max(sortis, fm.cl.rang - 1 - q); q++; } }
+    if (simple) lignes.push(ligne(j, total));
+    else {
+      /* les membres EN MEMOIRE, dans l'ordre des naissances, derriere les sortis (voir la LIMITE ci-dessus) */
+      const membres = [...MEMBRES.get(r)].filter((m) => F.has(m)).sort((a, b) => (a === b ? 0 : avant(a, b) ? -1 : 1));
+      const sortis = total - membres.length;
       let p = 0;
       for (const m of membres) {
-        const fm = F.get(m); if (!fm) continue;
-        const rang = sortis + ++p;
+        const fm = F.get(m), rang = sortis + ++p;
         if (fm.cl && fm.cl.g === r && fm.cl.rang === rang) continue;
         lignes.push(ligne(m, rang));
         if (m !== j) C.clonesRevus++;
@@ -792,9 +854,6 @@ function cree(deps) {
       f.devAvant = p ? p.n : null; f.devVivantAvant = p ? p.vivant : null;
       if (p) { p.n++; if (vivantA(f, '24h')) p.vivant = true; parDev.set(f.dev, p); }
     }
-    /* les copies (22/10) : la taille de chaque grappe, par le groupe note dans les fiches en memoire */
-    const tailleGrappe = new Map();
-    for (const f of F.values()) if (f.cl) tailleGrappe.set(f.cl.g, (tailleGrappe.get(f.cl.g) || 0) + 1);
     const tranche = (x, bornes, noms) => { if (!fini(x)) return 'unknown'; for (let i = 0; i < bornes.length; i++) if (x < bornes[i]) return noms[i]; return noms[noms.length - 1]; };
     /* la tranche de marche a la naissance : null sans fournisseur (aucun groupe), « no market data » quand la serie
        ne couvre pas cet instant (compte, jamais range ailleurs) */
@@ -818,9 +877,11 @@ function cree(deps) {
       parBtc24h: groupe((f) => trancheMarche(f.t, 'btc24h')),
       parBtc7d: groupe((f) => trancheMarche(f.t, 'btc7d')),
       /* les copies (22/10) : rang de naissance dans la grappe de noms / symboles ; l'original est « douteux » sur ce
-         qu'on sait AU BILAN (un fait lu apres la detection compte) ; la taille de la grappe notee */
+         qu'on sait AU BILAN (un fait lu apres la detection compte) ; la taille de la grappe par le REGISTRE (etat.grappes),
+         jamais par un compte des fiches en memoire — une grappe vivante depuis plus d'un mois (Pepe, Trump…) a ses premiers
+         membres hors des 32 j */
       parClone: groupe((f) => (f.cl ? (f.cl.rang === 1 ? (douteuxDe(f, f.devAvant, f.devVivantAvant) >= 2 ? 'original, doubtful' : 'original') : f.cl.rang === 2 ? 'copy #2' : 'copy #3+') : null)),
-      parGroupeTaille: groupe((f) => (f.cl ? tranche(tailleGrappe.get(f.cl.g) || 1, [2, 4], ['1', '2-3', '4+']) : null)),
+      parGroupeTaille: groupe((f) => (f.cl ? tranche(tailleDe(f.cl.g), [2, 4], ['1', '2-3', '4+']) : null)),
       parPlateforme: groupe((f) => f.plat),
       parVenteDevT2: groupe((f) => (f.vd > 0 ? 'dev sold by T+2' : 'dev held at T+2')),
       parTaxe: groupe((f) => (f.taxe == null ? (f.th ? 'tax unknown' : null) : f.taxe === 0 ? 'no creator tax' : f.taxe <= 1 ? 'tax <= 1%' : 'tax > 1%')),
@@ -844,26 +905,27 @@ function cree(deps) {
   }
 
   /** Les copies en un coup d'oeil : copies en memoire (fiches a rang > 1, quel que soit le moment ou elles l'ont recu —
-   *  un jeton note « original » puis renumerote copie compte ; un compteur par detection le manquait), grappes de 2+,
-   *  la plus grosse grappe de 2+ parmi les jetons nes depuis 24 h, nommee par son original ou, s'il est sorti de la
-   *  memoire (32 j), par son plus vieux membre en memoire. */
+   *  un jeton note « original » puis renumerote copie compte ; un compteur par detection le manquait), grappes de 2+ au
+   *  registre, la plus grosse grappe du jour : celle qui a le plus de membres nes depuis 24 h (2 au moins ; a egalite la
+   *  plus grande), `jour` ces membres-la et `n` sa taille au REGISTRE (les membres sortis des 32 j comptent), nommee par
+   *  son original ou, s'il est sorti de la memoire, par son plus vieux membre en memoire. */
   function clonesVue() {
     const now = maintenant(), parG = new Map();
     let copies = 0;
     for (const f of F.values()) if (f.cl) { if (f.cl.rang > 1) copies++; if (now - f.t < 86400e3) parG.set(f.cl.g, (parG.get(f.cl.g) || 0) + 1); }
     let gros = null;
-    for (const [g, n] of parG) {
-      if (n < 2 || (gros && n <= gros.n)) continue;
+    for (const [g, jour] of parG) {
+      const n = tailleDe(g);
+      if (jour < 2 || (gros && (jour < gros.jour || (jour === gros.jour && n <= gros.n)))) continue;
       let fg = F.get(g) || null;
       if (!fg) for (const m of MEMBRES.get(g) || []) { const fm = F.get(m); if (fm && (!fg || avantF(fm, fg))) fg = fm; }
-      gros = { n, original: g, nom: fg ? fg.nom : null, sym: fg ? fg.sym : null };
+      gros = { n, jour, original: g, nom: fg ? fg.nom : null, sym: fg ? fg.sym : null };
     }
-    let grappes = 0;
-    for (const m of MEMBRES.values()) if (m.size > 1) grappes++;
-    return { reperes: copies, revus: C.clonesRevus, migres: C.clonesMigres, aReperer: aReperer.length, grappes, indexes: KJ.size, plusGrosDuJour: gros, dlFenetreH: CLONE_DL_MS / 3600e3 };
+    return { reperes: copies, revus: C.clonesRevus, migres: C.clonesMigres, aReperer: aReperer.length, grappes: Object.keys(etat.grappes).length,
+      registre: { reconstruites: C.grappesReconstruites, effacees: C.grappesEffacees }, indexes: KJ.size, plusGrosDuJour: gros, dlFenetreH: CLONE_DL_MS / 3600e3 };
   }
   const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileDetenteurs: etat.det.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES, clones: clonesVue() });
-  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES };
+  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES, _registre: () => etat.grappes };
 }
 
-module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, clesDe, clesProches, distanceDL, CLONE_DL_MS, REMPLISSAGE, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };
+module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, clesDe, clesProches, distanceDL, CLONE_DL_MS, JOURS_MEMOIRE, REMPLISSAGE, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };
