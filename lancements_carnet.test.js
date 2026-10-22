@@ -15,7 +15,12 @@
  *      metadonnees partent en UN lot ; smart_money sert /ai/smart/lancements ;
  *   7. le marche BTC/ETH a la naissance (22/10) : parBtc24h et parBtc7d par les
  *      tranches de marche_contexte, « no market data » hors couverture, aucun
- *      groupe sans fournisseur ; smart_money passe deps.marche.
+ *      groupe sans fournisseur ; smart_money passe deps.marche ;
+ *   8. les copies de jetons (22/10, methode novamp reecrite) : cles serree et
+ *      lache (sosies, leetspeak, invisibles, remplissage), grappes par symbole,
+ *      par nom ou a 1 edition (48 h), premier ne par bloc, rangs renumerotes
+ *      quand l'original est lu apres, douteux a 2 faits, redemarrage relu,
+ *      parClone refuse sous 40.
  */
 const fs = require('fs');
 const os = require('os');
@@ -249,6 +254,130 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     const B5 = g5.C.bilan();
     ok(Object.keys(B5.parBtc24h).length === 0 && Object.keys(B5.parBtc7d).length === 0, 'sans deps.marche : aucun groupe (pas de « no market data » invente par un fournisseur absent)');
     ok(/marche: typeof deps\.marche === 'function' \? deps\.marche : null/.test(fs.readFileSync(path.join(__dirname, 'smart_money.js'), 'utf8')), 'smart_money passe deps.marche au carnet');
+  }
+
+  console.log('-- 6 quinquies. les copies de jetons (22/10)');
+  {
+    /* les cles (pures) */
+    const cs = K.clesDe('Рере the Frog', 'PЕPE');          // Р е р е cyrilliques dans le nom, Е cyrillique dans le symbole
+    ok(cs.nom.s === 'pepethefrog' && cs.nom.l === 'pepefrog' && cs.sym.s === 'pepe' && cs.sym.l === 'pepe', 'sosies cyrilliques replies, « the » retire de la cle lache : ' + JSON.stringify(cs));
+    const cl = K.clesDe('P3P3 C0IN', 'P3PE');
+    ok(cl.nom.s === 'p3p3c0in' && cl.nom.l === 'pepe' && cl.sym.l === 'pepe', 'leetspeak et « coin » : la serree garde les chiffres (p3p3c0in), la lache dit pepe');
+    ok(K.clesDe('Pe​pe­', 'PE‍PE').sym.s === 'pepe' && K.clesDe('Pe​pe­', null).nom.s === 'pepe', 'zero-width et soft hyphen retires');
+    eq(K.clesDe('Pépé Cöin', null).nom.l, 'pepe', 'accents (marques combinantes) retires');
+    ok(['Pepe Coin', 'The Pepe Token', 'PEPE INU', 'PepeCoin', 'Pepe on ETH', 'ThePepe'].every((x) => K.clesDe(x, null).nom.l === 'pepe'), 'mots de remplissage : coin, the, token, inu, on, eth, colles ou non -> pepe');
+    ok(K.clesDe('AI Coin', null).nom.l === 'aicoin' && K.clesDe('Bonsai', null).nom.l === 'bonsai' && K.clesDe('Moon', null).nom.l === 'mon', 'jamais videe (AI Coin), « ai »/« on » colles gardes (bonsai), lettres repetees reduites (moon -> mon)');
+    ok(K.clesDe('Moooon', 'MOOON').nom.l === 'mon' && K.clesDe(null, 'BOO').sym.l === 'boo', 'moooon -> mon ; boo reste boo (pas en dessous de 3)');
+    ok(K.clesDe(null, 'PEPE').nom === null && K.clesDe(null, 'PEPE').sym.s === 'pepe', 'nom absent : cle de symbole seule');
+    ok(K.clesDe('Pep', 'PE').nom === null && K.clesDe('Pep', 'PE').sym === null && K.clesDe('🐸🐸🐸🐸', '🐸').nom === null && K.clesDe('', '').sym === null, 'trop court (nom < 4, symbole < 3), emojis seuls ou vide : pas de cle');
+    eq(K.clesDe(null, 'P@PE$').sym.l, 'papes', '@ et $ en leetspeak');
+    ok(K.clesDe('ＤＯＧＥ', null).nom.s === 'doge' && K.clesDe('Dοge', null).nom.s === 'doge', 'pleine largeur et omicron grec : doge');
+    ok(K.clesProches('pepe', 'pepo') && K.clesProches('shiba', 'shibo') && !K.clesProches('shiba', 'shabo') && !K.clesProches('abc', 'abd') && K.clesProches('longkeyname', 'lngokeyname') && K.distanceDL('abcd', 'bacd', 2) === 1, 'distance : 1 edition a partir de 4, 2 a partir de 9, stricte en dessous, transposition = 1');
+
+    /* le regroupement, dans le carnet */
+    const g6 = banc();
+    const F6 = g6.C._fiches;
+    const ne = (i, bloc, t, o) => g6.C.naissance(Object.assign({ jeton: A(i), bloc, t, deployer: A(800 + i), courbe: A(300 + i), plateforme: 'pons' }, o || {}));
+    const lignesClone = (D) => fs.readdirSync(path.join(D, 'lancements')).filter((x) => /\.jsonl$/.test(x)).sort()
+      .flatMap((x) => fs.readFileSync(path.join(D, 'lancements', x), 'utf8').split('\n').filter(Boolean).map(JSON.parse)).filter((o) => o.k === 'clone');
+    ne(1, 100, T0, { exemptions: 5 }); ne(2, 101, T0 + 60e3); ne(3, 102, T0 + 120e3); ne(4, 103, T0 + 180e3); ne(5, 104, T0 + 240e3);
+    g6.C.meta(A(1), { nom: 'Pepe', symbole: 'PEPE' });
+    g6.C.meta(A(2), { nom: 'Рере', symbole: 'PEPE2' });        // cyrillique, et un symbole a 1 edition
+    g6.C.meta(A(3), { nom: 'Pepe The Frog', symbole: 'FROG' });
+    g6.C.meta(A(4), { nom: 'Doge', symbole: 'PEPE' });          // meme symbole, autre nom
+    g6.C.meta(A(5), { nom: 'Pepo Coin', symbole: 'PPO' });      // nom a 1 edition (pepo / pepe), symbole de 3 sans egal
+    const c6 = (i) => F6.get(A(i)).cl;
+    ok(c6(1) && c6(1).g === A(1) && c6(1).rang === 1 && c6(1).douteux === false, 'A1 Pepe : original (rang 1, sa propre grappe)');
+    ok(c6(2).g === A(1) && c6(2).rang === 2, 'A2 (Рере cyrillique, PEPE2) : copie #2 de A1');
+    ok(c6(3).g === A(3) && c6(3).rang === 1, 'A3 (Pepe The Frog / FROG) : une autre grappe (pepefrog est a 4 editions)');
+    ok(c6(4).g === A(1) && c6(4).rang === 3, 'A4 (Doge / PEPE) : meme symbole -> copie #3');
+    ok(c6(5).g === A(1) && c6(5).rang === 4, 'A5 (Pepo Coin / PPO) : nom a 1 edition de pepe -> copie #4');
+    const l2 = lignesClone(g6.dossier).find((o) => o.jeton === A(2));
+    ok(l2 && l2.groupe === A(1) && l2.rang === 2 && l2.douteux === false && typeof l2.t === 'number', 'la ligne « clone » : jeton, groupe (le premier ne), rang, douteux');
+    ne(7, 110, T0 + 600e3); ne(8, 111, T0 + 660e3); ne(9, 112, T0 + 720e3);
+    g6.C.meta(A(7), { nom: 'Shiba', symbole: 'SHIB' });
+    g6.C.meta(A(8), { nom: 'Shabo', symbole: 'SHABO' });
+    ok(c6(8).g === A(8) && c6(8).rang === 1, 'Shabo apres Shiba : 2 editions a longueur 5 -> pas de fusion, original de sa grappe');
+    g6.C.meta(A(9), { nom: 'Shibo', symbole: 'SHIBO' });      // a 1 edition de Shiba ET de Shabo : les deux grappes fusionnent
+    ok(c6(9).g === A(7) && c6(9).rang === 3 && c6(8).g === A(7) && c6(8).rang === 2 && c6(7).rang === 1, 'Shibo (1 edition des deux) : Shiba, Shabo, Shibo une seule grappe, premier ne Shiba ; Shabo renotee copie #2');
+    ne(10, 50, T0 - 600e3);                                   // ne AVANT A1 (bloc 50) ; sa metadonnee arrive apres celles des copies
+    g6.C.meta(A(10), { nom: 'PEPE', symbole: 'PEPE' });
+    ok(c6(10).g === A(10) && c6(10).rang === 1 && c6(1).g === A(10) && c6(1).rang === 2 && c6(2).rang === 3 && c6(4).rang === 4 && c6(5).rang === 5, 'un Pepe ne avant (bloc 50) lu apres : il devient l original, A1 copie #2, A5 copie #5');
+    ne(11, 131, T0 + 900e3); ne(12, 130, T0 + 900e3);         // meme instant : A12 a le bloc le plus bas mais la ligne suivante
+    g6.C.meta(A(11), { nom: 'Zorro', symbole: 'ZORRO' }); g6.C.meta(A(12), { nom: 'Zorro', symbole: 'ZRR' });
+    ok(c6(12).rang === 1 && c6(11).g === A(12) && c6(11).rang === 2, 'meme instant : le bloc le plus bas (A12) est le premier ne, meme ecrit apres');
+    /* douteux : 2 faits sur le premier ne */
+    const p = (pct) => '0x' + (BigInt(pct) * 10n ** 25n).toString(16);
+    ne(13, 140, T0 + 1200e3, { exemptions: 4 }); g6.C.solde(A(13), 't2', p(12));     // 4 exemptes ET 12 % de l'offre au dev
+    ne(14, 141, T0 + 1260e3);
+    g6.C.meta(A(13), { nom: 'Bonk', symbole: 'BONK' }); g6.C.meta(A(14), { nom: 'Bonk', symbole: 'BONK' });
+    ok(c6(14).g === A(13) && c6(14).rang === 2 && c6(14).douteux === true, 'copie d un original a 2 faits (4 exemptes, dev a 12 %) : douteux');
+    ne(15, 150, T0 + 1500e3, { exemptions: 4 }); ne(16, 151, T0 + 1560e3);
+    g6.C.meta(A(15), { nom: 'Wif', symbole: 'WIF' }); g6.C.meta(A(16), { nom: 'Wif Coin', symbole: 'WIF' });
+    ok(c6(16).g === A(15) && c6(16).douteux === false, 'un seul fait (4 exemptes) : sain ; Wif (3 lettres) se groupe par le symbole');
+    ok(g6.C.douteuxDe(F6.get(A(13))) === 2 && g6.C.douteuxDe(F6.get(A(15))) === 1 && g6.C.douteuxDe(F6.get(A(10))) === 0, 'douteuxDe compte les faits : 2, 1, 0');
+    const B6 = g6.C.bilan();
+    ok(B6.parClone.original.n === 5 && B6.parClone['original, doubtful'].n === 1 && B6.parClone['copy #2'].n === 5 && B6.parClone['copy #3+'].n === 4, 'bilan parClone : 5 originaux, 1 douteux, 5 copies #2, 4 copies #3+ (' + JSON.stringify(Object.fromEntries(Object.entries(B6.parClone).map(([k, x]) => [k, x.n]))) + ')');
+    ok(B6.parGroupeTaille['1'].n === 1 && B6.parGroupeTaille['2-3'].n === 9 && B6.parGroupeTaille['4+'].n === 5, 'par taille de grappe : 1 seul, 9 en 2-3, 5 en 4+');
+    ok(B6.parClone.original['24h'].mesures === 0 && B6.parClone.original['24h'].vivantsPct === null, 'la part vivante : rien de mesure, rien de dit');
+    /* un fait lu apres la detection compte au bilan : le top 10 de Wif a 24 h */
+    const pad = (x) => '0x' + '0'.repeat(24) + x.slice(2);
+    g6.C.detenteurs(A(15), '24h', [{ topics: [K.TOPIC_TRANSFER, pad(A(315)), pad(A(777))], data: '0x' + (10n ** 20n).toString(16), blockNumber: '0x96', logIndex: '0x0' }], 200);
+    g6.H.now += 11 * 60e3;     // le cache du bilan (10 min)
+    ok(g6.C.bilan().parClone['original, doubtful'].n === 2 && c6(16).douteux === false, 'Wif : top 10 a 100 % lu a 24 h -> 2 faits, douteux au bilan ; la ligne de sa copie garde ce qu on savait alors');
+    const v6 = g6.C.vue().clones;
+    ok(v6.reperes === 6 && v6.revus === 6 && v6.grappes === 5 && v6.plusGrosDuJour && v6.plusGrosDuJour.n === 5 && v6.plusGrosDuJour.original === A(10) && v6.plusGrosDuJour.nom === 'PEPE', 'vue : 6 copies reperees, 6 fiches renotees, 5 grappes, la plus grosse du jour : PEPE x5 (' + JSON.stringify(v6) + ')');
+    /* la distance d'edition ne regarde que 48 h ; la cle exacte n'a pas d'age */
+    ne(20, 200, T0 + 3600e3); g6.C.meta(A(20), { nom: 'Kumo', symbole: 'KUMO' });     // (« Bork » serait a 1 edition de Bonk : voulu)
+    g6.H.now = T0 + 50 * 3600e3;
+    ne(21, 300, g6.H.now); g6.C.meta(A(21), { nom: 'Kumi', symbole: 'KUMI' });       // 1 edition, mais 49 h plus tard
+    g6.H.now = T0 + 99 * 3600e3;
+    ne(22, 400, g6.H.now); g6.C.meta(A(22), { nom: 'Kumo', symbole: 'XKMO' });       // meme cle exacte, 98 h plus tard
+    ok(c6(21).g === A(21) && c6(21).rang === 1, 'Kumi 49 h apres Kumo : la distance d edition ne compare qu a 48 h -> grappe a part');
+    ok(c6(22).g === A(20) && c6(22).rang === 2, 'Kumo 98 h apres Kumo : la cle exacte n a pas d age -> copie #2');
+    /* le redemarrage relit grappes et rangs tels qu'ecrits, et l'index sert les suivants */
+    const nLignes = lignesClone(g6.dossier).length;
+    const g7 = banc({ dossier: g6.dossier, now: g6.H.now });
+    const F7 = g7.C._fiches;
+    ok(F7.get(A(1)).cl.g === A(10) && F7.get(A(1)).cl.rang === 2 && F7.get(A(8)).cl.g === A(7) && F7.get(A(8)).cl.rang === 2 && F7.get(A(22)).cl.g === A(20) && F7.get(A(14)).cl.douteux === true, 'redemarrage : grappes, rangs et douteux relus du disque, tels qu ecrits');
+    eq(lignesClone(g7.dossier).length, nLignes, 'et rien n est reecrit');
+    ok(g7.C.vue().clones.grappes === 6 && g7.C._grappes().get(A(10)).size === 5, 'l index et les grappes sont reconstruits (6 grappes, PEPE x5)');
+    g7.C.naissance({ jeton: A(30), bloc: 500, t: g7.H.now, deployer: A(830) });
+    g7.C.meta(A(30), { nom: 'Doge Pepe', symbole: 'PEPE' });
+    ok(F7.get(A(30)).cl.g === A(10) && F7.get(A(30)).cl.rang === 6, 'apres redemarrage, un nouveau PEPE rejoint la grappe de A10 : copie #6');
+    g7.C.meta(A(30), { nom: 'Doge Pepe', symbole: 'PEPE' });
+    eq(lignesClone(g7.dossier).length, nLignes + 1, 'le meme jeton relu : aucune nouvelle ligne, meme grappe');
+    g7.C.naissance({ jeton: A(31), bloc: 501, t: g7.H.now, deployer: A(831) }); g7.C.meta(A(31), { nom: 'AI', symbole: 'AI' });
+    g7.C.naissance({ jeton: A(32), bloc: 502, t: g7.H.now, deployer: A(832) }); g7.C.meta(A(32), { nom: null, symbole: 'AI' });
+    ok(!F7.get(A(31)).cl && !F7.get(A(32)).cl && lignesClone(g7.dossier).length === nLignes + 1, 'AI / AI (trop court) : aucune cle, aucune grappe, jamais dit « original »');
+    /* des fiches d'avant ce lot : nom lu, pas de ligne clone -> reperees au demarrage, une fois */
+    const D8 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D8, 'lancements'));
+    fs.writeFileSync(path.join(D8, 'lancements', '2026-10-21.jsonl'), [{ k: 'n', t: T0, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: T0 + 1, jeton: A(2), bloc: 11, deployer: A(802) },
+      { k: 'm', t: T0 + 5, jeton: A(1), nom: 'Neiro', symbole: 'NEIRO' }, { k: 'm', t: T0 + 6, jeton: A(2), nom: 'Neiro', symbole: 'NEIRO2' }].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const g8 = banc({ dossier: D8, now: T0 + 3600e3 });
+    ok(!g8.C._fiches.get(A(2)).cl && g8.C.vue().clones.aReperer === 2 && lignesClone(D8).length === 0, 'fiches d avant ce lot (nom lu, pas de ligne clone) : en attente au demarrage, rien d ecrit en bloc');
+    await g8.C.tic();
+    ok(g8.C._fiches.get(A(2)).cl && g8.C._fiches.get(A(2)).cl.g === A(1) && g8.C._fiches.get(A(2)).cl.rang === 2 && lignesClone(D8).length === 2 && g8.C.vue().clones.migres === 2 && g8.C.vue().clones.aReperer === 0, 'au premier tic : reperees dans l ordre des naissances, ecrites une fois');
+    const g9 = banc({ dossier: D8, now: T0 + 3600e3 });
+    await g9.C.tic();
+    ok(lignesClone(D8).length === 2 && g9.C.vue().clones.aReperer === 0 && g9.C.vue().clones.migres === 0, 'au redemarrage suivant : relues, rien a reperer, rien de reecrit');
+    /* le bilan refuse la part sous 40 fiches mesurees, la donne a 40 */
+    const g10 = banc();
+    const noms = ['Neiro', 'Brett', 'Mog', 'Andy', 'Bonk', 'Wojak', 'Turbo', 'Floki', 'Popcat', 'Giga'];
+    for (let i = 1; i <= 60; i++) {
+      g10.C.naissance({ jeton: A(i), t: T0 + i * 1000, bloc: 1000 + i, deployer: A(900 + i) });
+      g10.C.meta(A(i), { nom: noms[(i - 1) % 10], symbole: noms[(i - 1) % 10].toUpperCase() });
+      if (i <= 30) g10.marche.set(A(i), { prix: 1, fdv: 2e5, liq: 9000 });
+    }
+    await avance(g10, 61);
+    g10.H.now = T0 + 1441 * 60e3; await g10.C.tic(); await g10.C.tic();
+    const B10 = g10.C.bilan();
+    ok(B10.parClone.original.n === 10 && B10.parClone['copy #2'].n === 10 && B10.parClone['copy #3+'].n === 40, '60 fiches, 10 noms x 6 : 10 originaux, 10 copies #2, 40 copies #3+');
+    ok(B10.parClone.original['24h'].mesures === 10 && B10.parClone.original['24h'].assez === false && B10.parClone.original['24h'].vivantsPct === null, 'originaux : 10 mesures a 24 h, sous 40 -> la part est REFUSEE');
+    ok(B10.parClone['copy #3+']['24h'].mesures === 40 && B10.parClone['copy #3+']['24h'].assez && B10.parClone['copy #3+']['24h'].vivantsPct === 25, 'copies #3+ : 40 mesures, 10 vivantes -> 25 %');
+    ok(B10.parGroupeTaille['4+'].n === 60 && g10.C.vue().clones.grappes === 10, 'par taille de grappe : les 60 dans des grappes de 4+ ; 10 grappes');
+    ok(!/f\.cl|parClone|douteux/.test(fs.readFileSync(path.join(__dirname, 'smart_lancements.js'), 'utf8') + fs.readFileSync(path.join(__dirname, 'ai_colonie.js'), 'utf8')), 'aucune regle d achat, d alerte ni de vente ne lit les copies');
   }
 
   console.log('-- 6. branche dans les lancements et le serveur');
