@@ -238,7 +238,12 @@ const rencontre = (id, dom, ext, ligue, debut, x) => Object.assign({ id, sport: 
                headers: { get: (k) => ({ 'x-requests-remaining': '19000', 'x-requests-used': '1000', 'x-requests-last': String(c) }[k.toLowerCase()] || null) },
                json: async () => evs, text: async () => JSON.stringify(evs) };
     };
-    const t0 = Date.now();
+    /* Midi UTC du jour courant, pas Date.now() : le scenario avance d'une quinzaine de minutes
+       simulees, et lance a 23:54 UTC (verifie.sh du 21/10) il franchissait minuit — les credits
+       du jour repartaient de zero et « UNE releve, puis plus rien » en voyait trois. Les compteurs
+       du socle restent ceux du jour reel, le meme jour. */
+    const midi = new Date(); midi.setUTCHours(12, 0, 0, 0);
+    const t0 = midi.getTime();
     const K = t0 + 60000;
     const cat = [rencontre('a', 'Arsenal', 'Everton', 'soccer_epl', K), rencontre('b', 'Liverpool', 'Fulham', 'soccer_epl', K),
                  rencontre('c', 'Barcelona', 'Getafe', 'soccer_spain_la_liga', K)];
