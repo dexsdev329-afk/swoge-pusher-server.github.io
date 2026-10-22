@@ -2,10 +2,12 @@
 /*
  * LE CONTEXTE DE MARCHE BTC/ETH (22/10/2026), CoinGecko simule :
  *   1. la serie : UN point par heure, jamais deux ; le rattrapage de 90 jours une fois (deux
- *      appels, les deux ou rien, jamais refaits) ; triee ; ecrite sur le disque ;
+ *      appels, les deux ou rien — ETH refuse apres BTC lu : rien d'ecrit, repris au releve
+ *      suivant —, jamais refaits) ; triee ; ecrite sur le disque ;
  *   2. contexteA, pur : exact a des instants choisis, null hors couverture (±2 h), un axe sans
  *      reference null — jamais invente ; les references ancrees sur l'instant du POINT RETENU et
- *      non sur t (un trou dans la serie ne fait pas d'une variation 24 h une variation 26 h) ;
+ *      non sur t (un trou dans la serie ne cumule plus deux tolerances : 22 a 26 h au pire, plus
+ *      20 a 28 h ; la tolerance de ±2 h sur la reference elle-meme reste, choisie) ;
  *      regimeDe et les tranches (±3 % sur 24 h, ±5 % sur 7 j) ;
  *   3. un redemarrage relit la serie et le rattrapage fait : rien n'est redemande ;
  *   4. un refus (429) ne casse rien, est compte, et le rattrapage se fait au releve suivant ;
@@ -40,6 +42,7 @@ function banc(o) {
     if (o.jette) throw new Error(o.jette);
     if (o.statut) return { ok: false, status: o.statut, json: async () => ({ status: { error_message: 'Throttled' } }) };
     const u = new URL(String(url));
+    if (o.statutEth && /\/coins\/ethereum\/market_chart$/.test(u.pathname)) return { ok: false, status: o.statutEth, json: async () => ({}) };
     if (u.pathname.endsWith('/coins/markets')) return { ok: true, status: 200, json: async () => [{ id: 'bitcoin', current_price: btcA(H.now) }, { id: 'ethereum', current_price: ethA(H.now) }] };
     const m = /\/coins\/(bitcoin|ethereum)\/market_chart$/.exec(u.pathname);
     if (m) {
@@ -57,7 +60,7 @@ function banc(o) {
   console.log('-- 1. la serie : un point par heure, le rattrapage une fois');
   const b = banc();
   let r = await b.X.releve();
-  eq(r.etat, 'lu', 'premier releve : lu');
+  eq(r.etat, 'read', 'premier releve : read');
   ok(r.point === true, 'un point pour l heure courante');
   eq(r.backfill, 2160, 'rattrapage : 2 161 points horaires moins celui de l heure deja relevee');
   eq(b.appels.length, 3, 'trois appels : le releve, puis market_chart bitcoin et ethereum');
@@ -73,7 +76,7 @@ function banc(o) {
   ok(v.dernierPoint && v.dernierPoint.t === T0 && v.dernierPoint.btc === 50000 && v.dernierPoint.eth === 5000, 'le dernier point : T0, 50 000 $, 5 000 $');
   ok(v.premier === T0 - 90 * J_MS, 'le premier : il y a 90 jours');
   r = await b.X.releve();
-  ok(r.etat === 'lu' && r.point === false && r.backfill === null, 'releve dans la meme heure : aucun point, rattrapage pas refait');
+  ok(r.etat === 'read' && r.point === false && r.backfill === null, 'releve dans la meme heure : aucun point, rattrapage pas refait');
   eq(b.appels.length, 4, 'un seul appel de plus');
   eq(b.X.vue().compteurs.doublonsHeure, 2, 'les doublons d heure sont comptes : le point du rattrapage dans l heure deja relevee, puis ce releve');
   b.H.now += 20 * 60e3; await b.X.releve();
@@ -121,6 +124,10 @@ function banc(o) {
   ok(ct && ct.btc7d === null && ct.eth7d === null, 'sans point a p.t-7 j : 7 j null');
   const ct2 = Z.contexteA(T - 23 * H_MS);
   ok(ct2 && ct2.t === T - J_MS && ct2.btc24h === null, 'a T-23h : le point T-24h est retenu, sa reference a T-48h manque : null, pas T-26h');
+  /* la tolerance qui reste, choisie (TOLERANCE_MS = 2 h) : sans point a p.t-24h, celui de p.t-26h sert ; a 2 h et 1 ms, null */
+  const serieBrute = (pts) => { const d = fs.mkdtempSync(path.join(os.tmpdir(), 'marche2c-')); fs.mkdirSync(path.join(d, 'marche')); fs.writeFileSync(path.join(d, 'marche', 'serie.json'), JSON.stringify({ v: 1, backfill: { fait: true }, points: pts })); return MC.cree({ dossier: d, prendre: async () => { throw new Error('aucun reseau attendu'); }, horloge: () => T, env: {} }); };
+  eq(serieBrute([[T - 26 * H_MS, 100, 10], [T, 99, 9.9]]).contexteA(T).btc24h, -1, 'sans point a p.t-24h : celui de p.t-26h sert (la seule tolerance, ±2 h) — une « variation 24 h » de 26 h au pire');
+  eq(serieBrute([[T - 26 * H_MS - 1, 100, 10], [T, 99, 9.9]]).contexteA(T).btc24h, null, 'a 26 h et 1 ms : null, jamais 28 h');
   eq(Y.contexteA('abc'), null, 'un instant illisible : null');
   eq(Y.contexteA(undefined), null, 'sans instant : null');
   const rg = Y.regimeDe(c);
@@ -158,17 +165,25 @@ function banc(o) {
   const opts = { statut: 429 };
   const e = banc(opts);
   r = await e.X.releve();
-  ok(r.etat === 'erreur' && r.statut === 429, 'releve : erreur 429');
+  ok(r.etat === 'error' && r.statut === 429, 'releve : error 429');
   v = e.X.vue();
   eq(v.points, 0, 'aucun point');
   ok(v.backfill.fait === false && v.backfill.essais === 1 && /HTTP 429/.test(v.backfill.derniereErreur), 'rattrapage : pas fait, un essai, l erreur dite');
   eq(v.compteurs.erreurs, 2, 'deux erreurs comptees (releve, rattrapage)');
-  ok(v.dernierReleve && v.dernierReleve.etat === 'erreur' && v.courant === null, 'dernier releve en erreur, contexte courant null');
+  ok(v.dernierReleve && v.dernierReleve.etat === 'error' && v.courant === null, 'dernier releve en erreur, contexte courant null');
   opts.statut = 0;
   e.H.now += H_MS;
   r = await e.X.releve();
-  ok(r.etat === 'lu' && r.point === true && r.backfill === 2160, 'au releve suivant : le point et le rattrapage');
+  ok(r.etat === 'read' && r.point === true && r.backfill === 2160, 'au releve suivant : le point et le rattrapage');
   ok(e.X.vue().backfill.fait === true && e.X.vue().backfill.essais === 2 && e.X.vue().backfill.derniereErreur === null, 'rattrapage fait au deuxieme essai');
+  /* les deux ou rien : BTC lu, ETH refuse → aucun point de BTC seul, l essai compte, repris au releve suivant */
+  const op = { statutEth: 429 };
+  const pe = banc(op);
+  r = await pe.X.releve();
+  ok(r.etat === 'read' && r.point === true && r.backfill === null && pe.appels.length === 3, 'BTC lu, ETH refuse : le point de l heure est la, le rattrapage non, trois appels');
+  ok(pe.X.vue().points === 1 && pe.X.vue().backfill.fait === false && pe.X.vue().backfill.essais === 1 && /HTTP 429/.test(pe.X.vue().backfill.derniereErreur), 'les deux ou rien : aucun point de BTC seul, un essai compte, l erreur dite');
+  op.statutEth = 0; pe.H.now += H_MS; r = await pe.X.releve();
+  ok(r.point === true && r.backfill === 2159 && pe.X.vue().points === 2161 && pe.X.vue().backfill.fait === true && pe.X.vue().backfill.essais === 2, 'au releve suivant : les deux series, 2 161 points (deux heures deja relevees)');
   const pl = e.X.planifie();
   ok(pl && typeof pl.arrete === 'function', 'planifie rend { arrete }');
   pl.arrete();
@@ -190,7 +205,7 @@ function banc(o) {
   const pq = q.X.planifie();
   ok(vivantes().length === 2 && vivantes()[0].k === 't' && vivantes()[0].ms === MC.PREMIER_MS && vivantes()[1].k === 'i' && vivantes()[1].ms === MC.HEURE_MS, 'arme : le premier releve a 60 s, puis la cadence horaire');
   q.H.now += MC.PREMIER_MS; await tire(vivantes()[0]);
-  ok(q.X.vue().compteurs.releves === 1 && q.X.vue().dernierReleve.etat === 'erreur' && q.X.vue().dernierReleve.statut === 429, 'premier releve : refuse 429');
+  ok(q.X.vue().compteurs.releves === 1 && q.X.vue().dernierReleve.etat === 'error' && q.X.vue().dernierReleve.statut === 429, 'premier releve : refuse 429');
   eq(reprisesArmees().length, 1, 'une reprise armee, a 5 min');
   for (let i = 2; i <= 4; i++) { q.H.now += MC.REPRISE_MS; await tire(reprisesArmees()[0]); eq(q.X.vue().compteurs.releves, i, 'reprise ' + (i - 1) + ' : releve ' + i + ', refuse'); }
   eq(reprisesArmees().length, 0, 'trois reprises dans l heure : la quatrieme erreur n en arme aucune');
@@ -199,7 +214,7 @@ function banc(o) {
   q.H.now = Date.parse('2026-10-22T15:00:30Z'); await tire(vivantes()[0]);
   ok(q.X.vue().compteurs.releves === 5 && reprisesArmees().length === 1, 'l heure suivante : la cadence releve (refuse) et une reprise est de nouveau permise');
   o4.statut = 0; q.H.now += MC.REPRISE_MS; await tire(reprisesArmees()[0]);
-  ok(q.X.vue().dernierReleve.etat === 'lu' && q.X.vue().points === 2161 && q.X.vue().backfill.fait === true, 'la reprise reussit : le point et le rattrapage');
+  ok(q.X.vue().dernierReleve.etat === 'read' && q.X.vue().points === 2161 && q.X.vue().backfill.fait === true, 'la reprise reussit : le point et le rattrapage');
   eq(reprisesArmees().length, 0, 'une reussite n arme aucune reprise');
   pq.arrete();
   eq(vivantes().length, 0, 'arrete() : plus rien d arme (minuteries injectees eteintes)');
@@ -231,7 +246,7 @@ function banc(o) {
   ok(!JSON.stringify(k.X.vue()).includes(CLE), 'la vue ne cite jamais la cle');
   const kj = banc({ cle, jette: 'boom ' + CLE + ' refused' });
   r = await kj.X.releve();
-  ok(r.etat === 'erreur' && !r.erreur.includes(CLE) && r.erreur.includes('<key>'), 'une erreur qui citerait la cle est masquee : ' + r.erreur);
+  ok(r.etat === 'error' && !r.erreur.includes(CLE) && r.erreur.includes('<key>'), 'une erreur qui citerait la cle est masquee : ' + r.erreur);
   ok(!JSON.stringify(kj.X.vue()).includes(CLE) && kj.X.vue().erreurs.length === 2 && kj.X.vue().erreurs.every((x) => x.txt.includes('<key>')), 'et dans la vue aussi');
   const off = banc({ env: { MARCHE_CONTEXTE: '0' }, dossier: dossier2 });
   eq(off.X.planifie(), null, 'MARCHE_CONTEXTE=0 : rien d arme');

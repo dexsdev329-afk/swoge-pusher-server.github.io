@@ -43,7 +43,9 @@
  * un releve horaire la trouve ouverte la plupart du temps : la serie passe par la
  * cle la plupart du temps, ~630 a 722 credits par mois (720 releves + 2 de
  * rattrapage, 7/8 a 8/8 d'entre eux) debites du MEME compteur que la colonie
- * (`debite`), soit 0,6–0,7 % du budget. Chacun repousse une lecture de la colonie
+ * (`debite`), soit 0,6–0,7 % du budget — huit instants, pas une part du temps : la part
+ * REELLE se lit sur `compteurs.parCle` / `sansCle` de /ai/marche, a relire apres un mois.
+ * Chacun repousse une lecture de la colonie
  * vers l'acces libre, qui en comptait deja 53 061 sur 120 354 au 21/10 (44 %) :
  * le budget le supporte sans marge, et le plafond du mois reste tenu par la porte
  * de la colonie (le compteur est le meme). La premiere version de ce commentaire
@@ -225,10 +227,12 @@ function cree(deps) {
   const pct = (a, b) => (fini(a) && fini(b) && a > 0 && b > 0 ? Math.round((a / b - 1) * 10000) / 100 : null);
   /** PUR : le contexte a l'instant t, ou null si la serie ne couvre pas t. Les references sont
    *  ancrees sur l'INSTANT DU POINT RETENU (p.t - 24 h, p.t - 7 j), pas sur t : le point retenu peut
-   *  etre a 2 h de t, et une reference cherchee a t - 24 h couvrait 22 a 26 h selon le trou de la
-   *  serie (relecture du 22/10 : serie [T-26h:100, T-24h:110, T:99], contexteA(T-2h) retenait T et
-   *  comparait a T-26h → -1 % au lieu de -10 %). Un axe dont la reference manque est null, jamais
-   *  invente. */
+   *  etre a 2 h de t, et une reference cherchee a t - 24 h cumulait DEUX tolerances — une
+   *  « variation 24 h » de 20 a 28 h selon le trou de la serie (relecture du 22/10 : serie
+   *  [T-26h:100, T-24h:110, T:99], contexteA(T-2h) retenait T et comparait a T-26h → -1 % au lieu
+   *  de -10 %). Ancree sur p, la reference garde sa seule tolerance de ±2 h : 22 a 26 h quand le
+   *  point a p.t - 24 h manque (TOLERANCE_MS, choisi). Un axe dont la reference manque est null,
+   *  jamais invente. */
   function contexteA(t) {
     const p = pointA(t);
     if (!p) return null;
@@ -270,15 +274,16 @@ function cree(deps) {
   }
   /** Un releve complet : le point de l'heure, puis le rattrapage s'il n'a jamais reussi. */
   async function releve() {
+    /* etat ∈ read | error | busy | off : servi tel quel par /ai/marche, route publique, donc en anglais */
     if (eteint) return { etat: 'off' };
-    if (enCours) return { etat: 'en cours' };
+    if (enCours) return { etat: 'busy' };
     enCours = true;
     const t = maintenant();
     C.releves++;
-    let r = { etat: 'lu', t, point: false, backfill: null };
+    let r = { etat: 'read', t, point: false, backfill: null };
     try {
       try { r.point = await releveCourant(); C.reussites++; }
-      catch (e) { r = { etat: 'erreur', t, statut: e.statut || null, erreur: noteErreur('fetch', e) }; }
+      catch (e) { r = { etat: 'error', t, statut: e.statut || null, erreur: noteErreur('fetch', e) }; }
       if (!backfill.fait) {
         try { r.backfill = await rattrape(); }
         catch (e) { backfill.derniereErreur = noteErreur('backfill', e); r.backfill = null; }
@@ -293,11 +298,16 @@ function cree(deps) {
     if (eteint) { console.log('[marche] ETEINT : MARCHE_CONTEXTE=0 (la serie sur le disque sert encore le contexte passe)'); return null; }
     console.log('[marche] ARME : BTC/ETH horaires par CoinGecko (observation seule, aucune decision), premier releve dans ' + Math.round(PREMIER_MS / 1000) + ' s, rattrapage ' + (backfill.fait ? 'deja fait (' + backfill.points + ' points)' : JOURS_BACKFILL + ' j au premier releve'));
     const f = () => releve().then((r) => {
-      if (r && r.etat === 'erreur') {
+      if (r && r.etat === 'error') {
         /* repris 5 min plus tard, trois fois par heure au plus : l'hote public refuse par IP partagee */
         const h = heure(maintenant());
         if (reprises.heure !== h) reprises = { heure: h, n: 0 };
-        if (reprises.n < REPRISES_MAX) { reprises.n++; const x = tempo.setTimeout(f, REPRISE_MS); if (x && x.unref) x.unref(); minuteries.push(['t', x]); }
+        if (reprises.n < REPRISES_MAX) {
+          reprises.n++;
+          /* le handle quitte `minuteries` quand il tire : garde, trois par heure feraient ~26 000 entrees mortes par an */
+          const x = tempo.setTimeout(() => { minuteries = minuteries.filter((m) => m[1] !== x); return f(); }, REPRISE_MS);
+          if (x && x.unref) x.unref(); minuteries.push(['t', x]);
+        }
       }
     }).catch(() => {});
     const premier = tempo.setTimeout(f, PREMIER_MS); if (premier && premier.unref) premier.unref();
