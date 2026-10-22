@@ -48,6 +48,16 @@ function scene(passifs) {
   R.rejoint('0xaaa', fiche(passifs));
   const j = R.joueurs.get('0xaaa');
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  /* ---- ET LES ROCHERS : UN ROCHER ARRETE AUSSI LES FLECHES ----
+   * Les obstacles du monde sont tires au sort a la construction, et le point
+   * d'arrivee aussi. Une fois sur quelques centaines, un rocher tombe entre
+   * le joueur et le monstre pose a 60 px : la fleche s'y arrete, 0 degat, et
+   * « un tirage reussi frappe double (71 -> 0) » rougit sans que le passif y
+   * soit pour rien. Mesure du 22/10/2026 sur 3 000 coups nus : 10 a 0 degat
+   * (0,3 %), tous avec un rocher sur la trajectoire ; 0 sur 3 000 une fois
+   * les obstacles vides.
+   * L'essai mesure des passifs, pas la geometrie : la scene est a nu. */
+  R.obstacles.length = 0;
   return { R, j };
 }
 function poseMonstre(R, j, dx, pv) {

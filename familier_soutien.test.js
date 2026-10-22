@@ -52,6 +52,11 @@ function scene(fam, niv) {
   R.rejoint(A, fiche(fam, niv));
   const j = R.joueurs.get(A);
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  /* ---- ET LES ROCHERS : un rocher arrete aussi les fleches. Les obstacles sont
+     tires au sort a la construction ; un tir a 0 degat une fois sur quelques
+     centaines (1 rouge sur 150 passes le 22/10/2026, « et avec l ardeur il porte plus fort (65 -> 0) » ;
+     cause et mesure dans passifs.test.js). La scene est a nu. */
+  R.obstacles.length = 0;
   return { R, A, j };
 }
 function poseMonstre(R, j, dx, dy, pv) {
@@ -476,6 +481,7 @@ console.log('\n-- sur la carte PvP, le compagnon ne prepare personne --');
   R.rejoint('0xaaa', fiche('normal', 100));
   const j = R.joueurs.get('0xaaa');
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  R.obstacles.length = 0;
   poseMonstre(R, j, 40, 0);
   const evs = avance(R, 2.0);
   eq(gestes(evs).length, 0, 'aucun geste, soutien compris');

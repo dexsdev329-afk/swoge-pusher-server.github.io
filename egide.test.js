@@ -82,6 +82,11 @@ const sources = {
     R.rejoint('0xaaa', fiche('att')); R.rejoint('0xbbb', fiche('def'));
     const a = R.joueurs.get('0xaaa'), b = R.joueurs.get('0xbbb');
     R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    /* ---- ET LES ROCHERS : un rocher arrete aussi les fleches. Les obstacles sont
+       tires au sort a la construction ; un tir a 0 degat une fois sur quelques
+       centaines (1 rouge sur 150 passes le 22/10/2026, « le duel (carte rouge) fait bien mal sans elle (0) » ;
+       cause et mesure dans passifs.test.js). La scene est a nu. */
+    R.obstacles.length = 0;
     b.x = a.x + 40; b.y = a.y;
     if (avec) b.egide = E.duree;
     const pv0 = b.pv;
@@ -98,6 +103,7 @@ const sources = {
      * deux pas. Une source oubliee et du bruit se ressemblent, et c'est
      * exactement ce qu'on ne peut pas se permettre de confondre ici. */
     R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    R.obstacles.length = 0;
     j.brulure = 5; j.brulReste = 0;
     if (avec) j.egide = E.duree;
     const pv0 = j.pv;
@@ -108,6 +114,7 @@ const sources = {
     const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
     const j = R.joueurs.get('0xaaa');
     R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    R.obstacles.length = 0;
     if (avec) j.egide = E.duree;
     R.zones.push({ id: 1, x: j.x, y: j.y, r: 200, att: 300, effet: null,
                    espece: 'lime', reste: 0.05, duree: 1.5 });
@@ -127,6 +134,7 @@ const sources = {
     const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
     const j = R.joueurs.get('0xaaa');
     R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    R.obstacles.length = 0;
     const espece = Object.keys(monde.MONSTRES)
       .find((c) => monde.MONSTRES[c].contact && !monde.MONSTRES[c].choc);
     const t = monde.MONSTRES[espece];
@@ -142,6 +150,7 @@ const sources = {
     const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
     const j = R.joueurs.get('0xaaa');
     R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+    R.obstacles.length = 0;
     if (avec) j.egide = E.duree;
     R.tirsM.push({ id: 1, espece: 'lime', x: j.x, y: j.y, a: 0, v: 300,
                    reste: 1, att: 400, sprite: 'bave', effet: null });
@@ -169,6 +178,7 @@ console.log('\n-- et on n en meurt pas --');
      a un point de vie au milieu de deux cent soixante creatures meurt de
      n'importe quoi. On ne mesure que le DUEL. */
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  R.obstacles.length = 0;
   b.x = a.x + 40; b.y = a.y;
   b.pv = 1;                       // un souffle de vie
   b.egide = E.duree;
@@ -208,6 +218,7 @@ console.log('\n-- et on n en meurt pas --');
   const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
   const j = R.joueurs.get('0xaaa');
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  R.obstacles.length = 0;
   const ev = { touches: [], kills: [] };
   const r = R.pouvoir('0xaaa', ev);
   ok(r && !r.refus, `elle part (${E.duree}s)`);
@@ -238,6 +249,7 @@ console.log('\n-- sous egide, on brule dans le vide --');
      milieu, ca fait un point de vie perdu de temps en temps — et « un point
      de vie perdu » est exactement ce qu'une egide qui fuit ressemblerait. */
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  R.obstacles.length = 0;
   j.brulure = monde.EFFETS.brulure.duree;
   j.egide = E.duree;
   /* ---- ON MESURE A L'INTERIEUR, PAS SUR LA FRONTIERE ----
@@ -259,6 +271,7 @@ console.log('\n-- et elle finit --');
   const R = new Realm({}); R.rejoint('0xaaa', fiche('def'));
   const j = R.joueurs.get('0xaaa');
   R.monstres.length = 0; R.tirsM.length = 0; R.zones.length = 0;
+  R.obstacles.length = 0;
   R.pouvoir('0xaaa', { touches: [], kills: [] });
   avance(R, E.duree + 0.3);
   eq(j.egide, 0, 'le compteur est retombe a zero');
