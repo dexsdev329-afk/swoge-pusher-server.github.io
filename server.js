@@ -51,6 +51,7 @@ const tennisVerrou = require('./tennis_verrou');
 const xPost = require('./x_post');
 const tgCommandes = require('./tg_commandes');
 let agentLife = null;   /* agentlife.js, pose au demarrage ; son etat est servi dans /ai/colonie */
+let marcheContexte = null;   /* marche_contexte.js (22/10) : BTC/ETH horaires, observation seule ; vue sur /ai/marche et dans /ai/colonie */
 const espn = require('./scores_espn');
 const aiColonie = require('./ai_colonie');
 const aiPerp = require('./ai_perp');
@@ -5687,6 +5688,12 @@ const server = http.createServer(async (req, res) => {
   if (path === '/ai/observatoire') {
     res.writeHead(200, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
     return res.end(JSON.stringify(Object.assign({ actif: process.env.OBSERVATOIRE === '1' }, observatoire.vue())));
+  }
+  /* Le contexte de marche BTC/ETH (22/10/2026, marche_contexte.js) : la serie horaire, le rattrapage, le
+     regime courant. Observation seule, memes en-tetes que la colonie. MARCHE_CONTEXTE=0 : { actif: false }. */
+  if (path === '/ai/marche') {
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify(marcheContexte ? marcheContexte.vue() : { actif: false }));
   }
   if (path === '/ai/colonie') {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8',
@@ -12112,10 +12119,22 @@ server.listen(cfg.PORT, () => {
      signaux arrivent a la colonie par le meme `signalSmart`, avec leur SOURCE :
      une ligne d'audit chacune, jamais un achat. Un jeton encore sur sa courbe
      n'a pas de prix DexScreener : la colonie lit celui de la courbe suivie. */
+  /* Le contexte de marche BTC/ETH (22/10/2026, marche_contexte.js) : un releve CoinGecko par heure (le
+     premier 60 s apres le demarrage), 90 jours rattrapes une fois. Par la cle de la colonie SEULEMENT
+     quand elle est en avance sur son budget du mois — elle est saturee (21/10 20:39 UTC : 67 293
+     credits = 67 293 permis) : en pratique l'hote public, sans cle. La colonie et le carnet des
+     lancements le lisent pour DECOUPER leurs bilans (parBtc24h…), jamais pour decider.
+     MARCHE_CONTEXTE=0 l'eteint (la serie deja sur le disque sert encore le passe). */
+  marcheContexte = require('./marche_contexte').cree({ dossier: cfg.DATA_DIR,
+    cle: { valeur: () => aiColonie.cleCoingecko(), porte: () => aiColonie._porte(), dansLeBudget: () => aiColonie.cleDansLeBudget(), debite: () => aiColonie.debiteCg() } });
+  marcheContexte.planifie();
+  aiColonie.fournisseurMarche(() => marcheContexte);
   /* 16/10 : le canal PUBLIC des alertes (SMART_PUBLIC_TG_CHAT, smart_public.js) part par notifyChat */
   smartMoney = require('./smart_money').planifie({ tg: { notifyPrive: (t) => tg.notifyPrive(t), notifyChat: (c, t) => tg.notifyChat(c, t) }, dossier: cfg.DATA_DIR, explorer: cfg.EXPLORER,
     faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v),
-    mesureSmart: (src) => aiColonie.mesureSourceSmart(src) });
+    mesureSmart: (src) => aiColonie.mesureSourceSmart(src),
+    /* 22/10 : le carnet des lancements decoupe ses naissances par le marche BTC/ETH (observation) */
+    marche: (t) => (marcheContexte ? marcheContexte.contexteA(t) : null) });
   aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
   /* AgentLife (18/10/2026, agentlife.js) : les alertes de l'autre bot du proprietaire, lues toutes
      les 5 min, deviennent des OMBRES de la colonie par le meme `signalSmart` (une ligne d'audit par
@@ -12172,6 +12191,7 @@ function shutdown() {
   if (tennisArme) tennisArme.arrete();
   if (communaute) communaute.arrete();
   if (smartMoney) smartMoney.arrete();      // sauvegarde de la base, synchrone
+  if (marcheContexte) marcheContexte.arrete();
   if (xQuotidien) xQuotidien.arrete();
   if (tgCmd) tgCmd.arrete();
   if (horlogeAgents) horlogeAgents.arrete();

@@ -4739,6 +4739,36 @@ function parTranchesDe(l, champ, bornes) {
   }
   return out;
 }
+/* ---- LE CONTEXTE DE MARCHE BTC/ETH A L'OUVERTURE (22/10/2026, marche_contexte.js) ----
+ * Demande du proprietaire (21/10) : « si le marche est baissier c'est surement plus complique
+ * d'avoir du volume ». Avant d'en faire une regle, on MESURE : le carnet se decoupe par la
+ * variation de BTC et d'ETH a l'instant t0 de chaque ligne (24 h et 7 j), calculee A LA VOLEE
+ * depuis la serie horaire du fournisseur — rien n'est ecrit dans les lignes, la serie remonte
+ * 90 jours et couvre donc les ~300 trades depuis le 14/09. Les tranches (±3 % sur 24 h, ±5 %
+ * sur 7 j) sont celles de marche_contexte, CHOISIES, et chaque tranche dit son n.
+ * Observation seule : aucune regle d'achat ni de vente ne lit ce contexte. */
+const MC = require('./marche_contexte');
+let fournisseurMarcheFn = null;
+/** Le serveur pose l'instance de marche_contexte : () -> { contexteA, vue } | null. */
+function fournisseurMarche(fn) { fournisseurMarcheFn = typeof fn === 'function' ? fn : null; }
+function marcheCourant() { try { return fournisseurMarcheFn ? fournisseurMarcheFn() : null; } catch (e) { return null; } }
+/** Les lignes `l` par tranche de marche a t0 : { parBtc24h, parBtc7d, parEth24h }, chaque tranche
+ *  avec `bilan(lignes)` ; « no market data » compte les lignes que la serie ne couvre pas (jamais
+ *  rangees ailleurs). Sans fournisseur : trois listes vides. */
+function parMarcheDe(l, bilan) {
+  const out = { parBtc24h: [], parBtc7d: [], parEth24h: [] };
+  const M = marcheCourant();
+  if (!M || typeof M.contexteA !== 'function') return out;
+  const G = { btc24h: new Map(), btc7d: new Map(), eth24h: new Map() };
+  for (const x of l) {
+    let c = null;
+    try { c = M.contexteA(x.t0); } catch (e) { c = null; }
+    for (const axe in G) { const k = (c && MC.trancheDe(axe, c[axe])) || MC.SANS; (G[axe].get(k) || G[axe].set(k, []).get(k)).push(x); }
+  }
+  for (const [axe, cle] of [['btc24h', 'parBtc24h'], ['btc7d', 'parBtc7d'], ['eth24h', 'parEth24h']])
+    out[cle] = MC.libelles(axe).concat(MC.SANS).filter((k) => G[axe].has(k)).map((k) => Object.assign({ tranche: k }, bilan(G[axe].get(k))));
+  return out;
+}
 function carnetBilan() {
   const l = (E.carnet || []).filter((x) => !x.aberrant && typeof x.r === 'number' && isFinite(x.r));
   if (!l.length) return { n: 0, tout: null, parTenue: [], parSortie: [], parAllerRetour: [] };
@@ -4755,7 +4785,7 @@ function carnetBilan() {
   for (const x of l) (motifs[x.par] || (motifs[x.par] = [])).push(x);
   const parSortie = Object.keys(motifs).map((k) => Object.assign({ par: k }, bilanDe(motifs[k])))
     .sort((a, b) => b.n - a.n);
-  return { n: l.length, tout: bilanDe(l), parTenue, parSortie,
+  return Object.assign({ n: l.length, tout: bilanDe(l), parTenue, parSortie,
            parAllerRetour: parTranchesDe(l, 'allerRetour', CARNET_ALLER_RETOUR),
            /* Par piscine d'achat : c'est ce qui jugera le plancher a 6 000 $
               contre celui de 13 000 $, sur des trades faits et non sur des ombres. */
@@ -4775,7 +4805,9 @@ function carnetBilan() {
            parExploration: (() => {
              const j = l.filter((x) => x.exploration === 'jeune'), autres = l.filter((x) => x.exploration !== 'jeune');
              return [Object.assign({ exploration: 'jeune' }, bilanDe(j) || { n: 0 }), Object.assign({ exploration: 'le reste' }, bilanDe(autres) || { n: 0 })];
-           })() };
+           })() },
+           /* Par marche a l'ouverture (22/10/2026) : parBtc24h, parBtc7d, parEth24h — voir `parMarcheDe`. */
+           parMarcheDe(l, bilanDe));
 }
 
 /* ==========================================================================
@@ -4824,8 +4856,12 @@ function carnetNet() {
   const jugees = [...cases].filter(([, v]) => v.length >= NET_CASE_MIN).map(([cle, v]) => Object.assign({ cle }, serieNet(v)));
   const b = barreNet(jugees.length);
   const prouvees = jugees.filter((c) => c.t != null && c.t >= b && c.moitie1 > 0 && c.moitie2 > 0);
+  /* Par marche a l'ouverture (22/10/2026) : le NET par tranche de BTC a t0 (n, net, t, les deux
+     moities dans l'ordre du temps), observation seule — voir `parMarcheDe`. */
+  const marcheNet = parMarcheDe(l, (v) => serieNet(v.map(net)));
   return {
     n: l.length, brut: l.length ? r1(moy(l.map((x) => x.r))) : null, cout: l.length ? r1(moy(l.map((x) => x.allerRetour))) : null,
+    parBtc24h: marcheNet.parBtc24h, parBtc7d: marcheNet.parBtc7d,
     net: g.net === undefined ? null : g.net, t: g.t || null, moitie1: g.moitie1 === undefined ? null : g.moitie1, moitie2: g.moitie2 === undefined ? null : g.moitie2,
     depuis: l.length ? l[0].t0 || l[0].t : null,
     sansDevis: { n: sans.length, brut: sans.length ? r1(moy(sans.map((x) => x.r))) : null },
@@ -11314,6 +11350,10 @@ function vue() {
       /* Les 300 dernieres lignes, telles quelles : une moyenne qu'on ne
          peut pas verifier ligne a ligne n'est pas une mesure. */
       lignes: (E.carnet || []).slice(0, 300) }),
+    /* ---- LE CONTEXTE DE MARCHE BTC/ETH (22/10/2026) ---- la serie horaire, le rattrapage, le
+       regime COURANT (marche_contexte.vue) ; les decoupages du carnet par ce contexte sont dans
+       `carnet` et `carnetNet`. Null sans fournisseur. */
+    marche: (() => { try { const M = marcheCourant(); return M && typeof M.vue === 'function' ? M.vue() : null; } catch (e) { return null; } })(),
     /* ---- CE QUE LE MIROIR A VRAIMENT PAYE, CONTRE CE QUE LE PAPIER AVAIT BOOKE ----
        Voir `entreeReelle`. */
     entree: ecartEntree(),
@@ -11585,6 +11625,9 @@ module.exports = {
   RENTREE_DEFAUT, RENTREE_GARDE_MS, RENTREE_FAMILLE,
   soumets, soumissions, etatSoumission, SOUMIS, SOUMIS_PAR_TOUR, SOUMIS_FILE_MAX, SOUMIS_PAR_JOUR, SOUMIS_ESSAIS,
   budgetCg, cleDansLeBudget,
+  /* 22/10 : marche_contexte debite ses lectures par la cle du MEME compteur mensuel (720 + 2 appels, 0,72 %) */
+  debiteCg: () => { creditsCg().n++; },
+  fournisseurMarche, carnetBilan, carnetNet,
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
   poseMiroir, poseBanquePapier, _brasColonie: brasColonie, BRAS_COLONIE, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,

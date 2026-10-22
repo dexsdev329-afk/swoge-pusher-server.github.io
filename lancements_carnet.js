@@ -70,6 +70,7 @@
  * ================================================================== */
 const fs = require('fs');
 const path = require('path');
+const MC = require('./marche_contexte');   /* les tranches de marche BTC/ETH (22/10) : pures, aucun reseau */
 
 /* Les echeances du suivi, en minutes. CHOISI : la colonie juge a 20-120 min ;
    ici on cherche ce qui DURE. */
@@ -186,6 +187,11 @@ function cree(deps) {
   const maintenant = d.horloge || Date.now;
   const prendre = d.prendre || fetch;
   const note = (t) => { try { if (d.note) d.note('carnet', t); } catch (e) { /* rien */ } };
+  /* Le contexte de marche BTC/ETH a la naissance (22/10/2026, marche_contexte.contexteA) : (t) -> contexte | null,
+     pose par smart_money. Le bilan le lit A LA VOLEE sur f.t ; rien n'est ecrit dans la fiche (la serie remonte 90 j,
+     elle couvre donc les fiches deja nees). Demande du proprietaire du 21/10 : « si le marche est baissier c'est
+     surement plus complique d'avoir du volume » — on mesure si moins de lancements survivent, on ne decide rien. */
+  const marcheA = typeof d.marche === 'function' ? d.marche : null;
   const ETAT = path.join(D, 'etat.json');
   const C = { naissances: 0, doublons: 0, metas: 0, metasVides: 0, metasAbandonnees: 0, metaFileDebordee: 0, suivis: 0, manques: 0, dsAppels: 0, dsErreurs: 0, erreursEcriture: 0 };
   /* la fiche compacte de chaque jeton, et l'ordre de naissance (pour les curseurs) */
@@ -501,6 +507,9 @@ function cree(deps) {
       if (p) { p.n++; if (f.s['24h'] && f.s['24h'].m && (f.s['24h'].liq || 0) >= VIVANT_LIQ) p.vivant = true; parDev.set(f.dev, p); }
     }
     const tranche = (x, bornes, noms) => { if (!fini(x)) return 'unknown'; for (let i = 0; i < bornes.length; i++) if (x < bornes[i]) return noms[i]; return noms[noms.length - 1]; };
+    /* la tranche de marche a la naissance : null sans fournisseur (aucun groupe), « no market data » quand la serie
+       ne couvre pas cet instant (compte, jamais range ailleurs) */
+    const trancheMarche = (t, axe) => { if (!marcheA) return null; let c = null; try { c = marcheA(t); } catch (e) { c = null; } return (c && MC.trancheDe(axe, c[axe])) || MC.SANS; };
     const b = {
       seuil: BILAN_ASSEZ, vivant: 'DexScreener market with >= $' + VIVANT_LIQ + ' liquidity', fiches: F.size,
       tout: ligne([...F.values()]),
@@ -516,6 +525,9 @@ function cree(deps) {
       parPasseDev: groupe((f) => (f.devAvant == null ? 'unknown' : f.devAvant === 0 ? 'first launch' : f.devAvant < 5 ? '1-4 before' : '5+ before')),
       parDevDejaVivant: groupe((f) => (f.devAvant ? (f.devVivantAvant ? 'a previous one lived 24 h' : 'none lived 24 h') : null)),
       parHeureUtc: groupe((f) => tranche(new Date(f.t).getUTCHours(), [6, 12, 18, 24], ['00-06', '06-12', '12-18', '18-24'])),
+      /* le marche a la naissance (22/10) : BTC sur 24 h (±3 %) et 7 j (±5 %), tranches de marche_contexte */
+      parBtc24h: groupe((f) => trancheMarche(f.t, 'btc24h')),
+      parBtc7d: groupe((f) => trancheMarche(f.t, 'btc7d')),
       parPlateforme: groupe((f) => f.plat),
       parVenteDevT2: groupe((f) => (f.vd > 0 ? 'dev sold by T+2' : 'dev held at T+2')),
       parTaxe: groupe((f) => (f.taxe == null ? (f.th ? 'tax unknown' : null) : f.taxe === 0 ? 'no creator tax' : f.taxe <= 1 ? 'tax <= 1%' : 'tax > 1%')),

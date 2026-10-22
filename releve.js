@@ -73,18 +73,31 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
       const v = L.vue, b = L.bilan, p = (x) => (x && x.assez ? x.vivantsPct + '%' : '—');
       console.log('lancem.   ', `${v.fiches} fiches · metas en file ${v.fileMeta} · suivis ${v.compteurs.suivis} · manques ${v.compteurs.manques} · vivants 24h ${p(b.tout['24h'])} (n=${b.tout['24h'].mesures}) 7j ${p(b.tout['7j'])} (n=${b.tout['7j'].mesures})`);
       console.log('  themes  ', Object.entries(b.parTheme).map(([k, x]) => `${k} n=${x.n} 24h ${p(x['24h'])}`).join(' | '));
+      /* le marche BTC a la naissance (22/10) : vivants a 24 h par tranche */
+      for (const k of ['parBtc24h', 'parBtc7d']) if (b[k] && Object.keys(b[k]).length) console.log('  ' + k.slice(3).toLowerCase().padEnd(8), Object.entries(b[k]).map(([t, x]) => `${t} n=${x.n} 24h ${p(x['24h'])} 7j ${p(x['7j'])}`).join(' | '));
     } else console.log('lancem.    carnet inactif');
   } catch (e) { console.log('lancem.    illisible : ' + String(e.message || e).slice(0, 60)); }
   /* L'entree papier au prix devise sur la chaine (21/10) : l'ecart devis / indexeur au moment d'acheter. */
   const ED = d.entreeDevis;
   if (ED) console.log('entree    ', `devis ${ED.mode} n=${ED.n} · ecart moyen ${ED.moyenne ?? '—'}% · au-dessus ${ED.hausse ?? '—'}% · pire ${ED.pire ?? '—'}%`
     + (d.entree ? ` | miroir reel n=${d.entree.n} moyen ${d.entree.moyenne ?? '—'}%` : ''));
+  /* Le contexte de marche BTC/ETH (22/10, marche_contexte.js) : le regime courant et la serie ; les decoupages du carnet sont plus bas. */
+  const MK = d.marche;
+  if (MK) {
+    const k = MK.courant || {}, s = (x) => (x == null ? '—' : (x > 0 ? '+' : '') + n1(x) + '%'), BK = MK.backfill || {};
+    console.log('marche    ', `btc 24h ${s(k.btc24h)} 7d ${s(k.btc7d)} · eth 24h ${s(k.eth24h)} 7d ${s(k.eth7d)} · ${MK.points} points${MK.premier ? ' depuis ' + h(MK.premier) : ''}`
+      + ` · rattrapage ${BK.fait ? 'fait' : 'NON (' + (BK.essais || 0) + ' essais)'} · porte ${MK.porte} · erreurs ${(MK.compteurs || {}).erreurs ?? '—'}${MK.actif === false ? ' · ETEINT' : ''}`);
+  }
   const PFv = d.portefeuilles;
   if (PFv) console.log('portef.   ', `${PFv.wallets} portefeuilles, ${PFv.measured} mesures (10 jetons et plus), ${PFv.waiting} jetons en attente · reference ${PFv.reference.pairs} couples, ${PFv.reference.risePct ?? '—'}% de montees`);
   const c = d.carnet || {};
   console.log(`\nCARNET ${bil(c.tout)}`);
-  for (const k of ['parTenue', 'parLiq', 'parMc', 'parAllerRetour', 'parSortie'])
-    if (c[k] && c[k].length) console.log('  ' + k.padEnd(14), c[k].map((x) => `[${x.de ?? x.par}${x.a !== undefined ? '-' + (x.a ?? '∞') : ''}] ${bil(x)}`).join('\n' + ' '.repeat(17)));
+  /* parBtc24h, parBtc7d, parEth24h (22/10) : le marche a l ouverture de chaque trade, etiquettes de marche_contexte */
+  for (const k of ['parTenue', 'parLiq', 'parMc', 'parAllerRetour', 'parSortie', 'parBtc24h', 'parBtc7d', 'parEth24h'])
+    if (c[k] && c[k].length) console.log('  ' + k.padEnd(14), c[k].map((x) => `[${x.tranche ?? x.de ?? x.par}${x.a !== undefined ? '-' + (x.a ?? '∞') : ''}] ${bil(x)}`).join('\n' + ' '.repeat(17)));
+  const CN = d.carnetNet || {};
+  for (const k of ['parBtc24h', 'parBtc7d'])
+    if (CN[k] && CN[k].length) console.log('  net/' + k.slice(3).toLowerCase().padEnd(10), CN[k].map((x) => `[${x.tranche}] n=${x.n} net=${x.net ?? '—'}% t=${x.t ?? '—'} moities ${x.moitie1 ?? '—'}/${x.moitie2 ?? '—'}`).join('\n' + ' '.repeat(17)));
   const L = (c.lignes || []).filter((x) => x.t > t0 && typeof x.r === 'number');
   if (L.length) {
     const g = L.filter((x) => x.r > 0).length, coupes = L.filter((x) => x.par === 'sentinelle' && /down/.test(x.raison || '')).length;

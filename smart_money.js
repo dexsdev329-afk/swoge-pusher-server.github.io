@@ -279,7 +279,9 @@ function cree(deps0) {
     }
     /* le carnet des lancements (21/10, lancements_carnet.js) : chaque lancement ecrit, suivi 30 jours */
     if (!CARNET && String((deps.env || process.env).SMART_CARNET == null ? '' : (deps.env || process.env).SMART_CARNET).trim() !== '0')
-      CARNET = require('./lancements_carnet').cree({ dossier: deps.dossier, prendre: deps.prendre, horloge: deps.horloge, note });
+      CARNET = require('./lancements_carnet').cree({ dossier: deps.dossier, prendre: deps.prendre, horloge: deps.horloge, note,
+        /* 22/10 : le contexte de marche BTC/ETH a la naissance (marche_contexte.contexteA), pose par le serveur comme mesureSmart */
+        marche: typeof deps.marche === 'function' ? deps.marche : null });
     LZ = SLZ.cree({ R: RL, B, envoie, note, horloge: deps.horloge, dors: deps.dors, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, carnet: CARNET,
       faits: deps.faits, surSignal: deps.surSignalV2, exclu: (j) => (SOCLE.has(j) ? 'stablecoin or ETH' : (actionsCache && actionsCache.has(j)) ? 'tokenized stock' : null) });
     if (!instantane) instantane = construitVue();

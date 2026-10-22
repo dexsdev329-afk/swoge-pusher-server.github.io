@@ -12,7 +12,10 @@
  *   5. le bilan refuse la part sous 40 fiches mesurees, la donne au-dessus ;
  *      le passe du createur est compte dans l'ordre des naissances ;
  *   6. smart_lancements : CHAQUE lancement passe au carnet a son T+2, et ses
- *      metadonnees partent en UN lot ; smart_money sert /ai/smart/lancements.
+ *      metadonnees partent en UN lot ; smart_money sert /ai/smart/lancements ;
+ *   7. le marche BTC/ETH a la naissance (22/10) : parBtc24h et parBtc7d par les
+ *      tranches de marche_contexte, « no market data » hors couverture, aucun
+ *      groupe sans fournisseur ; smart_money passe deps.marche.
  */
 const fs = require('fs');
 const os = require('os');
@@ -39,7 +42,7 @@ function banc(o) {
       fdv: marche.get(j).fdv, marketCap: marche.get(j).fdv, liquidity: { usd: marche.get(j).liq }, volume: { h24: 1234 }, txns: { h24: { buys: 10, sells: 5 } }, priceChange: { h24: -12 } }));
     return { ok: true, status: 200, text: async () => JSON.stringify(corps) };
   };
-  const C = K.cree({ dossier, prendre, horloge: () => H.now });
+  const C = K.cree({ dossier, prendre, horloge: () => H.now, marche: o.marcheCtx || null });
   return { C, H, marche, appels, dossier };
 }
 const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60e3; await b.C.tic(); } };
@@ -226,6 +229,26 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     ok(C5.detenteursALire() && C5.detenteursALire().jeton === A(2), 'une lecture ratee : relue une fois');
     C5.detenteurs(A(2), '24h', null, P);
     ok(!C5.detenteursALire() && C5.vue().compteurs.detRates === 1, 'deux : abandonnee, comptee');
+  }
+
+  console.log('-- 6 quater. le marche BTC/ETH a la naissance (22/10)');
+  {
+    /* un contexte simule : BTC -4 % sur 24 h et +6 % sur 7 j pour les naissances de la premiere heure, +1 % / -1 %
+       entre +1 h et +3 h, et rien (serie non couvrante) au-dela */
+    const ctx = (t) => (t < T0 + 3600e3 ? { btc24h: -4, btc7d: 6, eth24h: 1, eth7d: null } : t < T0 + 3 * 3600e3 ? { btc24h: 1, btc7d: -1, eth24h: 0, eth7d: 0 } : null);
+    const g4 = banc({ marcheCtx: ctx });
+    for (let i = 1; i <= 9; i++) g4.C.naissance({ jeton: A(i), t: T0 + (i <= 4 ? i * 60e3 : i <= 7 ? 7200e3 + i * 60e3 : 4 * 3600e3 + i * 60e3), deployer: A(900) });
+    const B4 = g4.C.bilan();
+    ok(B4.parBtc24h && B4.parBtc24h['btc 24h < -3%'] && B4.parBtc24h['btc 24h < -3%'].n === 4, 'parBtc24h : les 4 naissances sous BTC -3 % (etiquette de marche_contexte)');
+    ok(B4.parBtc24h['btc 24h 0..3%'].n === 3 && B4.parBtc7d['btc 7d > 5%'].n === 4 && B4.parBtc7d['btc 7d -5..0%'].n === 3, 'parBtc24h 0..3 % : 3 ; parBtc7d > 5 % : 4, -5..0 % : 3');
+    eq(B4.parBtc24h['no market data'].n, 2, 'les 2 naissances que la serie ne couvre pas : « no market data », jamais inventees');
+    ok(B4.parBtc24h['btc 24h < -3%']['24h'].mesures === 0 && B4.parBtc24h['btc 24h < -3%']['24h'].vivantsPct === null, 'et la part vivante reste refusee sans mesure');
+    ok(B4.parTheme['no metadata yet'].n === 9 && B4.tout.n === 9, 'les autres groupes ne bougent pas');
+    const g5 = banc();
+    g5.C.naissance({ jeton: A(1), t: T0, deployer: A(900) });
+    const B5 = g5.C.bilan();
+    ok(Object.keys(B5.parBtc24h).length === 0 && Object.keys(B5.parBtc7d).length === 0, 'sans deps.marche : aucun groupe (pas de « no market data » invente par un fournisseur absent)');
+    ok(/marche: typeof deps\.marche === 'function' \? deps\.marche : null/.test(fs.readFileSync(path.join(__dirname, 'smart_money.js'), 'utf8')), 'smart_money passe deps.marche au carnet');
   }
 
   console.log('-- 6. branche dans les lancements et le serveur');
