@@ -8280,8 +8280,15 @@ async function soumissionsDeJoueurs() {
   console.log('\n-- un tour plein : le soumis n est pas perdu, il revient en tete --');
   /* 24 jetons de flux pour 20 places payantes (EXAMENS_TOUR) : le soumis, lu apres
      les flux, n a pas de place, quel que soit le nombre d appels par jeton. Le banc
-     l a trouve le 28/09 : il etait lu, jamais examine, et perdu. */
-  const plein = Array.from({ length: 24 }, (_, i) => jeton(10 + i));
+     l a trouve le 28/09 : il etait lu, jamais examine, et perdu.
+     Des adresses NEUVES pour la colonie (22/10/2026) : avec jeton(10..33), reprises par
+     des scenarios precedents, un flux vendu il y a moins de REACHAT_REPOS_MIN (60 min) ou
+     deja juge sans que rien ait bouge est refuse SANS appel par le Scout — et un refus
+     gratuit ne prend pas de place. Le nombre de places payantes dependait alors de
+     l heure a laquelle la suite avait vendu ces jetons : 3 RATE dans une passe complete,
+     le scenario vert quatre fois sur quatre lance seul. */
+  const plein = Array.from({ length: 24 }, (_, i) => jeton(120 + i));
+  ok(plein.every((t) => !C._etat().connus[t.addr]), 'les 24 jetons de flux sont neufs pour la colonie : chacun prendra une place payante');
   remise(plein.concat([jeune]));
   vide();
   poolsPageFiltre = plein.map((t) => t.addr);
