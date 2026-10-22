@@ -4,9 +4,13 @@
  *   1. la serie : UN point par heure, jamais deux ; le rattrapage de 90 jours une fois (deux
  *      appels, les deux ou rien, jamais refaits) ; triee ; ecrite sur le disque ;
  *   2. contexteA, pur : exact a des instants choisis, null hors couverture (±2 h), un axe sans
- *      reference null — jamais invente ; regimeDe et les tranches (±3 % sur 24 h, ±5 % sur 7 j) ;
+ *      reference null — jamais invente ; les references ancrees sur l'instant du POINT RETENU et
+ *      non sur t (un trou dans la serie ne fait pas d'une variation 24 h une variation 26 h) ;
+ *      regimeDe et les tranches (±3 % sur 24 h, ±5 % sur 7 j) ;
  *   3. un redemarrage relit la serie et le rattrapage fait : rien n'est redemande ;
  *   4. un refus (429) ne casse rien, est compte, et le rattrapage se fait au releve suivant ;
+ *      la reprise (minuteries injectees) : 5 min apres un refus, trois fois par heure au plus,
+ *      l'heure suivante en permet de nouveau, une reussite n'en arme aucune, arrete() vide tout ;
  *   5. sans cle : l'hote public, aucun en-tete ; la cle sert et se DEBITE seulement quand la
  *      colonie est dans son budget ; la vue et les erreurs ne la citent jamais ; MARCHE_CONTEXTE=0 ;
  *   6. la vraie colonie decoupe son carnet (brut et net) par le marche a t0 via le fournisseur,
@@ -45,7 +49,7 @@ function banc(o) {
     }
     return { ok: false, status: 404, json: async () => ({}) };
   };
-  const X = MC.cree({ dossier, prendre, horloge: () => H.now, dors: async () => {}, cle: o.cle, env: o.env || {} });
+  const X = MC.cree(Object.assign({ dossier, prendre, horloge: () => H.now, dors: async () => {}, cle: o.cle, env: o.env || {} }, o.tempo || {}));
   return { X, H, appels, dossier };
 }
 
@@ -57,7 +61,7 @@ function banc(o) {
   ok(r.point === true, 'un point pour l heure courante');
   eq(r.backfill, 2160, 'rattrapage : 2 161 points horaires moins celui de l heure deja relevee');
   eq(b.appels.length, 3, 'trois appels : le releve, puis market_chart bitcoin et ethereum');
-  ok(/\/coins\/markets\?vs_currency=usd&ids=bitcoin,ethereum/.test(b.appels[0].url), 'la route du releve : /coins/markets, bitcoin et ethereum en UN appel');
+  ok(/\/coins\/markets\?vs_currency=usd&ids=bitcoin,ethereum$/.test(b.appels[0].url), 'la route du releve : /coins/markets, bitcoin et ethereum en UN appel, rien d autre dans l URL (seul current_price est lu)');
   ok(/\/coins\/bitcoin\/market_chart\?vs_currency=usd&days=90$/.test(b.appels[1].url) && /\/coins\/ethereum\/market_chart\?vs_currency=usd&days=90$/.test(b.appels[2].url), 'le rattrapage : market_chart days=90 (90 = le maximum horaire de la doc)');
   ok(b.appels.every((a) => a.url.startsWith(MC.HOTE_PUBLIC + '/') && !Object.keys(a.entetes).some((k) => /x-cg-/i.test(k))), 'sans cle : l hote public, aucun en-tete de cle');
   let v = b.X.vue();
@@ -105,6 +109,18 @@ function banc(o) {
   const c3 = Y.contexteA(T - 7 * J_MS - H_MS);
   ok(c3 && c3.btc === 100 && c3.btc24h === null && c3.btc7d === null && c3.eth24h === null && c3.eth7d === null, 'un point couvert mais sans reference a -24 h ni -7 j : les axes sont null, jamais inventes');
   eq(Y.contexteA(T - 3 * J_MS), null, 'dans un trou de six jours : null');
+  /* le trou : [T-26h:100, T-24h:110, T:99] ; a T-2h le point retenu est T (a 2 h), et la reference 24 h
+     doit etre celle de T-24h (110 → -10 %), pas celle de t-24h = T-26h (100 → -1 %) */
+  const dossier2b = fs.mkdtempSync(path.join(os.tmpdir(), 'marche2b-'));
+  fs.mkdirSync(path.join(dossier2b, 'marche'));
+  fs.writeFileSync(path.join(dossier2b, 'marche', 'serie.json'), JSON.stringify({ v: 1, backfill: { fait: true, t: T, points: 3, essais: 1, derniereErreur: null }, points: [[T - 26 * H_MS, 100, 10], [T - J_MS, 110, 11], [T, 99, 9.9]] }));
+  const Z = MC.cree({ dossier: dossier2b, prendre: async () => { throw new Error('aucun reseau attendu'); }, horloge: () => T, env: {} });
+  const ct = Z.contexteA(T - 2 * H_MS);
+  ok(ct && ct.t === T && ct.btc === 99, 'le trou : a T-2h, le point retenu est T (le premier apres, a 2 h)');
+  ok(ct && ct.btc24h === -10 && ct.eth24h === -10, 'et la variation 24 h se lit contre T-24h (110, 11) : -10 % / -10 %, pas contre t-24h = T-26h (-1 %) : ' + JSON.stringify(ct));
+  ok(ct && ct.btc7d === null && ct.eth7d === null, 'sans point a p.t-7 j : 7 j null');
+  const ct2 = Z.contexteA(T - 23 * H_MS);
+  ok(ct2 && ct2.t === T - J_MS && ct2.btc24h === null, 'a T-23h : le point T-24h est retenu, sa reference a T-48h manque : null, pas T-26h');
   eq(Y.contexteA('abc'), null, 'un instant illisible : null');
   eq(Y.contexteA(undefined), null, 'sans instant : null');
   const rg = Y.regimeDe(c);
@@ -157,6 +173,36 @@ function banc(o) {
   ok(pl && typeof pl.arrete === 'function', 'planifie rend { arrete }');
   pl.arrete();
   eq(e.X.vue().compteurs.releves, 2, 'rien de plus parti tout de suite (premier releve a 60 s)');
+
+  console.log('-- 4 bis. la reprise : 5 min apres un refus, trois fois par heure au plus, puis l heure suivante');
+  const file = [];   /* les minuteries armees : { k: 't'|'i', fn, ms, vive } */
+  const tempo = {
+    setTimeout: (fn, ms) => { const x = { k: 't', fn, ms, vive: true }; file.push(x); return x; },
+    setInterval: (fn, ms) => { const x = { k: 'i', fn, ms, vive: true }; file.push(x); return x; },
+    clearTimeout: (x) => { if (x) x.vive = false; }, clearInterval: (x) => { if (x) x.vive = false; },
+  };
+  const vivantes = () => file.filter((x) => x.vive);
+  const reprisesArmees = () => vivantes().filter((x) => x.k === 't' && x.ms === MC.REPRISE_MS);
+  const tire = async (x) => { if (x.k === 't') x.vive = false; await x.fn(); };
+  const o4 = { statut: 429, tempo };
+  const q = banc(o4);
+  q.H.now = Date.parse('2026-10-22T14:00:30Z');
+  const pq = q.X.planifie();
+  ok(vivantes().length === 2 && vivantes()[0].k === 't' && vivantes()[0].ms === MC.PREMIER_MS && vivantes()[1].k === 'i' && vivantes()[1].ms === MC.HEURE_MS, 'arme : le premier releve a 60 s, puis la cadence horaire');
+  q.H.now += MC.PREMIER_MS; await tire(vivantes()[0]);
+  ok(q.X.vue().compteurs.releves === 1 && q.X.vue().dernierReleve.etat === 'erreur' && q.X.vue().dernierReleve.statut === 429, 'premier releve : refuse 429');
+  eq(reprisesArmees().length, 1, 'une reprise armee, a 5 min');
+  for (let i = 2; i <= 4; i++) { q.H.now += MC.REPRISE_MS; await tire(reprisesArmees()[0]); eq(q.X.vue().compteurs.releves, i, 'reprise ' + (i - 1) + ' : releve ' + i + ', refuse'); }
+  eq(reprisesArmees().length, 0, 'trois reprises dans l heure : la quatrieme erreur n en arme aucune');
+  ok(vivantes().length === 1 && vivantes()[0].k === 'i', 'il ne reste que la cadence horaire');
+  ok(q.X.vue().erreurs.length === 5 && q.X.vue().erreurs.every((x) => /^(fetch|backfill): HTTP 429$/.test(x.txt)), 'la vue garde les 5 dernieres erreurs, en anglais : ' + q.X.vue().erreurs[0].txt);
+  q.H.now = Date.parse('2026-10-22T15:00:30Z'); await tire(vivantes()[0]);
+  ok(q.X.vue().compteurs.releves === 5 && reprisesArmees().length === 1, 'l heure suivante : la cadence releve (refuse) et une reprise est de nouveau permise');
+  o4.statut = 0; q.H.now += MC.REPRISE_MS; await tire(reprisesArmees()[0]);
+  ok(q.X.vue().dernierReleve.etat === 'lu' && q.X.vue().points === 2161 && q.X.vue().backfill.fait === true, 'la reprise reussit : le point et le rattrapage');
+  eq(reprisesArmees().length, 0, 'une reussite n arme aucune reprise');
+  pq.arrete();
+  eq(vivantes().length, 0, 'arrete() : plus rien d arme (minuteries injectees eteintes)');
 
   console.log('-- 5. la cle : seulement dans le budget, jamais citee');
   const CLE = 'SECRET-KEY-abc123xyz';

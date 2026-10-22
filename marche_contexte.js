@@ -18,7 +18,9 @@
  *
  * ---- LA SOURCE : COINGECKO, UN APPEL PAR HEURE (lecture de la doc, 22/10/2026) ----
  *   - le releve : GET /coins/markets?vs_currency=usd&ids=bitcoin,ethereum
- *     (mesure sans cle le 22/10 : HTTP 200, 1 896 octets, les deux prix) ;
+ *     (mesure sans cle le 22/10 : HTTP 200, 1 650 octets, les deux prix) ; rien
+ *     d'autre dans l'URL : seul `current_price` est lu (la relecture du 22/10 a
+ *     retire `price_change_percentage=24h,7d`, demande et jamais lu : 1 896 octets) ;
  *     UN appel par heure, jamais plus d'un point par heure dans la serie ;
  *   - le rattrapage, UNE fois : GET /coins/{bitcoin,ethereum}/market_chart
  *     ?vs_currency=usd&days=90 — la doc dit « 2–90 days → hourly, above 90 →
@@ -28,21 +30,31 @@
  *     piece, pas celle du marche) — une serie qui ne couvrirait pas le carnet
  *     passe ne jugerait rien retroactivement. BTC + ETH portent l'essentiel.
  *
- * ---- LA CLE, ET POURQUOI ON LIT SANS ELLE EN PRATIQUE ----
- * La cle CoinGecko du proprietaire (COINGECKO_API_KEY, 100 000 credits/mois) est
- * SATUREE par la colonie : releves de /ai/colonie, 18/10 12:12 UTC 56 481 credits
- * utilises pour 56 480 permis au rythme du mois, `dansLeBudget:false` ; 21/10
- * 20:39 UTC 67 293 = 67 293 permis, 53 061 lectures deja passees sans la cle.
- * La colonie consomme donc jusqu'au rythme, et chaque credit pris ici lui en
- * retire un. Regle : on passe par la cle (porte sondee par la colonie, en-tete
- * `x-cg-pro-api-key` sur pro-api.coingecko.com ou `x-cg-demo-api-key` sur
- * api.coingecko.com) SEULEMENT quand la colonie est en avance sur son rythme
- * (`cleDansLeBudget`), et chaque reussite est DEBITEE du meme compteur : 720
- * appels par mois + 2 = 0,72 % du budget. Sinon — c'est le cas aujourd'hui, et
- * jusqu'au 1er — on lit SANS cle sur l'hote public api.coingecko.com (limite
- * par IP, partagee : 2 appels sur 3 refuses « Throttled » depuis la machine
- * d'essai le 22/10 ; d'ou la reprise a 5 min, trois fois au plus par heure).
- * La cle n'apparait jamais dans la vue ni dans un message d'erreur.
+ * ---- LA CLE : PAR LA PORTE DE LA COLONIE, LA PLUPART DU TEMPS ----
+ * La cle CoinGecko du proprietaire (COINGECKO_API_KEY, CG_CREDITS_MOIS = 100 000
+ * credits/mois) est partagee avec la colonie, qui la tient A SON RYTHME : elle lit
+ * par la cle tant que ses credits utilises sont sous le prorata du mois ecoule
+ * (`cleDansLeBudget`, fractionnaire), sans cle au-dela — son compteur SUIT donc la
+ * ligne du prorata. Mesure sur les 8 releves distincts de /ai/colonie du 15 au
+ * 21/10 (_releves/) : utilises = permisAMaintenant a ±2 credits a chaque releve
+ * (46 892 / 46 894 le 15/10 12:53 UTC … 67 293 / 67 293 le 21/10 20:39 UTC), et
+ * la porte `dansLeBudget` OUVERTE sur 7 releves sur 8 — fermee une seule fois, le
+ * 18/10 12:12 UTC (56 481 pour 56 480). La porte oscille autour de la ligne et
+ * un releve horaire la trouve ouverte la plupart du temps : la serie passe par la
+ * cle la plupart du temps, ~630 a 722 credits par mois (720 releves + 2 de
+ * rattrapage, 7/8 a 8/8 d'entre eux) debites du MEME compteur que la colonie
+ * (`debite`), soit 0,6–0,7 % du budget. Chacun repousse une lecture de la colonie
+ * vers l'acces libre, qui en comptait deja 53 061 sur 120 354 au 21/10 (44 %) :
+ * le budget le supporte sans marge, et le plafond du mois reste tenu par la porte
+ * de la colonie (le compteur est le meme). La premiere version de ce commentaire
+ * (22/10) disait « sans cle jusqu'au 1er » sur le seul releve du 18/10 :
+ * c'etait faux, corrige a la relecture du 22/10 sur les huit.
+ * Regle : par la cle (porte sondee par la colonie, en-tete `x-cg-pro-api-key` sur
+ * pro-api.coingecko.com ou `x-cg-demo-api-key` sur api.coingecko.com) quand
+ * `dansLeBudget` est vrai a l'instant du releve ; sinon SANS cle sur l'hote public
+ * api.coingecko.com (limite par IP, partagee : 2 appels sur 3 refuses « Throttled »
+ * depuis la machine d'essai le 22/10 ; d'ou la reprise a 5 min, trois fois au plus
+ * par heure). La cle n'apparait jamais dans la vue ni dans un message d'erreur.
  *
  * ---- LES TRANCHES (CHOISIES, pas mesurees) ----
  * 24 h : < -3 %, -3..0 %, 0..3 %, > 3 % ; 7 jours : < -5 %, -5..0 %, 0..5 %,
@@ -63,12 +75,25 @@ const JOUR_MS = 86400e3;
    serie est horaire et un trade de la colonie dure 20–120 min ; au-dela de 2 h on
    ne sait pas, et on le dit (null) plutot que d'inventer. */
 const TOLERANCE_MS = 2 * HEURE_MS;
-const JOURS_BACKFILL = 90;
-const PREMIER_MS = 60e3;            /* premier releve 60 s apres le demarrage */
+const JOURS_BACKFILL = 90;          /* le maximum horaire de market_chart (doc : « 2–90 days → hourly ») */
+/* CHOISI : premier releve 60 s apres le demarrage. La colonie lance un tour tout de suite et sonde sa
+   porte CoinGecko a sa premiere lecture GeckoTerminal (sondeCoingecko est paresseuse) ; a 60 s le
+   premier releve trouve une porte decidee au lieu de partir sans cle a coup sur, et il ne s'ajoute
+   pas a la rafale d'appels du demarrage. */
+const PREMIER_MS = 60e3;
 const REPRISE_MS = 5 * 60e3;        /* un releve refuse (429 partage) est repris 5 min plus tard */
-const REPRISES_MAX = 3;             /* trois fois au plus dans l'heure */
+/* CHOISI : trois reprises au plus dans l'heure — un refus par IP partagee dure quelques minutes, pas
+   une heure ; au-dela on attend la cadence suivante plutot que d'insister sur un hote qui refuse. */
+const REPRISES_MAX = 3;
+/* CHOISI : 20 s par appel — large pour un releve horaire qui peut attendre, court devant les 5 min de
+   la reprise ; au-dela c'est un refus comme un autre : note, compte, repris. */
 const DELAI_MS = 20000;
-const PAUSE_BACKFILL_MS = 1500;     /* entre les deux market_chart : l'hote public compte par IP */
+/* CHOISI : 1,5 s entre les deux market_chart du rattrapage — l'hote public compte par IP (~30 appels
+   par minute partages, EXPLOITATION § COINGECKO_API_KEY) et deux appels colles juste apres le releve
+   de l'heure sont la rafale qu'il refuse ; 1,5 s les espace sans retarder le rattrapage de facon visible. */
+const PAUSE_BACKFILL_MS = 1500;
+/* CHOISI : la vue garde les 5 dernieres erreurs — un refus repris trois fois dans l'heure fait quatre
+   lignes, il en reste une pour la precedente ; jamais une liste qui grossit sans fin. */
 const ERREURS_MAX = 5;
 
 const HOTE_PUBLIC = 'https://api.coingecko.com/api/v3';
@@ -116,6 +141,10 @@ function cree(deps) {
   const maintenant = d.horloge || Date.now;
   const prendre = d.prendre || fetch;
   const dors = d.dors || ((ms) => new Promise((r) => setTimeout(r, ms)));
+  /* les minuteries sont injectables (deps.setTimeout, setInterval, clearTimeout, clearInterval) pour que
+     l'essai joue la reprise a 5 min sans attendre ; repli sur les globales */
+  const tempo = { setTimeout: d.setTimeout || setTimeout, setInterval: d.setInterval || setInterval,
+                  clearTimeout: d.clearTimeout || clearTimeout, clearInterval: d.clearInterval || clearInterval };
   const eteint = String(env.MARCHE_CONTEXTE == null ? '' : env.MARCHE_CONTEXTE).trim() === '0';
   /* la serie, triee par t, un point par heure */
   let P = [];
@@ -132,7 +161,7 @@ function cree(deps) {
   const masque = (s) => { let t = String(s == null ? '' : s); const k = cleValeur(); if (k) t = t.split(k).join('<key>'); return t.slice(0, 120); };
   const noteErreur = (quoi, e) => {
     C.erreurs++;
-    const txt = masque(quoi + ' : ' + ((e && e.message) || e));
+    const txt = masque(quoi + ': ' + ((e && e.message) || e));
     erreurs.push({ t: maintenant(), txt }); if (erreurs.length > ERREURS_MAX) erreurs.shift();
     return txt;
   };
@@ -167,7 +196,7 @@ function cree(deps) {
       fs.mkdirSync(D, { recursive: true });
       fs.writeFileSync(FICHIER + '.tmp', JSON.stringify({ v: 1, backfill, points: P }));
       fs.renameSync(FICHIER + '.tmp', FICHIER);
-    } catch (e) { noteErreur('ecriture', e); }
+    } catch (e) { noteErreur('write', e); }
   }
   /** L'indice du dernier point a t' <= t (ou -1). */
   function avant(t) {
@@ -194,12 +223,16 @@ function cree(deps) {
     return null;
   }
   const pct = (a, b) => (fini(a) && fini(b) && a > 0 && b > 0 ? Math.round((a / b - 1) * 10000) / 100 : null);
-  /** PUR : le contexte a l'instant t, ou null si la serie ne couvre pas t. Un axe dont la
-   *  reference (t-24 h, t-7 j) manque est null, jamais invente. */
+  /** PUR : le contexte a l'instant t, ou null si la serie ne couvre pas t. Les references sont
+   *  ancrees sur l'INSTANT DU POINT RETENU (p.t - 24 h, p.t - 7 j), pas sur t : le point retenu peut
+   *  etre a 2 h de t, et une reference cherchee a t - 24 h couvrait 22 a 26 h selon le trou de la
+   *  serie (relecture du 22/10 : serie [T-26h:100, T-24h:110, T:99], contexteA(T-2h) retenait T et
+   *  comparait a T-26h → -1 % au lieu de -10 %). Un axe dont la reference manque est null, jamais
+   *  invente. */
   function contexteA(t) {
     const p = pointA(t);
     if (!p) return null;
-    const p24 = pointA(t - JOUR_MS), p7 = pointA(t - 7 * JOUR_MS);
+    const p24 = pointA(p[0] - JOUR_MS), p7 = pointA(p[0] - 7 * JOUR_MS);
     return { t: p[0], btc: p[1], eth: p[2],
       btc24h: pct(p[1], p24 && p24[1]), btc7d: pct(p[1], p7 && p7[1]),
       eth24h: pct(p[2], p24 && p24[2]), eth7d: pct(p[2], p7 && p7[2]) };
@@ -208,7 +241,7 @@ function cree(deps) {
   /* ---- les lectures ---- */
   /** Le releve de l'heure : un appel, un point. */
   async function releveCourant() {
-    const j = await lis('/coins/markets?vs_currency=usd&ids=bitcoin,ethereum&price_change_percentage=24h,7d');
+    const j = await lis('/coins/markets?vs_currency=usd&ids=bitcoin,ethereum');
     if (!Array.isArray(j)) throw new Error('unexpected body');
     const prix = (id) => { const x = j.find((c) => c && c.id === id); return x ? Number(x.current_price) : NaN; };
     const btc = prix('bitcoin'), eth = prix('ethereum');
@@ -222,7 +255,7 @@ function cree(deps) {
     const serie = async (id) => {
       const j = await lis('/coins/' + id + '/market_chart?vs_currency=usd&days=' + JOURS_BACKFILL);
       const l = j && Array.isArray(j.prices) ? j.prices : null;
-      if (!l || !l.length) throw new Error(id + ' : no prices');
+      if (!l || !l.length) throw new Error(id + ': no prices');
       const parHeure = new Map();
       for (const x of l) if (Array.isArray(x) && fini(Number(x[0])) && fini(Number(x[1])) && Number(x[1]) > 0) { const h = heure(Number(x[0])); if (!parHeure.has(h)) parHeure.set(h, [Number(x[0]), Number(x[1])]); }
       return parHeure;
@@ -245,7 +278,7 @@ function cree(deps) {
     let r = { etat: 'lu', t, point: false, backfill: null };
     try {
       try { r.point = await releveCourant(); C.reussites++; }
-      catch (e) { r = { etat: 'erreur', t, statut: e.statut || null, erreur: noteErreur('releve', e) }; }
+      catch (e) { r = { etat: 'erreur', t, statut: e.statut || null, erreur: noteErreur('fetch', e) }; }
       if (!backfill.fait) {
         try { r.backfill = await rattrape(); }
         catch (e) { backfill.derniereErreur = noteErreur('backfill', e); r.backfill = null; }
@@ -264,15 +297,15 @@ function cree(deps) {
         /* repris 5 min plus tard, trois fois par heure au plus : l'hote public refuse par IP partagee */
         const h = heure(maintenant());
         if (reprises.heure !== h) reprises = { heure: h, n: 0 };
-        if (reprises.n < REPRISES_MAX) { reprises.n++; const x = setTimeout(f, REPRISE_MS); if (x.unref) x.unref(); minuteries.push(['t', x]); }
+        if (reprises.n < REPRISES_MAX) { reprises.n++; const x = tempo.setTimeout(f, REPRISE_MS); if (x && x.unref) x.unref(); minuteries.push(['t', x]); }
       }
     }).catch(() => {});
-    const premier = setTimeout(f, PREMIER_MS); if (premier.unref) premier.unref();
-    const minuterie = setInterval(f, HEURE_MS); if (minuterie.unref) minuterie.unref();
+    const premier = tempo.setTimeout(f, PREMIER_MS); if (premier && premier.unref) premier.unref();
+    const minuterie = tempo.setInterval(f, HEURE_MS); if (minuterie && minuterie.unref) minuterie.unref();
     minuteries.push(['t', premier], ['i', minuterie]);
     return { arrete };
   }
-  function arrete() { for (const [k, x] of minuteries) (k === 't' ? clearTimeout : clearInterval)(x); minuteries = []; }
+  function arrete() { for (const [k, x] of minuteries) (k === 't' ? tempo.clearTimeout : tempo.clearInterval)(x); minuteries = []; }
 
   /** La vue : la serie, le dernier releve, le rattrapage, les compteurs, les erreurs (jamais la cle),
    *  et le contexte COURANT avec son regime. */

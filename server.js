@@ -12120,11 +12120,13 @@ server.listen(cfg.PORT, () => {
      une ligne d'audit chacune, jamais un achat. Un jeton encore sur sa courbe
      n'a pas de prix DexScreener : la colonie lit celui de la courbe suivie. */
   /* Le contexte de marche BTC/ETH (22/10/2026, marche_contexte.js) : un releve CoinGecko par heure (le
-     premier 60 s apres le demarrage), 90 jours rattrapes une fois. Par la cle de la colonie SEULEMENT
-     quand elle est en avance sur son budget du mois — elle est saturee (21/10 20:39 UTC : 67 293
-     credits = 67 293 permis) : en pratique l'hote public, sans cle. La colonie et le carnet des
-     lancements le lisent pour DECOUPER leurs bilans (parBtc24h…), jamais pour decider.
-     MARCHE_CONTEXTE=0 l'eteint (la serie deja sur le disque sert encore le passe). */
+     premier 60 s apres le demarrage), 90 jours rattrapes une fois. Par la cle de la colonie quand elle
+     est dans son budget du mois a l'instant du releve — et elle l'est la plupart du temps : la colonie
+     suit la ligne du prorata (utilises = permis ±2 sur les 8 releves de /ai/colonie du 15 au 21/10),
+     porte ouverte 7 fois sur 8 ; ~630–722 credits par mois debites du meme compteur (0,6–0,7 % de
+     CG_CREDITS_MOIS). Sinon l'hote public, sans cle. La colonie et le carnet des lancements le lisent
+     pour DECOUPER leurs bilans (parBtc24h…), jamais pour decider. MARCHE_CONTEXTE=0 l'eteint (la serie
+     deja sur le disque sert encore le passe). */
   marcheContexte = require('./marche_contexte').cree({ dossier: cfg.DATA_DIR,
     cle: { valeur: () => aiColonie.cleCoingecko(), porte: () => aiColonie._porte(), dansLeBudget: () => aiColonie.cleDansLeBudget(), debite: () => aiColonie.debiteCg() } });
   marcheContexte.planifie();
