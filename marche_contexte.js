@@ -83,7 +83,10 @@ const JOURS_BACKFILL = 90;          /* le maximum horaire de market_chart (doc :
    premier releve trouve une porte decidee au lieu de partir sans cle a coup sur, et il ne s'ajoute
    pas a la rafale d'appels du demarrage. */
 const PREMIER_MS = 60e3;
-const REPRISE_MS = 5 * 60e3;        /* un releve refuse (429 partage) est repris 5 min plus tard */
+/* CHOISI : un releve refuse (429 partage) est repris 5 min plus tard — assez long pour qu'une limite par IP
+   partagee se relache, assez court pour que les trois reprises (REPRISES_MAX) tiennent dans le premier quart
+   de l'heure, sans chevaucher la cadence horaire. */
+const REPRISE_MS = 5 * 60e3;
 /* CHOISI : trois reprises au plus dans l'heure — un refus par IP partagee dure quelques minutes, pas
    une heure ; au-dela on attend la cadence suivante plutot que d'insister sur un hote qui refuse. */
 const REPRISES_MAX = 3;
@@ -274,7 +277,8 @@ function cree(deps) {
   }
   /** Un releve complet : le point de l'heure, puis le rattrapage s'il n'a jamais reussi. */
   async function releve() {
-    /* etat ∈ read | error | busy | off : servi tel quel par /ai/marche, route publique, donc en anglais */
+    /* etat ∈ read | error | busy | off, en anglais : read et error sont gardes dans `dernier`, servi tel quel par
+       /ai/marche (route publique) ; busy et off ne sortent que de releve(), que personne ne sert */
     if (eteint) return { etat: 'off' };
     if (enCours) return { etat: 'busy' };
     enCours = true;

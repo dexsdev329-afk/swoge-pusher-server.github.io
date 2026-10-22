@@ -12,7 +12,8 @@
  *   3. un redemarrage relit la serie et le rattrapage fait : rien n'est redemande ;
  *   4. un refus (429) ne casse rien, est compte, et le rattrapage se fait au releve suivant ;
  *      la reprise (minuteries injectees) : 5 min apres un refus, trois fois par heure au plus,
- *      l'heure suivante en permet de nouveau, une reussite n'en arme aucune, arrete() vide tout ;
+ *      l'heure suivante en permet de nouveau, une reussite n'en arme aucune, un handle tire quitte la liste
+ *      (arrete() n'eteint que ce qui vit), arrete() vide tout ;
  *   5. sans cle : l'hote public, aucun en-tete ; la cle sert et se DEBITE seulement quand la
  *      colonie est dans son budget ; la vue et les erreurs ne la citent jamais ; MARCHE_CONTEXTE=0 ;
  *   6. la vraie colonie decoupe son carnet (brut et net) par le marche a t0 via le fournisseur,
@@ -191,10 +192,11 @@ function banc(o) {
 
   console.log('-- 4 bis. la reprise : 5 min apres un refus, trois fois par heure au plus, puis l heure suivante');
   const file = [];   /* les minuteries armees : { k: 't'|'i', fn, ms, vive } */
+  const eteintes = { t: 0, i: 0 };   /* les clear* recus par le banc : ce que le module tenait encore dans sa liste */
   const tempo = {
     setTimeout: (fn, ms) => { const x = { k: 't', fn, ms, vive: true }; file.push(x); return x; },
     setInterval: (fn, ms) => { const x = { k: 'i', fn, ms, vive: true }; file.push(x); return x; },
-    clearTimeout: (x) => { if (x) x.vive = false; }, clearInterval: (x) => { if (x) x.vive = false; },
+    clearTimeout: (x) => { eteintes.t++; if (x) x.vive = false; }, clearInterval: (x) => { eteintes.i++; if (x) x.vive = false; },
   };
   const vivantes = () => file.filter((x) => x.vive);
   const reprisesArmees = () => vivantes().filter((x) => x.k === 't' && x.ms === MC.REPRISE_MS);
@@ -218,6 +220,9 @@ function banc(o) {
   eq(reprisesArmees().length, 0, 'une reussite n arme aucune reprise');
   pq.arrete();
   eq(vivantes().length, 0, 'arrete() : plus rien d arme (minuteries injectees eteintes)');
+  /* les quatre reprises tirees ont quitte `minuteries` en tirant (le `tire` du banc ne le fait pas pour le module) :
+     arrete() n'eteint que le premier releve, tire une fois et garde, et la cadence — sans ce retrait, cinq clearTimeout */
+  ok(eteintes.t === 1 && eteintes.i === 1, 'arrete() eteint un seul timeout (le premier releve) et la cadence : les reprises tirees ne sont plus dans la liste [' + JSON.stringify(eteintes) + ']');
 
   console.log('-- 5. la cle : seulement dans le budget, jamais citee');
   const CLE = 'SECRET-KEY-abc123xyz';
