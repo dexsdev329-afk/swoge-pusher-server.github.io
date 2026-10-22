@@ -24,7 +24,8 @@
  *      pendant la migration, rang illisible ignore, cashtag ; le REGISTRE des
  *      grappes (etat.grappes) : rang = n et taille au registre quand des membres
  *      sont sortis des 32 j (fusion de deux grappes aux racines sorties, grappe
- *      de 30 j+), relu, reconstruit depuis les lignes, menage a 33 j, la limite
+ *      de 30 j+), relu, reconstruit depuis les lignes, borne au demarrage (entree
+ *      sans membre note en memoire ou illisible effacee, comptee), la limite
  *      (rangs des sortis jamais reecrits) ; parClone refuse sous 40.
  */
 const fs = require('fs');

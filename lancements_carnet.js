@@ -240,7 +240,7 @@ function cleDe(s, min) {
   const b = baseCle(s);
   const serree = b.replace(/[^a-z0-9]/g, '');
   if (serree.length < min) return null;
-  /* le « $ » de tete d'un cashtag ($PEPE, $DOGE) n'est pas un « s » en leetspeak : retire avant ; a l'interieur il le reste (P@PE$) */
+  /* le « $ » de tete d'un cashtag ($PEPE, $DOGE) n'est pas un « s » en leetspeak : retire avant ; ailleurs il le reste (P@PE$) */
   let mots = b.split(/[^a-z0-9@$]+/).map((m) => m.replace(/^\$+/, '')).filter(Boolean);
   const pleins = mots.filter((m) => !remplissage(m));
   if (pleins.length) mots = pleins;
@@ -671,10 +671,13 @@ function cree(deps) {
        venu ne apres son dernier membre -> rang = n, personne d'autre ne bouge, rien a trier. Sinon (premier ne lu apres ses
        copies, deux grappes fondues par un troisieme) : la grappe entiere se renumerote. */
     const racines = new Set([...voisins].map(racine));
-    const simple = racines.size === 0 || (racines.size === 1 && avant(DERNIER.get([...racines][0]), j));
-    /* la taille apres cette detection : les membres de chaque grappe touchee, en memoire ou sortis, plus le nouveau venu —
+    /* j peut deja etre la racine d'une grappe en memoire sans ligne « clone » a lui (ligne illisible, ecriture ratee) :
+       sa grappe compte dans le total et le cas courant exige qu'il soit seul (relecture du 22/10) */
+    const simple = MEMBRES.get(racine(j)).size === 1 && (racines.size === 0 || (racines.size === 1 && avant(DERNIER.get([...racines][0]), j)));
+    /* la taille apres cette detection : les membres de chaque grappe touchee (celle de j comprise), en memoire ou sortis —
        lue AVANT l'union (unit fond les ensembles de membres) */
-    const total = [...racines].reduce((n, x) => n + tailleDe(x), 0) + 1;
+    const touchees = new Set([...racines, racine(j)]);
+    const total = [...touchees].reduce((n, x) => n + tailleDe(x), 0);
     let r = j;
     for (const x of voisins) r = unit(r, x);
     registre(r, racines, total, f.t);
