@@ -273,9 +273,16 @@ function cree(deps0) {
     const envH = (deps.env || process.env).PONS_HISTOIRE;
     if (!HISTOIRE && (deps.rpcHistoire || String(envH == null ? '' : envH).trim() !== '0')) {
       const PH = require('./pons_histoire');
-      const RH = deps.rpcHistoire || SR.cree(Object.assign({}, opts, { rythme: SR.nouveauRythme(), budgetAppels: 2, budgetOctets: 40e6, prefixeHash: 'H', jourPropre: true,
-        plafondJourHttp: PH.JOUR_HTTP, plafondJourOctets: PH.JOUR_OCTETS, espaceLegerMs: 3000, espaceLourdMs: 5000 }));
-      HISTOIRE = PH.cree({ R: RH, dossier: deps.dossier, horloge: deps.horloge, note, pauseDirect: () => rythme.pause > deps.horloge() });
+      /* PONS_HISTOIRE_RPC_URL (22/10) : un noeud DEDIE (HyperRPC d'Envio, le token dans l'URL — jamais
+         servie, masquee par smart_rpc dans les erreurs) : plafonds, cadence et taille de reponse a lui */
+      const urlH = String((deps.env || process.env).PONS_HISTOIRE_RPC_URL || '').trim();
+      const dedie = /^https:\/\/[^\s]+$/.test(urlH);
+      const optsH = Object.assign({}, opts, { rythme: SR.nouveauRythme(), budgetAppels: 2, budgetOctets: dedie ? 80e6 : 40e6, prefixeHash: 'H', jourPropre: true,
+        plafondJourHttp: dedie ? PH.JOUR_HTTP_DEDIE : PH.JOUR_HTTP, plafondJourOctets: dedie ? PH.JOUR_OCTETS_DEDIE : PH.JOUR_OCTETS,
+        espaceLegerMs: dedie ? 1000 : 3000, espaceLourdMs: dedie ? 1000 : 5000 });
+      if (dedie) { optsH.url = urlH; optsH.corpsMax = PH.CORPS_MAX_DEDIE; }
+      const RH = deps.rpcHistoire || SR.cree(optsH);
+      HISTOIRE = PH.cree({ R: RH, dossier: deps.dossier, horloge: deps.horloge, note, dedie, pauseDirect: () => rythme.pause > deps.horloge() });
     }
     /* le carnet des lancements (21/10, lancements_carnet.js) : chaque lancement ecrit, suivi 30 jours */
     if (!CARNET && String((deps.env || process.env).SMART_CARNET == null ? '' : (deps.env || process.env).SMART_CARNET).trim() !== '0')
@@ -1614,7 +1621,8 @@ function planifie(deps) {
     /* l'histoire de Pons (21/10) : un pas toutes les PONS_HISTOIRE_MS (30 s), le premier 90 s apres le demarrage */
     const envH = ((deps || {}).env || process.env).PONS_HISTOIRE;
     if (String(envH == null ? '' : envH).trim() !== '0') {
-      const ms = Math.max(5000, Number(((deps || {}).env || process.env).PONS_HISTOIRE_MS) || 30000);
+      const envU = ((deps || {}).env || process.env).PONS_HISTOIRE_RPC_URL;
+      const ms = Math.max(5000, Number(((deps || {}).env || process.env).PONS_HISTOIRE_MS) || (/^https:\/\//.test(String(envU || '').trim()) ? 5000 : 30000));
       const h0 = setTimeout(garde(I.histoirePas, 'histoire'), 90000); if (h0.unref) h0.unref(); m.push(['t', h0]);
       const h = setInterval(garde(I.histoirePas, 'histoire'), ms); if (h.unref) h.unref(); m.push(['i', h]);
     }

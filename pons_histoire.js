@@ -33,6 +33,22 @@
  * blocs s'adapte : coupee en deux sur « exceeds limit », « timed out » ou une
  * reponse trop lourde, agrandie de moitie sous 3 000 evenements.
  *
+ * ---- UN NOEUD DEDIE : HyperRPC d'Envio (22/10/2026) ----
+ * Le proprietaire a cree un token Envio (package HyperRPC gratuit). Sonde du
+ * 22/10 sur https://4663.rpc.hypersync.xyz/<token> : eth_getLogs rend jusqu'a
+ * 50 000 evenements par requete (49 991 en 2,0 s, 33 Mo), et au-dela repond
+ * « Limit exceeded: More than 50000 logs returned; this block range should
+ * work: [0x…, 0x…] » : la fenetre se cale sur CE conseil au lieu d'etre coupee
+ * en deux. Compactes et gzippes, ces evenements pesent 50 octets chacun : les
+ * ~2 milliards de la chaine entiere feraient ~100 Go. Avec PONS_HISTOIRE_RPC_URL
+ * posee (le token est DANS l'URL : smart_rpc la masque dans toute erreur, et
+ * rien ici ne la sert), le client est « dedie » : il ne partage plus rien avec
+ * le noeud public — ni file, ni pause —, un pas toutes les 5 s, 20 000
+ * requetes et 60 Go par jour au plus (CHOISI : ~12 000 pas par jour a 2 s de
+ * reponse + 5 s d'attente, soit la chaine entiere en ~4 jours ; le palier
+ * gratuit d'Envio est « rate-limited » sans chiffre publie, le metered coute
+ * 4 $ par million de requetes : 40 000 requetes = 0,16 $).
+ *
  * Stockage : DATA_DIR/pons_histoire/<phase>/<de>-<a>.jsonl.gz, une ligne
  * COMPACTE par evenement (tableau), jamais reecrite ; etat.json pour les
  * curseurs. Rien ici n'achete ni n'alerte : c'est une bibliotheque.
@@ -50,6 +66,9 @@ const PAS_MS = () => Math.max(5000, Number(process.env.PONS_HISTOIRE_MS) || 3000
 /* Plafonds du jour. CHOISI contre la mesure : ~5 Go bruts pour Pons, en ~4 jours a
    1,5 Go/jour ; 30 s par pas = 2 880 requetes/jour au plus. */
 const JOUR_HTTP = 3000, JOUR_OCTETS = 1.5e9;
+const JOUR_HTTP_DEDIE = 20000, JOUR_OCTETS_DEDIE = 60e9, PAS_DEDIE_MS = 5000;
+const CORPS_MAX_DEDIE = 64 * 1024 * 1024;     // une reponse de 50 000 evenements fait ~33 Mo (sonde du 22/10) ; smart_rpc coupe a 16 Mio par defaut
+const CONSEIL = /this block range should work: \[(0x[0-9a-f]+), (0x[0-9a-f]+)\]/i;
 const MAX_10M = 9999999;                 // le noeud refuse plus de 10 000 000 blocs par requete (sonde du 11/10, communaute.js)
 /* fenetres de depart ; les phases FILTREES (piscines, echanges : une poignee d'identifiants) sont
    clairsemees et grandissent jusqu'a 10 M blocs ; les courbes (~3 100 evenements/h) restent pres
@@ -57,6 +76,7 @@ const MAX_10M = 9999999;                 // le noeud refuse plus de 10 000 000 b
 const FENETRES = { lancements: 2000000, courbes: 20000, piscines: MAX_10M, echanges: 500000 };
 const FENETRE_MAX = { lancements: MAX_10M, courbes: 1000000, piscines: MAX_10M, echanges: MAX_10M };
 const VISE_MIN = 3000;                   // sous 3 000 evenements, la fenetre grandit de moitie
+const VISE_MIN_DEDIE = 25000;            // noeud dedie : viser la moitie des 50 000 que HyperRPC accepte
 const LOT_JETONS = 40, LOT_PISCINES = 40;  // valeurs par position de topic, par requete : CHOISI (prudent)
 const lc = (x) => String(x == null ? '' : x).toLowerCase();
 const hex = (n) => '0x' + Number(n).toString(16);
@@ -81,7 +101,7 @@ function compacte(phase, l) {
 }
 
 /**
- * deps = { R (client smart_rpc a lui), dossier, horloge, note, pauseDirect() -> bool }
+ * deps = { R (client smart_rpc a lui), dossier, horloge, note, pauseDirect() -> bool, dedie (bool : noeud a part, voir l'en-tete) }
  */
 function cree(deps) {
   const d = deps || {};
@@ -106,7 +126,8 @@ function cree(deps) {
     if (j) { if (!E.gradues.includes(j)) E.gradues.push(j); return; }
     if (!E.gradCourbes.includes(courbe)) E.gradCourbes.push(courbe);
   }
-  const C = { pas: 0, erreurs: 0, coupes: 0, derniere: null, dernierPas: null };
+  const C = { pas: 0, erreurs: 0, coupes: 0, conseils: 0, derniere: null, dernierPas: null };
+  const dedie = !!d.dedie;
   let enCours = false;
   const sauve = () => { try { fs.mkdirSync(D, { recursive: true }); fs.writeFileSync(ETAT + '.tmp', JSON.stringify(E)); fs.renameSync(ETAT + '.tmp', ETAT); } catch (e) { C.erreurs++; } };
   function ecris(phase, de, a, lignes) {
@@ -159,10 +180,10 @@ function cree(deps) {
   /** Un pas : UNE requete eth_getLogs. */
   async function pas() {
     if (enCours) return { fait: 'deja' };
-    if (typeof d.pauseDirect === 'function' && d.pauseDirect()) return { fait: 'pause du direct' };
+    if (!dedie && typeof d.pauseDirect === 'function' && d.pauseDirect()) return { fait: 'pause du direct' };
     enCours = true;
     try {
-      d.R.nouvellePasse({ appels: 2, octets: 40e6 });
+      d.R.nouvellePasse({ appels: 2, octets: dedie ? 80e6 : 40e6 });
       const P = await d.R.pointe();
       const pointe = P.pointe - 5;
       const x = prochaine(pointe);
@@ -178,7 +199,13 @@ function cree(deps) {
       C.pas++;
       if (r.erreur) {
         const m = String(r.erreur.message || '');
-        if (/exceeds limit|timed out|timeout|only \d+ are allowed|trop lourd/i.test(m) && w > 1) {
+        /* HyperRPC dit la fenetre qui passe : on la prend telle quelle */
+        const c = CONSEIL.exec(m);
+        if (c && parseInt(c[1], 16) === de && parseInt(c[2], 16) > de) {
+          E.fenetres[ph] = parseInt(c[2], 16) - de + 1; C.conseils++; sauve();
+          return { fait: 'fenetre conseillee', ph, fenetre: E.fenetres[ph] };
+        }
+        if (/exceeds limit|limit exceeded|timed out|timeout|only \d+ are allowed|trop lourd/i.test(m) && w > 1) {
           E.fenetres[ph] = Math.max(1, Math.floor(w / 2)); C.coupes++; sauve();
           return { fait: 'fenetre coupee', ph, fenetre: E.fenetres[ph] };
         }
@@ -204,7 +231,7 @@ function cree(deps) {
         E.curseurs[ph] = null;
         if (!filtre(ph)) E.curseurs[ph] = a;      // plus rien a chercher : la phase reste a la pointe
       }
-      if (lignes.length < VISE_MIN && w < FENETRE_MAX[ph]) E.fenetres[ph] = Math.min(FENETRE_MAX[ph], Math.floor(w * 1.5));
+      if (lignes.length < (dedie ? VISE_MIN_DEDIE : VISE_MIN) && w < FENETRE_MAX[ph]) E.fenetres[ph] = Math.min(FENETRE_MAX[ph], Math.floor(w * 1.5));
       sauve();
       C.dernierPas = { t: maintenant(), ph, de, a, evts: lignes.length };
       return { fait: 'lu', ph, de, a, evts: lignes.length };
@@ -218,9 +245,10 @@ function cree(deps) {
   function vue() {
     return { curseurs: E.curseurs, fenetres: E.fenetres, compte: E.compte, debut: E.debut, gradues: E.gradues.length, graduationsSansJeton: E.gradCourbes.length, piscinesTrouvees: E.piscines.length,
       sansPiscine: Object.values(E.aPiscine).filter((v) => v === 'aucune').length, echangesFinis: Object.keys(E.pisDone).length,
-      jour: d.R && d.R.jour ? d.R.jour() : null, pasS: Math.round(PAS_MS() / 1000), plafonds: { http: JOUR_HTTP, octets: JOUR_OCTETS }, mesure: C };
+      jour: d.R && d.R.jour ? d.R.jour() : null, dedie, pasS: Math.round((dedie ? PAS_DEDIE_MS : PAS_MS()) / 1000),
+      plafonds: dedie ? { http: JOUR_HTTP_DEDIE, octets: JOUR_OCTETS_DEDIE } : { http: JOUR_HTTP, octets: JOUR_OCTETS }, mesure: C };
   }
   return { pas, vue, _etat: () => E };
 }
 
-module.exports = { cree, compacte, RATTRAPE, PM4, TOPIC_INIT4, TOPIC_SWAP4, JOUR_HTTP, JOUR_OCTETS, FENETRES, PHASES };
+module.exports = { cree, compacte, RATTRAPE, PM4, TOPIC_INIT4, TOPIC_SWAP4, JOUR_HTTP, JOUR_OCTETS, JOUR_HTTP_DEDIE, JOUR_OCTETS_DEDIE, PAS_DEDIE_MS, CORPS_MAX_DEDIE, FENETRES, PHASES };

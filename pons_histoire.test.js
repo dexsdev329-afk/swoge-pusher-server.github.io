@@ -7,7 +7,10 @@
  *   3. la fenetre se coupe en deux sur « exceeds limit », grandit sous 3 000 ;
  *   4. une phase en retard passe avant les suivantes ; rattrapee, elle laisse la place ;
  *   5. fichiers .jsonl.gz compacts, curseurs relus au redemarrage ;
- *   6. smart_money : client a lui (file et plafond du jour), route /ai/smart/histoire.
+ *   6. smart_money : client a lui (file et plafond du jour), route /ai/smart/histoire ;
+ *   7. noeud DEDIE (PONS_HISTOIRE_RPC_URL, HyperRPC) : la pause du direct ne compte plus,
+ *      le conseil « this block range should work: [a, b] » cale la fenetre, les plafonds
+ *      et la cadence sont ceux du dedie, l'URL (qui porte le token) n'est jamais servie.
  */
 const fs = require('fs');
 const os = require('os');
@@ -97,11 +100,37 @@ function faux(o) {
   console.log('-- 6. smart_money');
   const M = require('./smart_money');
   const src = fs.readFileSync(path.join(__dirname, 'smart_money.js'), 'utf8');
-  ok(/rythme: SR\.nouveauRythme\(\), budgetAppels: 2/.test(src) && /jourPropre: true,\s*plafondJourHttp: PH\.JOUR_HTTP/.test(src), 'client a lui : sa file (rythme propre), son plafond du jour');
+  ok(/rythme: SR\.nouveauRythme\(\), budgetAppels: 2/.test(src) && /jourPropre: true,\s*plafondJourHttp: dedie \? PH\.JOUR_HTTP_DEDIE : PH\.JOUR_HTTP/.test(src), 'client a lui : sa file (rythme propre), son plafond du jour (celui du dedie ou du public)');
   ok(/pauseDirect: \(\) => rythme\.pause > deps\.horloge\(\)/.test(src), 'il se tait tant que le direct est en pause');
   ok(typeof M.cree({ env: { SMART_MONEY: '1' } }).histoire === 'function' && M.cree({ env: { SMART_MONEY: '1' } }).histoire().actif === false, 'smart_money.histoire() (inactif avant l allumage)');
   ok(/path === '\/ai\/smart\/histoire'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')), 'route /ai/smart/histoire');
   ok(PH.JOUR_HTTP === 3000 && PH.JOUR_OCTETS === 1.5e9, 'plafonds du jour : 3 000 requetes, 1,5 Go');
+  console.log('-- 7. le noeud dedie (HyperRPC)');
+  {
+    const F3 = faux();
+    let pause3 = true;
+    const H3 = PH.cree({ R: F3.R, dossier: fs.mkdtempSync(path.join(os.tmpdir(), 'histoire3-')), horloge: () => 1, dedie: true, pauseDirect: () => pause3 });
+    ok((await H3.pas()).fait === 'lu' && F3.req.length === 1, 'dedie : la pause du direct ne le retient pas (un autre noeud)');
+    const v3 = H3.vue();
+    ok(v3.dedie === true && v3.pasS === 5 && v3.plafonds.http === PH.JOUR_HTTP_DEDIE && v3.plafonds.octets === PH.JOUR_OCTETS_DEDIE, 'vue : dedie, 5 s par pas, 20 000 requetes et 60 Go par jour');
+    ok(!JSON.stringify(v3).includes('hypersync') && !JSON.stringify(v3).includes('rpc.'), 'la vue ne porte aucune URL');
+    /* le conseil de HyperRPC : la fenetre se cale dessus, sans etre coupee en deux */
+    /* le premier pas a mis les lancements a la pointe (fenetre de 2 M blocs) : le suivant ouvre les courbes au premier lancement */
+    const E3 = H3._etat();
+    const de = E3.curseurs.courbes == null ? E3.debut : E3.curseurs.courbes + 1;
+    const conseilA = de + 2727;
+    const appelOrig = F3.R.appel;
+    let conseille = 0;
+    F3.R.appel = async (m, p) => { if (!conseille) { conseille++; return { erreur: { message: 'Limit exceeded: More than 50000 logs returned; this block range should work: [0x' + de.toString(16) + ', 0x' + conseilA.toString(16) + ']' } }; } return appelOrig(m, p); };
+    const r3 = await H3.pas();
+    ok(r3.fait === 'fenetre conseillee' && r3.ph === 'courbes' && E3.fenetres.courbes === 2728 && H3.vue().mesure.conseils === 1 && H3.vue().mesure.coupes === 0, 'conseil [de, de+2727] : fenetre de 2 728 blocs, comptee comme conseil, pas comme coupe (' + JSON.stringify(r3) + ')');
+    const r4 = await H3.pas();
+    ok(r4.fait === 'lu' && r4.ph === 'courbes' && r4.de === de && r4.a === conseilA, 'le pas suivant lit exactement la fenetre conseillee (' + JSON.stringify(r4) + ')');
+    const srcM = fs.readFileSync(path.join(__dirname, 'smart_money.js'), 'utf8');
+    ok(/PONS_HISTOIRE_RPC_URL/.test(srcM) && /optsH\.url = urlH; optsH\.corpsMax = PH\.CORPS_MAX_DEDIE;/.test(srcM), 'smart_money : l URL dediee va au client de l histoire, avec une reponse de 64 Mio admise (33 Mo pour 50 000 evenements)');
+    ok(/PONS_HISTOIRE_RPC_URL;\s*const ms = [^\n]*\? 5000 : 30000\)/.test(srcM), 'cadence : 5 s par pas quand le noeud est dedie, 30 s sinon');
+    ok(PH.CORPS_MAX_DEDIE === 64 * 1024 * 1024 && PH.PAS_DEDIE_MS === 5000, 'constantes du dedie');
+  }
   console.log(rates ? 'RATES : ' + rates + '/' + n : n + ' verifications OK');
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('EXCEPTION', e); process.exit(1); });
