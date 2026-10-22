@@ -21,7 +21,8 @@
  *      par nom ou a 1 edition (48 h), premier ne par bloc, rangs renumerotes
  *      quand l'original est lu apres, douteux a 2 faits (createur en serie :
  *      aucun des 5 d'avant vivant a 24 h), redemarrage relu, direct differe
- *      pendant la migration, rang illisible ignore, parClone refuse sous 40.
+ *      pendant la migration, rang illisible ignore, rangs deduits des rangs
+ *      notes quand l'original est sorti des 32 j, parClone refuse sous 40.
  */
 const fs = require('fs');
 const os = require('os');
@@ -385,6 +386,30 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     ok(v11.plusGrosDuJour && v11.plusGrosDuJour.n === 2 && v11.plusGrosDuJour.original === A(77) && v11.plusGrosDuJour.nom === 'Neiro' && v11.plusGrosDuJour.sym === 'NEIRO', 'la plus grosse du jour est nommee par son plus vieux membre en memoire quand l original est sorti des 32 j (' + JSON.stringify(v11.plusGrosDuJour) + ')');
     await g11.C.tic();
     ok(F11.get(A(3)).cl && F11.get(A(3)).cl.g === A(77) && F11.get(A(3)).cl.rang === 4 && lignesClone(D11).length === 4 && g11.C.vue().clones.plusGrosDuJour.n === 3 && g11.C.vue().compteurs.clonesIncoherents === 0, 'au tic : reperee par la cle exacte, copie #4 derriere l original hors memoire et les deux relues ; une ligne ecrite');
+    /* la memoire ne remonte qu'a 32 j (JOURS_MEMOIRE) : l'original ET la copie #2 d'une grappe vivante depuis plus d'un mois
+       sont sortis (fichier de 41 j), #3 et #4 relues (fichier de 2 j) ; les rangs se deduisent des rangs notes, jamais de
+       la taille en memoire (mesure du 22/10 : le 5e recevait 4, un original tardif ne avant #3 recevait 2) */
+    const D13 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D13, 'lancements'));
+    const TV = Date.parse('2026-09-10T12:00:00Z'), TR = Date.parse('2026-10-19T12:00:00Z');
+    const j13 = (f, l) => fs.writeFileSync(path.join(D13, 'lancements', f), l.map((o) => JSON.stringify(o)).join('\n') + '\n');
+    j13('2026-09-10.jsonl', [{ k: 'n', t: TV, jeton: A(77), bloc: 1, deployer: A(877) }, { k: 'n', t: TV + 60e3, jeton: A(78), bloc: 2, deployer: A(878) },
+      { k: 'm', t: TV + 5, jeton: A(77), nom: 'Pepe', symbole: 'PEPE' }, { k: 'm', t: TV + 65e3, jeton: A(78), nom: 'Pepe', symbole: 'PEPE2' },
+      { k: 'clone', t: TV + 5, jeton: A(77), groupe: A(77), rang: 1, douteux: false }, { k: 'clone', t: TV + 65e3, jeton: A(78), groupe: A(77), rang: 2, douteux: false }]);
+    j13('2026-10-19.jsonl', [{ k: 'n', t: TR, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: TR + 60e3, jeton: A(2), bloc: 11, deployer: A(802) }, { k: 'n', t: TR - 3600e3, jeton: A(4), bloc: 9, deployer: A(804) },
+      { k: 'm', t: TR + 5, jeton: A(1), nom: 'Pepe', symbole: 'PEPE3' }, { k: 'm', t: TR + 65e3, jeton: A(2), nom: 'Pepe', symbole: 'PEPE4' },
+      { k: 'clone', t: TR + 5, jeton: A(1), groupe: A(77), rang: 3, douteux: false }, { k: 'clone', t: TR + 65e3, jeton: A(2), groupe: A(77), rang: 4, douteux: false }]);
+    const g13 = banc({ dossier: D13, now: T0 + 3600e3 });
+    const F13 = g13.C._fiches, c13 = (i) => F13.get(A(i)).cl;
+    ok(!F13.has(A(77)) && !F13.has(A(78)) && c13(1).rang === 3 && c13(2).rang === 4 && g13.C._grappes().get(A(77)).size === 3 && lignesClone(D13).length === 4, 'au demarrage : l original (A77) et la copie #2 sont sortis des 32 j, #3 et #4 relues ; la grappe en memoire fait 3, racine comprise');
+    g13.C.naissance({ jeton: A(3), bloc: 12, t: g13.H.now, deployer: A(803) }); g13.C.meta(A(3), { nom: 'Pepe', symbole: 'PEPE5' });
+    ok(c13(3).g === A(77) && c13(3).rang === 5 && lignesClone(D13).length === 5, 'un 5e Pepe : copie #5 (le plus haut rang note + 1), pas « taille en memoire » = 4 en double avec #4');
+    g13.C.meta(A(4), { nom: 'Pepe', symbole: 'PEPE6' });     // ne avant #3 (bloc 9), metadonnee lue en dernier
+    const rangs13 = [4, 1, 2, 3].map((i) => c13(i).rang);
+    ok(rangs13.join() === '3,4,5,6' && [1, 2, 3, 4].every((i) => c13(i).g === A(77)), 'un Pepe ne avant #3 lu apres : rang 3 (derriere les deux sortis), #3/#4/#5 renumerotes 4/5/6, aucun rang en double ni en dessous de 3 (' + JSON.stringify(rangs13) + ')');
+    ok(lignesClone(D13).length === 9 && g13.C.vue().clones.revus === 3 && g13.C.vue().compteurs.clonesIncoherents === 0, '4 lignes ecrites en un appel (A4 et les trois decalees), clonesRevus 3');
+    const g14 = banc({ dossier: D13, now: g13.H.now });
+    ok([4, 1, 2, 3].map((i) => g14.C._fiches.get(A(i)).cl.rang).join() === '3,4,5,6' && g14.C.vue().compteurs.clonesIncoherents === 0 && g14.C._grappes().get(A(77)).size === 5 && g14.C.vue().clones.reperes === 4, 'au redemarrage : rangs 3 a 6 relus, la grappe fait 5 en memoire, 4 copies, aucune incoherence');
     /* un seul jeton : pas de grappe, pas de « plus grosse du jour » a 1 */
     const g12 = banc();
     g12.C.naissance({ jeton: A(1), bloc: 10, t: T0, deployer: A(801) }); g12.C.meta(A(1), { nom: 'Alone', symbole: 'ALONE' });

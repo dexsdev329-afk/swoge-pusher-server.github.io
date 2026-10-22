@@ -573,7 +573,9 @@ function cree(deps) {
    *  cherche — meme cle de nom ou de symbole (sans limite d'age), ou cle lache a distance d'edition parmi les jetons nes
    *  a moins de 48 h — on l'unit, puis on ecrit une ligne « clone » { jeton, groupe (le premier ne), rang, douteux } pour
    *  lui et pour chaque membre dont le groupe ou le rang change (un premier ne lu APRES ses copies prend la tete et les
-   *  renumerote). Le meme jeton relu ne bouge pas ; une fiche relue du disque garde la grappe notee. */
+   *  renumerote). Le meme jeton relu ne bouge pas ; une fiche relue du disque garde la grappe notee. La memoire ne remonte
+   *  qu'a JOURS_MEMOIRE (32 j) : l'original et les premieres copies d'une grappe vivante depuis plus d'un mois ne sont plus
+   *  dans F, les rangs se deduisent alors des rangs NOTES, jamais de la taille en memoire (voir le calcul des lignes). */
   function repere(j) {
     const f = F.get(j); if (!f || KJ.has(j)) return;
     const c = clesDe(f.nom, f.sym);
@@ -602,15 +604,33 @@ function cree(deps) {
     const douteux = douteuxDe(F.get(r)) >= 2, t = maintenant();
     const ligne = (m, rang) => ({ k: 'clone', t, jeton: m, groupe: r, rang, douteux });
     const lignes = [];
-    if (simple) lignes.push(ligne(j, MEMBRES.get(r).size));
-    else {
+    if (simple) {
+      /* rang = la taille de la grappe en memoire, ou le plus haut rang note + 1 quand des membres sont sortis des 32 j de
+         memoire (JOURS_MEMOIRE : apres un mois de service, l'original et les premieres copies d'une grappe a cle exacte
+         vivante — Pepe, Trump… — ne sont plus dans F, MEMBRES n'a que la racine et les membres relus). Mesure du 22/10
+         (banc « hors memoire » : original jour 0 et copie #2 jour 1 sortis, #3 et #4 relues, horloge jour 62) : le 5e
+         recevait rang = taille = 4, en DOUBLE avec #4 ; attendu 5. */
+      let haut = 0;
+      for (const m of MEMBRES.get(r)) { const fm = F.get(m); if (fm && fm.cl && fm.cl.rang > haut) haut = fm.cl.rang; }
+      lignes.push(ligne(j, Math.max(MEMBRES.get(r).size, haut + 1)));
+    } else {
       const membres = [...MEMBRES.get(r)].sort((a, b) => (a === b ? 0 : avant(a, b) ? -1 : 1));
-      membres.forEach((m, i) => {
-        const fm = F.get(m);
-        if (!fm || (fm.cl && fm.cl.g === r && fm.cl.rang === i + 1)) return;
-        lignes.push(ligne(m, i + 1));
+      /* des membres ne manquent en memoire que si la racine manque (ils sont tous nes avant ce qui est en memoire, les
+         fichiers se relisent par jour) ; leur nombre se deduit des rangs notes : un membre note rang ρ, q-ieme des notes de
+         la grappe en memoire (q des 0), en a ρ − 1 − q devant lui hors memoire ; le plus grand l'emporte, un rang note
+         n'est jamais abaisse. Racine en memoire : rien ne manque, rang = position. Meme mesure du 22/10 : un original
+         tardif ne avant #3 recevait rang 2 (en double avec la copie #2 sortie) et #3/#4 ne bougeaient pas ; attendu 3,
+         #3/#4 renumerotees 4/5. */
+      let sortis = F.has(r) ? 0 : 1, q = 0;
+      if (sortis) for (const m of membres) { const fm = F.get(m); if (fm && fm.cl && fm.cl.g === r) { sortis = Math.max(sortis, fm.cl.rang - 1 - q); q++; } }
+      let p = 0;
+      for (const m of membres) {
+        const fm = F.get(m); if (!fm) continue;
+        const rang = sortis + ++p;
+        if (fm.cl && fm.cl.g === r && fm.cl.rang === rang) continue;
+        lignes.push(ligne(m, rang));
         if (m !== j) C.clonesRevus++;
-      });
+      }
     }
     ecrisLignes(lignes);                                       // la grappe entiere en un appel : sur le disque entiere ou pas du tout
     lignes.forEach(applique);
