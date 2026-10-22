@@ -2,7 +2,7 @@
 /*
  * LE CARNET DES LANCEMENTS (21/10/2026), horloge et DexScreener simules :
  *   1. une naissance est ecrite une fois (fichier du jour, fiche en memoire) ;
- *   2. les metadonnees : en file, 4 par cycle au plus, un vide relu puis
+ *   2. les metadonnees : en file, 3 par cycle au plus, un vide relu puis
  *      abandonne apres 3 essais ; les themes et les reseaux sont tires du texte ;
  *   3. le suivi : +1 h, +6 h, +24 h, +7 j, +30 j ; au plus UN appel DexScreener
  *      par tic, 30 jetons ; une echeance lue trop tard est « manquee », jamais
@@ -12,7 +12,21 @@
  *   5. le bilan refuse la part sous 40 fiches mesurees, la donne au-dessus ;
  *      le passe du createur est compte dans l'ordre des naissances ;
  *   6. smart_lancements : CHAQUE lancement passe au carnet a son T+2, et ses
- *      metadonnees partent en UN lot ; smart_money sert /ai/smart/lancements.
+ *      metadonnees partent en UN lot ; smart_money sert /ai/smart/lancements ;
+ *   7. le marche BTC/ETH a la naissance (22/10) : parBtc24h et parBtc7d par les
+ *      tranches de marche_contexte, « no market data » hors couverture, aucun
+ *      groupe sans fournisseur ; smart_money passe deps.marche ;
+ *   8. les copies de jetons (22/10, methode novamp reecrite) : cles serree et
+ *      lache (sosies, leetspeak, invisibles, remplissage), grappes par symbole,
+ *      par nom ou a 1 edition (48 h), premier ne par bloc, rangs renumerotes
+ *      quand l'original est lu apres, douteux a 2 faits (createur en serie :
+ *      aucun des 5 d'avant vivant a 24 h), redemarrage relu, direct differe
+ *      pendant la migration, rang illisible ignore, cashtag ; le REGISTRE des
+ *      grappes (etat.grappes) : rang = n et taille au registre quand des membres
+ *      sont sortis des 32 j (fusion de deux grappes aux racines sorties, grappe
+ *      de 30 j+), relu, reconstruit depuis les lignes, borne au demarrage (entree
+ *      sans membre note en memoire ou illisible effacee, comptee), la limite
+ *      (rangs des sortis jamais reecrits) ; parClone refuse sous 40.
  */
 const fs = require('fs');
 const os = require('os');
@@ -39,7 +53,7 @@ function banc(o) {
       fdv: marche.get(j).fdv, marketCap: marche.get(j).fdv, liquidity: { usd: marche.get(j).liq }, volume: { h24: 1234 }, txns: { h24: { buys: 10, sells: 5 } }, priceChange: { h24: -12 } }));
     return { ok: true, status: 200, text: async () => JSON.stringify(corps) };
   };
-  const C = K.cree({ dossier, prendre, horloge: () => H.now });
+  const C = K.cree({ dossier, prendre, horloge: () => H.now, marche: o.marcheCtx || null });
   return { C, H, marche, appels, dossier };
 }
 const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60e3; await b.C.tic(); } };
@@ -226,6 +240,283 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     ok(C5.detenteursALire() && C5.detenteursALire().jeton === A(2), 'une lecture ratee : relue une fois');
     C5.detenteurs(A(2), '24h', null, P);
     ok(!C5.detenteursALire() && C5.vue().compteurs.detRates === 1, 'deux : abandonnee, comptee');
+  }
+
+  console.log('-- 6 quater. le marche BTC/ETH a la naissance (22/10)');
+  {
+    /* un contexte simule : BTC -4 % sur 24 h et +6 % sur 7 j pour les naissances de la premiere heure, +1 % / -1 %
+       entre +1 h et +3 h, et rien (serie non couvrante) au-dela */
+    const ctx = (t) => (t < T0 + 3600e3 ? { btc24h: -4, btc7d: 6, eth24h: 1, eth7d: null } : t < T0 + 3 * 3600e3 ? { btc24h: 1, btc7d: -1, eth24h: 0, eth7d: 0 } : null);
+    const g4 = banc({ marcheCtx: ctx });
+    for (let i = 1; i <= 9; i++) g4.C.naissance({ jeton: A(i), t: T0 + (i <= 4 ? i * 60e3 : i <= 7 ? 7200e3 + i * 60e3 : 4 * 3600e3 + i * 60e3), deployer: A(900) });
+    const B4 = g4.C.bilan();
+    ok(B4.parBtc24h && B4.parBtc24h['btc 24h < -3%'] && B4.parBtc24h['btc 24h < -3%'].n === 4, 'parBtc24h : les 4 naissances sous BTC -3 % (etiquette de marche_contexte)');
+    ok(B4.parBtc24h['btc 24h 0..3%'].n === 3 && B4.parBtc7d['btc 7d > 5%'].n === 4 && B4.parBtc7d['btc 7d -5..0%'].n === 3, 'parBtc24h 0..3 % : 3 ; parBtc7d > 5 % : 4, -5..0 % : 3');
+    eq(B4.parBtc24h['no market data'].n, 2, 'les 2 naissances que la serie ne couvre pas : « no market data », jamais inventees');
+    ok(B4.parBtc24h['btc 24h < -3%']['24h'].mesures === 0 && B4.parBtc24h['btc 24h < -3%']['24h'].vivantsPct === null, 'et la part vivante reste refusee sans mesure');
+    ok(B4.parTheme['no metadata yet'].n === 9 && B4.tout.n === 9, 'les autres groupes ne bougent pas');
+    const g5 = banc();
+    g5.C.naissance({ jeton: A(1), t: T0, deployer: A(900) });
+    const B5 = g5.C.bilan();
+    ok(Object.keys(B5.parBtc24h).length === 0 && Object.keys(B5.parBtc7d).length === 0, 'sans deps.marche : aucun groupe (pas de « no market data » invente par un fournisseur absent)');
+    ok(/marche: typeof deps\.marche === 'function' \? deps\.marche : null/.test(fs.readFileSync(path.join(__dirname, 'smart_money.js'), 'utf8')), 'smart_money passe deps.marche au carnet');
+  }
+
+  console.log('-- 6 quinquies. les copies de jetons (22/10)');
+  {
+    /* les cles (pures) */
+    const cs = K.clesDe('Рере the Frog', 'PЕPE');          // Р е р е cyrilliques dans le nom, Е cyrillique dans le symbole
+    ok(cs.nom.s === 'pepethefrog' && cs.nom.l === 'pepefrog' && cs.sym.s === 'pepe' && cs.sym.l === 'pepe', 'sosies cyrilliques replies, « the » retire de la cle lache : ' + JSON.stringify(cs));
+    const cl = K.clesDe('P3P3 C0IN', 'P3PE');
+    ok(cl.nom.s === 'p3p3c0in' && cl.nom.l === 'pepe' && cl.sym.l === 'pepe', 'leetspeak et « coin » : la serree garde les chiffres (p3p3c0in), la lache dit pepe');
+    ok(K.clesDe('Pe​pe­', 'PE‍PE').sym.s === 'pepe' && K.clesDe('Pe​pe­', null).nom.s === 'pepe', 'zero-width et soft hyphen retires');
+    eq(K.clesDe('Pépé Cöin', null).nom.l, 'pepe', 'accents (marques combinantes) retires');
+    ok(['Pepe Coin', 'The Pepe Token', 'PEPE INU', 'PepeCoin', 'Pepe on ETH', 'ThePepe'].every((x) => K.clesDe(x, null).nom.l === 'pepe'), 'mots de remplissage : coin, the, token, inu, on, eth, colles ou non -> pepe');
+    ok(K.clesDe('AI Coin', null).nom.l === 'aicoin' && K.clesDe('Bonsai', null).nom.l === 'bonsai' && K.clesDe('Moon', null).nom.l === 'mon', 'jamais videe (AI Coin), « ai »/« on » colles gardes (bonsai), lettres repetees reduites (moon -> mon)');
+    ok(K.clesDe('Moooon', 'MOOON').nom.l === 'mon' && K.clesDe(null, 'BOO').sym.l === 'boo', 'moooon -> mon ; boo reste boo (pas en dessous de 3)');
+    ok(K.clesDe(null, 'PEPE').nom === null && K.clesDe(null, 'PEPE').sym.s === 'pepe', 'nom absent : cle de symbole seule');
+    ok(K.clesDe('Pep', 'PE').nom === null && K.clesDe('Pep', 'PE').sym === null && K.clesDe('🐸🐸🐸🐸', '🐸').nom === null && K.clesDe('', '').sym === null, 'trop court (nom < 4, symbole < 3), emojis seuls ou vide : pas de cle');
+    eq(K.clesDe(null, 'P@PE$').sym.l, 'papes', '@ et $ en leetspeak');
+    ok(K.clesDe('$PEPE', '$PEPE').nom.l === 'pepe' && K.clesDe('$PEPE', '$PEPE').sym.l === 'pepe' && K.clesDe('$PEPE', '$PEPE').sym.s === 'pepe' && K.clesDe('$Pepe $Coin', null).nom.l === 'pepe' && K.clesDe('$PEPE', null).nom.l === K.clesDe('PEPE', null).nom.l, 'le $ de tete d un cashtag ($PEPE) n est pas un « s » : pepe, pas spepe, meme cle que PEPE ; a l interieur il le reste (P@PE$ -> papes)');
+    ok(K.clesDe('ＤＯＧＥ', null).nom.s === 'doge' && K.clesDe('Dοge', null).nom.s === 'doge', 'pleine largeur et omicron grec : doge');
+    ok(K.clesProches('pepe', 'pepo') && K.clesProches('shiba', 'shibo') && !K.clesProches('shiba', 'shabo') && !K.clesProches('abc', 'abd') && K.clesProches('longkeyname', 'lngokeyname') && K.distanceDL('abcd', 'bacd', 2) === 1, 'distance : 1 edition a partir de 4, 2 a partir de 9, stricte en dessous, transposition = 1');
+
+    /* le regroupement, dans le carnet */
+    const g6 = banc();
+    const F6 = g6.C._fiches;
+    const ne = (i, bloc, t, o) => g6.C.naissance(Object.assign({ jeton: A(i), bloc, t, deployer: A(800 + i), courbe: A(300 + i), plateforme: 'pons' }, o || {}));
+    const lignesClone = (D) => fs.readdirSync(path.join(D, 'lancements')).filter((x) => /\.jsonl$/.test(x)).sort()
+      .flatMap((x) => fs.readFileSync(path.join(D, 'lancements', x), 'utf8').split('\n').filter(Boolean).map(JSON.parse)).filter((o) => o.k === 'clone');
+    ne(1, 100, T0, { exemptions: 5 }); ne(2, 101, T0 + 60e3); ne(3, 102, T0 + 120e3); ne(4, 103, T0 + 180e3); ne(5, 104, T0 + 240e3);
+    g6.C.meta(A(1), { nom: 'Pepe', symbole: 'PEPE' });
+    g6.C.meta(A(2), { nom: 'Рере', symbole: 'PEPE2' });        // cyrillique, et un symbole a 1 edition
+    g6.C.meta(A(3), { nom: 'Pepe The Frog', symbole: 'FROG' });
+    g6.C.meta(A(4), { nom: 'Doge', symbole: 'PEPE' });          // meme symbole, autre nom
+    g6.C.meta(A(5), { nom: 'Pepo Coin', symbole: 'PPO' });      // nom a 1 edition (pepo / pepe), symbole de 3 sans egal
+    const c6 = (i) => F6.get(A(i)).cl;
+    ok(c6(1) && c6(1).g === A(1) && c6(1).rang === 1 && c6(1).douteux === false, 'A1 Pepe : original (rang 1, sa propre grappe)');
+    ok(c6(2).g === A(1) && c6(2).rang === 2, 'A2 (Рере cyrillique, PEPE2) : copie #2 de A1');
+    ok(c6(3).g === A(3) && c6(3).rang === 1, 'A3 (Pepe The Frog / FROG) : une autre grappe (pepefrog est a 4 editions)');
+    ok(c6(4).g === A(1) && c6(4).rang === 3, 'A4 (Doge / PEPE) : meme symbole -> copie #3');
+    ok(c6(5).g === A(1) && c6(5).rang === 4, 'A5 (Pepo Coin / PPO) : nom a 1 edition de pepe -> copie #4');
+    const l2 = lignesClone(g6.dossier).find((o) => o.jeton === A(2));
+    ok(l2 && l2.groupe === A(1) && l2.rang === 2 && l2.douteux === false && typeof l2.t === 'number', 'la ligne « clone » : jeton, groupe (le premier ne), rang, douteux');
+    ne(7, 110, T0 + 600e3); ne(8, 111, T0 + 660e3); ne(9, 112, T0 + 720e3);
+    g6.C.meta(A(7), { nom: 'Shiba', symbole: 'SHIB' });
+    g6.C.meta(A(8), { nom: 'Shabo', symbole: 'SHABO' });
+    ok(c6(8).g === A(8) && c6(8).rang === 1, 'Shabo apres Shiba : 2 editions a longueur 5 -> pas de fusion, original de sa grappe');
+    g6.C.meta(A(9), { nom: 'Shibo', symbole: 'SHIBO' });      // a 1 edition de Shiba ET de Shabo : les deux grappes fusionnent
+    ok(c6(9).g === A(7) && c6(9).rang === 3 && c6(8).g === A(7) && c6(8).rang === 2 && c6(7).rang === 1, 'Shibo (1 edition des deux) : Shiba, Shabo, Shibo une seule grappe, premier ne Shiba ; Shabo renotee copie #2');
+    ne(10, 50, T0 - 600e3);                                   // ne AVANT A1 (bloc 50) ; sa metadonnee arrive apres celles des copies
+    g6.C.meta(A(10), { nom: 'PEPE', symbole: 'PEPE' });
+    ok(c6(10).g === A(10) && c6(10).rang === 1 && c6(1).g === A(10) && c6(1).rang === 2 && c6(2).rang === 3 && c6(4).rang === 4 && c6(5).rang === 5, 'un Pepe ne avant (bloc 50) lu apres : il devient l original, A1 copie #2, A5 copie #5');
+    ne(11, 131, T0 + 900e3); ne(12, 130, T0 + 900e3);         // meme instant : A12 a le bloc le plus bas mais la ligne suivante
+    g6.C.meta(A(11), { nom: 'Zorro', symbole: 'ZORRO' }); g6.C.meta(A(12), { nom: 'Zorro', symbole: 'ZRR' });
+    ok(c6(12).rang === 1 && c6(11).g === A(12) && c6(11).rang === 2, 'meme instant : le bloc le plus bas (A12) est le premier ne, meme ecrit apres');
+    /* douteux : 2 faits sur le premier ne */
+    const p = (pct) => '0x' + (BigInt(pct) * 10n ** 25n).toString(16);
+    ne(13, 140, T0 + 1200e3, { exemptions: 4 }); g6.C.solde(A(13), 't2', p(12));     // 4 exemptes ET 12 % de l'offre au dev
+    ne(14, 141, T0 + 1260e3);
+    g6.C.meta(A(13), { nom: 'Bonk', symbole: 'BONK' }); g6.C.meta(A(14), { nom: 'Bonk', symbole: 'BONK' });
+    ok(c6(14).g === A(13) && c6(14).rang === 2 && c6(14).douteux === true, 'copie d un original a 2 faits (4 exemptes, dev a 12 %) : douteux');
+    ne(15, 150, T0 + 1500e3, { exemptions: 4 }); ne(16, 151, T0 + 1560e3);
+    g6.C.meta(A(15), { nom: 'Wif', symbole: 'WIF' }); g6.C.meta(A(16), { nom: 'Wif Coin', symbole: 'WIF' });
+    ok(c6(16).g === A(15) && c6(16).douteux === false, 'un seul fait (4 exemptes) : sain ; Wif (3 lettres) se groupe par le symbole');
+    ok(g6.C.douteuxDe(F6.get(A(13))) === 2 && g6.C.douteuxDe(F6.get(A(15))) === 1 && g6.C.douteuxDe(F6.get(A(10))) === 0, 'douteuxDe compte les faits : 2, 1, 0');
+    const B6 = g6.C.bilan();
+    ok(B6.parClone.original.n === 5 && B6.parClone['original, doubtful'].n === 1 && B6.parClone['copy #2'].n === 5 && B6.parClone['copy #3+'].n === 4, 'bilan parClone : 5 originaux, 1 douteux, 5 copies #2, 4 copies #3+ (' + JSON.stringify(Object.fromEntries(Object.entries(B6.parClone).map(([k, x]) => [k, x.n]))) + ')');
+    ok(B6.parGroupeTaille['1'].n === 1 && B6.parGroupeTaille['2-3'].n === 9 && B6.parGroupeTaille['4+'].n === 5, 'par taille de grappe : 1 seul, 9 en 2-3, 5 en 4+');
+    ok(B6.parClone.original['24h'].mesures === 0 && B6.parClone.original['24h'].vivantsPct === null, 'la part vivante : rien de mesure, rien de dit');
+    /* un fait lu apres la detection compte au bilan : le top 10 de Wif a 24 h */
+    const pad = (x) => '0x' + '0'.repeat(24) + x.slice(2);
+    g6.C.detenteurs(A(15), '24h', [{ topics: [K.TOPIC_TRANSFER, pad(A(315)), pad(A(777))], data: '0x' + (10n ** 20n).toString(16), blockNumber: '0x96', logIndex: '0x0' }], 200);
+    g6.H.now += 11 * 60e3;     // le cache du bilan (10 min)
+    ok(g6.C.bilan().parClone['original, doubtful'].n === 2 && c6(16).douteux === false, 'Wif : top 10 a 100 % lu a 24 h -> 2 faits, douteux au bilan ; la ligne de sa copie garde ce qu on savait alors');
+    const v6 = g6.C.vue().clones;
+    /* 9 fiches a rang > 1 : A1 A2 A4 A5 (PEPE), A8 A9 (Shiba), A11, A14, A16 — A1, notee « original » puis renumerotee copie
+       quand A10 est lu, compte (un compteur par detection la manquait : il disait 6) */
+    ok(v6.reperes === 9 && v6.revus === 6 && v6.grappes === 5 && v6.plusGrosDuJour && v6.plusGrosDuJour.n === 5 && v6.plusGrosDuJour.original === A(10) && v6.plusGrosDuJour.nom === 'PEPE', 'vue : 9 copies en memoire (fiches a rang > 1), 6 fiches renotees, 5 grappes, la plus grosse du jour : PEPE x5 (' + JSON.stringify(v6) + ')');
+    /* createur en serie : ≥ 5 lancements avant ET aucun vivant a 24 h (le « aucun gradue » de novamp, sur la definition du carnet) */
+    for (let i = 40; i <= 45; i++) ne(i, 1600 + i, T0 + 1800e3 + i * 1000, { deployer: A(999), exemptions: i === 45 ? 4 : 0 });
+    ok(g6.C.douteuxDe(F6.get(A(45))) === 2 && g6.C.douteuxDe(F6.get(A(44))) === 0, '6e lancement du meme createur, aucun des 5 d avant vivant a 24 h, 4 exemptes : 2 faits ; le 5e (4 avant, 0 exempte) : 0');
+    F6.get(A(41)).s['24h'] = { m: true, liq: 9000 };          // l'un des cinq vivait a 24 h (le champ que lit le bilan pour parDevDejaVivant)
+    ok(g6.C.douteuxDe(F6.get(A(45))) === 1 && g6.C.douteuxDe(F6.get(A(45)), 5, true) === 1 && g6.C.douteuxDe(F6.get(A(45)), 5, false) === 2, 'un des cinq vivait a 24 h : plus un fait (1) ; par le passe du bilan (5, vivant) : 1 ; (5, aucun) : 2');
+    /* la distance d'edition ne regarde que 48 h ; la cle exacte n'a pas d'age */
+    ne(20, 200, T0 + 3600e3); g6.C.meta(A(20), { nom: 'Kumo', symbole: 'KUMO' });     // (« Bork » serait a 1 edition de Bonk : voulu)
+    g6.H.now = T0 + 50 * 3600e3;
+    ne(21, 300, g6.H.now); g6.C.meta(A(21), { nom: 'Kumi', symbole: 'KUMI' });       // 1 edition, mais 49 h plus tard
+    g6.H.now = T0 + 99 * 3600e3;
+    ne(22, 400, g6.H.now); g6.C.meta(A(22), { nom: 'Kumo', symbole: 'XKMO' });       // meme cle exacte, 98 h plus tard
+    ok(c6(21).g === A(21) && c6(21).rang === 1, 'Kumi 49 h apres Kumo : la distance d edition ne compare qu a 48 h -> grappe a part');
+    ok(c6(22).g === A(20) && c6(22).rang === 2, 'Kumo 98 h apres Kumo : la cle exacte n a pas d age -> copie #2');
+    /* le redemarrage relit grappes et rangs tels qu'ecrits, et l'index sert les suivants */
+    const nLignes = lignesClone(g6.dossier).length;
+    const g7 = banc({ dossier: g6.dossier, now: g6.H.now });
+    const F7 = g7.C._fiches;
+    ok(F7.get(A(1)).cl.g === A(10) && F7.get(A(1)).cl.rang === 2 && F7.get(A(8)).cl.g === A(7) && F7.get(A(8)).cl.rang === 2 && F7.get(A(22)).cl.g === A(20) && F7.get(A(14)).cl.douteux === true, 'redemarrage : grappes, rangs et douteux relus du disque, tels qu ecrits');
+    eq(lignesClone(g7.dossier).length, nLignes, 'et rien n est reecrit');
+    ok(g7.C.vue().clones.grappes === 6 && g7.C._grappes().get(A(10)).size === 5, 'l index et les grappes sont reconstruits (6 grappes, PEPE x5)');
+    g7.C.naissance({ jeton: A(30), bloc: 500, t: g7.H.now, deployer: A(830) });
+    g7.C.meta(A(30), { nom: 'Doge Pepe', symbole: 'PEPE' });
+    ok(F7.get(A(30)).cl.g === A(10) && F7.get(A(30)).cl.rang === 6, 'apres redemarrage, un nouveau PEPE rejoint la grappe de A10 : copie #6');
+    g7.C.meta(A(30), { nom: 'Doge Pepe', symbole: 'PEPE' });
+    eq(lignesClone(g7.dossier).length, nLignes + 1, 'le meme jeton relu : aucune nouvelle ligne, meme grappe');
+    g7.C.naissance({ jeton: A(31), bloc: 501, t: g7.H.now, deployer: A(831) }); g7.C.meta(A(31), { nom: 'AI', symbole: 'AI' });
+    g7.C.naissance({ jeton: A(32), bloc: 502, t: g7.H.now, deployer: A(832) }); g7.C.meta(A(32), { nom: null, symbole: 'AI' });
+    ok(!F7.get(A(31)).cl && !F7.get(A(32)).cl && lignesClone(g7.dossier).length === nLignes + 1, 'AI / AI (trop court) : aucune cle, aucune grappe, jamais dit « original »');
+    /* des fiches d'avant ce lot : nom lu, pas de ligne clone -> reperees au demarrage, une fois */
+    const D8 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D8, 'lancements'));
+    fs.writeFileSync(path.join(D8, 'lancements', '2026-10-21.jsonl'), [{ k: 'n', t: T0, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: T0 + 1, jeton: A(2), bloc: 11, deployer: A(802) },
+      { k: 'm', t: T0 + 5, jeton: A(1), nom: 'Neiro', symbole: 'NEIRO' }, { k: 'm', t: T0 + 6, jeton: A(2), nom: 'Neiro', symbole: 'NEIRO2' }].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const g8 = banc({ dossier: D8, now: T0 + 3600e3 });
+    ok(!g8.C._fiches.get(A(2)).cl && g8.C.vue().clones.aReperer === 2 && lignesClone(D8).length === 0, 'fiches d avant ce lot (nom lu, pas de ligne clone) : en attente au demarrage, rien d ecrit en bloc');
+    g8.C.naissance({ jeton: A(3), bloc: 12, t: g8.H.now, deployer: A(803) }); g8.C.meta(A(3), { nom: 'Neiro', symbole: 'NEIRO3' }); g8.C.meta(A(3), { nom: 'Neiro', symbole: 'NEIRO3' });
+    ok(!g8.C._fiches.get(A(3)).cl && g8.C.vue().clones.aReperer === 3 && lignesClone(D8).length === 0, 'une metadonnee en direct pendant la migration attend en fin de file, une fois (reperee tout de suite, elle serait « original » des plus vieux en attente)');
+    await g8.C.tic();
+    const F8 = g8.C._fiches, v8 = g8.C.vue().clones;
+    ok(F8.get(A(2)).cl && F8.get(A(2)).cl.g === A(1) && F8.get(A(2)).cl.rang === 2 && F8.get(A(3)).cl.g === A(1) && F8.get(A(3)).cl.rang === 3 && lignesClone(D8).length === 3 && v8.migres === 3 && v8.aReperer === 0 && v8.revus === 0, 'au premier tic : reperees dans l ordre des naissances, ecrites une fois, le direct en dernier (copie #3), rien de renumerote');
+    const g9 = banc({ dossier: D8, now: T0 + 3600e3 });
+    await g9.C.tic();
+    ok(lignesClone(D8).length === 3 && g9.C.vue().clones.aReperer === 0 && g9.C.vue().clones.migres === 0 && g9.C.vue().compteurs.clonesIncoherents === 0, 'au redemarrage suivant : relues, rien a reperer, rien de reecrit, aucune incoherence');
+    /* une ligne au rang illisible n'est pas un « original » par defaut ; l'original sorti de la memoire nomme encore la grappe */
+    const D11 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D11, 'lancements'));
+    fs.writeFileSync(path.join(D11, 'lancements', '2026-10-21.jsonl'), [{ k: 'n', t: T0, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: T0 + 1, jeton: A(2), bloc: 11, deployer: A(802) }, { k: 'n', t: T0 + 2, jeton: A(3), bloc: 12, deployer: A(803) },
+      { k: 'm', t: T0 + 5, jeton: A(1), nom: 'Neiro', symbole: 'NEIRO' }, { k: 'm', t: T0 + 6, jeton: A(2), nom: 'Neiro', symbole: 'NEIRO2' }, { k: 'm', t: T0 + 7, jeton: A(3), nom: 'Neiro', symbole: 'NEIRO3' },
+      { k: 'clone', t: T0 + 8, jeton: A(1), groupe: A(77), rang: 2, douteux: false }, { k: 'clone', t: T0 + 8, jeton: A(2), groupe: A(77), rang: 3, douteux: false }, { k: 'clone', t: T0 + 8, jeton: A(3), groupe: A(77), rang: 'abc', douteux: false }].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const g11 = banc({ dossier: D11, now: T0 + 3600e3 });
+    const F11 = g11.C._fiches, v11 = g11.C.vue().clones;
+    ok(F11.get(A(1)).cl.g === A(77) && F11.get(A(1)).cl.rang === 2 && !F11.get(A(3)).cl && v11.aReperer === 1 && v11.reperes === 2 && v11.grappes === 1, 'rang « abc » : la ligne est ignoree, la fiche attend le tic (jamais rang 1 par defaut) ; les deux autres gardent leur grappe dont l original (A77) est hors memoire');
+    ok(v11.plusGrosDuJour && v11.plusGrosDuJour.n === 3 && v11.plusGrosDuJour.jour === 2 && v11.plusGrosDuJour.original === A(77) && v11.plusGrosDuJour.nom === 'Neiro' && v11.plusGrosDuJour.sym === 'NEIRO', 'la plus grosse du jour est nommee par son plus vieux membre en memoire quand l original est sorti des 32 j ; n = 3 au registre (l original compte), 2 nes du jour (' + JSON.stringify(v11.plusGrosDuJour) + ')');
+    ok(g11.C._registre()[A(77)] && g11.C._registre()[A(77)].n === 3 && g11.C._registre()[A(77)].bloc === null && v11.registre.reconstruites === 1, 'sans etat.json : le registre de la grappe est reconstruit des lignes relues (plus haut rang note 3), racine sans bloc connu, compte');
+    await g11.C.tic();
+    ok(F11.get(A(3)).cl && F11.get(A(3)).cl.g === A(77) && F11.get(A(3)).cl.rang === 4 && lignesClone(D11).length === 4 && g11.C.vue().clones.plusGrosDuJour.n === 4 && g11.C.vue().clones.plusGrosDuJour.jour === 3 && g11.C.vue().compteurs.clonesIncoherents === 0, 'au tic : reperee par la cle exacte, copie #4 (n du registre) derriere l original hors memoire et les deux relues ; une ligne ecrite ; la plus grosse du jour fait 4 dont 3 du jour');
+    /* la memoire ne remonte qu'a 32 j (JOURS_MEMOIRE) : l'original ET la copie #2 d'une grappe vivante depuis plus d'un mois
+       sont sortis (fichier de 41 j), #3 et #4 relues (fichier de 2 j) ; rangs et taille viennent du REGISTRE (etat.grappes),
+       jamais d'un compte des fiches en memoire (mesure du 22/10 : le 5e recevait 4, un original tardif ne avant #3 recevait 2) */
+    const D13 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D13, 'lancements'));
+    const TV = Date.parse('2026-09-10T12:00:00Z'), TR = Date.parse('2026-10-19T12:00:00Z');
+    const j13 = (f, l) => fs.writeFileSync(path.join(D13, 'lancements', f), l.map((o) => JSON.stringify(o)).join('\n') + '\n');
+    j13('2026-09-10.jsonl', [{ k: 'n', t: TV, jeton: A(77), bloc: 1, deployer: A(877) }, { k: 'n', t: TV + 60e3, jeton: A(78), bloc: 2, deployer: A(878) },
+      { k: 'm', t: TV + 5, jeton: A(77), nom: 'Pepe', symbole: 'PEPE' }, { k: 'm', t: TV + 65e3, jeton: A(78), nom: 'Pepe', symbole: 'PEPE2' },
+      { k: 'clone', t: TV + 5, jeton: A(77), groupe: A(77), rang: 1, douteux: false }, { k: 'clone', t: TV + 65e3, jeton: A(78), groupe: A(77), rang: 2, douteux: false }]);
+    j13('2026-10-19.jsonl', [{ k: 'n', t: TR, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: TR + 60e3, jeton: A(2), bloc: 11, deployer: A(802) }, { k: 'n', t: TR - 3600e3, jeton: A(4), bloc: 9, deployer: A(804) },
+      { k: 'm', t: TR + 5, jeton: A(1), nom: 'Pepe', symbole: 'PEPE3' }, { k: 'm', t: TR + 65e3, jeton: A(2), nom: 'Pepe', symbole: 'PEPE4' },
+      { k: 'clone', t: TR + 5, jeton: A(1), groupe: A(77), rang: 3, douteux: false }, { k: 'clone', t: TR + 65e3, jeton: A(2), groupe: A(77), rang: 4, douteux: false }]);
+    const g13 = banc({ dossier: D13, now: T0 + 3600e3 });
+    const F13 = g13.C._fiches, c13 = (i) => F13.get(A(i)).cl;
+    ok(!F13.has(A(77)) && !F13.has(A(78)) && c13(1).rang === 3 && c13(2).rang === 4 && g13.C._grappes().get(A(77)).size === 3 && lignesClone(D13).length === 4, 'au demarrage : l original (A77) et la copie #2 sont sortis des 32 j, #3 et #4 relues ; la grappe en memoire fait 3, racine comprise');
+    ok(g13.C._registre()[A(77)].n === 4 && g13.C._registre()[A(77)].bloc === null && g13.C.vue().clones.registre.reconstruites === 1, 'le registre, absent, est reconstruit des lignes relues : n = 4 (le plus haut rang note), racine sans bloc connu, compte');
+    g13.C.naissance({ jeton: A(3), bloc: 12, t: g13.H.now, deployer: A(803) }); g13.C.meta(A(3), { nom: 'Pepe', symbole: 'PEPE5' });
+    ok(c13(3).g === A(77) && c13(3).rang === 5 && lignesClone(D13).length === 5 && g13.C._registre()[A(77)].n === 5, 'un 5e Pepe : copie #5 = n du registre apres increment, pas « taille en memoire » = 4 en double avec #4');
+    /* l'appel unique : un espion sur fs.appendFileSync (le seul chemin d'ecriture des lignes) garde chaque charge ecrite ;
+       la ligne « m » de la metadonnee a son propre appel, les lignes « clone » doivent tenir dans UN seul */
+    const espion = () => { const vrai = fs.appendFileSync, charges = []; fs.appendFileSync = function () { charges.push(String(arguments[1])); return vrai.apply(fs, arguments); }; return { charges, fin: () => { fs.appendFileSync = vrai; }, clones: () => charges.filter((x) => /"k":"clone"/.test(x)).map((x) => x.trim().split('\n').length) }; };
+    const e13 = espion();
+    try { g13.C.meta(A(4), { nom: 'Pepe', symbole: 'PEPE6' }); } finally { e13.fin(); }     // ne avant #3 (bloc 9), metadonnee lue en dernier
+    const rangs13 = [4, 1, 2, 3].map((i) => c13(i).rang);
+    ok(rangs13.join() === '3,4,5,6' && [1, 2, 3, 4].every((i) => c13(i).g === A(77)), 'un Pepe ne avant #3 lu apres : rang 3 (n − membres en memoire = 6 − 4 = 2 sortis, puis l ordre de naissance), #3/#4/#5 renumerotes 4/5/6, aucun rang en double ni en dessous de 3 (' + JSON.stringify(rangs13) + ')');
+    ok(lignesClone(D13).length === 9 && e13.clones().join() === '4' && g13.C.vue().clones.revus === 3 && g13.C.vue().compteurs.clonesIncoherents === 0 && g13.C._registre()[A(77)].n === 6, '4 lignes ecrites en UN appel appendFileSync (A4 et les trois decalees), clonesRevus 3, registre n = 6');
+    const g14 = banc({ dossier: D13, now: g13.H.now });
+    ok([4, 1, 2, 3].map((i) => g14.C._fiches.get(A(i)).cl.rang).join() === '3,4,5,6' && g14.C.vue().compteurs.clonesIncoherents === 0 && g14.C._grappes().get(A(77)).size === 5 && g14.C.vue().clones.reperes === 4 && g14.C._registre()[A(77)].n === 6 && g14.C.vue().clones.registre.reconstruites === 1, 'au redemarrage sans etat.json (jamais de tic) : rangs 3 a 6 relus, la grappe fait 5 en memoire et 6 au registre reconstruit, 4 copies, aucune incoherence');
+    await g14.C.tic();                                        // sauve etat.json, registre compris
+    const g15 = banc({ dossier: D13, now: g14.H.now });
+    ok(g15.C._registre()[A(77)].n === 6 && g15.C.vue().clones.registre.reconstruites === 0 && g15.C.vue().clones.registre.effacees === 0 && g15.C.vue().clones.grappes === 1, 'au redemarrage suivant : le registre est RELU d etat.json (n = 6), rien a reconstruire, rien d efface');
+    /* FUSION de deux grappes dont les deux racines sont sorties des 32 j : Pepe (A77, A78 sorties ; #3 A1, #4 A2 en memoire) et
+       Wojak (A88, A89 sorties ; #3 A5, #4 A6 en memoire), fondues par un 9e qui a le nom de l'une et le symbole de l'autre.
+       La deduction des sortis depuis les rangs notes (version du matin) donnait 2 sortis au lieu de 4 : rangs 3-7, faux. */
+    const fusion = async (avecRegistre) => {
+      const D = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-f-'));
+      fs.mkdirSync(path.join(D, 'lancements'));
+      const w = (f, l) => fs.writeFileSync(path.join(D, 'lancements', f), l.map((o) => JSON.stringify(o)).join('\n') + '\n');
+      w('2026-09-10.jsonl', [{ k: 'n', t: TV, jeton: A(77), bloc: 1, deployer: A(877) }, { k: 'n', t: TV + 60e3, jeton: A(78), bloc: 2, deployer: A(878) }, { k: 'n', t: TV + 120e3, jeton: A(88), bloc: 5, deployer: A(888) }, { k: 'n', t: TV + 180e3, jeton: A(89), bloc: 6, deployer: A(889) },
+        { k: 'm', t: TV + 5, jeton: A(77), nom: 'Pepe', symbole: 'PEPE' }, { k: 'm', t: TV + 65e3, jeton: A(78), nom: 'Pepe', symbole: 'PEPE2' }, { k: 'm', t: TV + 125e3, jeton: A(88), nom: 'Wojak', symbole: 'WOJAK' }, { k: 'm', t: TV + 185e3, jeton: A(89), nom: 'Wojak', symbole: 'WOJAK2' },
+        { k: 'clone', t: TV + 5, jeton: A(77), groupe: A(77), rang: 1, douteux: false }, { k: 'clone', t: TV + 65e3, jeton: A(78), groupe: A(77), rang: 2, douteux: false },
+        { k: 'clone', t: TV + 125e3, jeton: A(88), groupe: A(88), rang: 1, douteux: false }, { k: 'clone', t: TV + 185e3, jeton: A(89), groupe: A(88), rang: 2, douteux: false }]);
+      w('2026-10-19.jsonl', [{ k: 'n', t: TR, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: TR + 60e3, jeton: A(2), bloc: 11, deployer: A(802) }, { k: 'n', t: TR + 120e3, jeton: A(5), bloc: 12, deployer: A(805) }, { k: 'n', t: TR + 180e3, jeton: A(6), bloc: 13, deployer: A(806) },
+        { k: 'm', t: TR + 5, jeton: A(1), nom: 'Pepe', symbole: 'PEPE3' }, { k: 'm', t: TR + 65e3, jeton: A(2), nom: 'Pepe', symbole: 'PEPE4' }, { k: 'm', t: TR + 125e3, jeton: A(5), nom: 'Wojak', symbole: 'WOJAK' }, { k: 'm', t: TR + 185e3, jeton: A(6), nom: 'Wojak', symbole: 'WJK6' },
+        { k: 'clone', t: TR + 5, jeton: A(1), groupe: A(77), rang: 3, douteux: false }, { k: 'clone', t: TR + 65e3, jeton: A(2), groupe: A(77), rang: 4, douteux: false },
+        { k: 'clone', t: TR + 125e3, jeton: A(5), groupe: A(88), rang: 3, douteux: false }, { k: 'clone', t: TR + 185e3, jeton: A(6), groupe: A(88), rang: 4, douteux: false }]);
+      /* avec registre : Wojak (A88) est dit ne au bloc 1, Pepe (A77) au bloc 5 — le registre decide de la racine, pas l'adresse */
+      if (avecRegistre) fs.writeFileSync(path.join(D, 'lancements', 'etat.json'), JSON.stringify({ grappes: { [A(77)]: { n: 4, bloc: 5, t: TV + 120e3, dt: TR + 60e3 }, [A(88)]: { n: 4, bloc: 1, t: TV, dt: TR + 180e3 } } }));
+      const vieux = fs.readFileSync(path.join(D, 'lancements', '2026-09-10.jsonl'), 'utf8');
+      const g = banc({ dossier: D, now: T0 + 3600e3 });
+      const R = g.C._registre(), c = (i) => g.C._fiches.get(A(i)).cl;
+      ok(R[A(77)] && R[A(77)].n === 4 && R[A(88)] && R[A(88)].n === 4 && g.C.vue().clones.registre.reconstruites === (avecRegistre ? 0 : 2) && g.C.vue().clones.grappes === 2, (avecRegistre ? 'registre relu' : 'registre reconstruit des lignes') + ' : deux grappes de 4 dont 2 membres sorties chacune, racines hors memoire');
+      g.C.naissance({ jeton: A(9), bloc: 20, t: g.H.now, deployer: A(809) });
+      const e = espion();
+      try { g.C.meta(A(9), { nom: 'Pepe', symbole: 'WOJAK' }); } finally { e.fin(); }
+      const racine = avecRegistre ? A(88) : A(77);
+      ok([1, 2, 5, 6, 9].every((i) => c(i).g === racine), 'fondues par un 9e (nom de l une, symbole de l autre) : une seule grappe, racine ' + (avecRegistre ? 'A88 (bloc 1 au registre)' : 'A77 (sans bloc connu : l adresse la plus basse, CHOISI)'));
+      ok([1, 2, 5, 6, 9].map((i) => c(i).rang).join() === '5,6,7,8,9', 'n = 4 + 4 + 1 = 9 ; les 5 membres en memoire renumerotes 5 a 9 dans l ordre des naissances, derriere les 4 sortis (la deduction des rangs notes disait 2 sortis : 3 a 7) [' + [1, 2, 5, 6, 9].map((i) => c(i).rang).join() + ']');
+      ok(e.clones().join() === '5' && lignesClone(D).length === 13 && g.C.vue().clones.revus === 4, '5 lignes (le 9e et les 4 renumerotees) en UN appel appendFileSync, clonesRevus 4 [' + e.clones().join() + ']');
+      ok(R[racine] && R[racine].n === 9 && R[racine].dt === g.H.now && !R[avecRegistre ? A(77) : A(88)] && g.C.vue().clones.grappes === 1, 'registre : la racine compte 9, derniere naissance = celle du 9e, l entree absorbee effacee');
+      ok(fs.readFileSync(path.join(D, 'lancements', '2026-09-10.jsonl'), 'utf8') === vieux, 'LIMITE : le fichier de 41 j n est pas reecrit — la racine absorbee y dit toujours « rang 1, son propre groupe », seuls le registre et les lignes en memoire disent la grappe fondue');
+      const B = g.C.bilan();
+      ok(B.parGroupeTaille['4+'].n === 5 && B.parClone['copy #3+'].n === 5 && g.C.vue().clones.plusGrosDuJour === null, 'bilan : 5 fiches dans une grappe de 4+ (9 au registre), 5 copies #3+ ; une seule nee du jour : pas de « plus grosse du jour »');
+      const g2 = banc({ dossier: D, now: g.H.now });        // sans tic : etat.json absent ou perime -> reconstruit des lignes
+      ok(g2.C._registre()[racine].n === 9 && !g2.C._registre()[avecRegistre ? A(77) : A(88)] && g2.C.vue().clones.grappes === 1 && g2.C.vue().clones.registre.effacees === (avecRegistre ? 1 : 0) && g2.C.vue().compteurs.clonesIncoherents === 0 && [1, 2, 5, 6, 9].every((i) => g2.C._fiches.get(A(i)).cl.g === racine), 'redemarrage ' + (avecRegistre ? 'sur un etat.json en retard (sauve avant la fusion) : complete des lignes relues, l entree de la racine absorbee (plus aucun membre note en memoire) effacee et comptee' : 'sans etat.json : reconstruit') + ' : n = 9, l absorbee ne revient pas, aucune incoherence');
+      await g2.C.tic();                                     // sauve le registre a jour
+      const g3 = banc({ dossier: D, now: g2.H.now });
+      ok(g3.C._registre()[racine].n === 9 && g3.C.vue().clones.registre.reconstruites === 0 && g3.C.vue().clones.registre.effacees === 0 && g3.C.vue().clones.grappes === 1, 'apres un tic, le redemarrage suivant relit le registre tel quel : rien a reconstruire, rien a effacer');
+    };
+    await fusion(false);
+    await fusion(true);
+    /* la TAILLE d'une grappe de 30 j+ : un seul membre en memoire (#3), l'original et #2 sortis -> « 2-3 » au bilan, pas « 1 » */
+    const D17 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-t-'));
+    fs.mkdirSync(path.join(D17, 'lancements'));
+    const j17 = (f, l) => fs.writeFileSync(path.join(D17, 'lancements', f), l.map((o) => JSON.stringify(o)).join('\n') + '\n');
+    j17('2026-09-10.jsonl', [{ k: 'n', t: TV, jeton: A(77), bloc: 1, deployer: A(877) }, { k: 'n', t: TV + 60e3, jeton: A(78), bloc: 2, deployer: A(878) },
+      { k: 'm', t: TV + 5, jeton: A(77), nom: 'Pepe', symbole: 'PEPE' }, { k: 'm', t: TV + 65e3, jeton: A(78), nom: 'Pepe', symbole: 'PEPE2' },
+      { k: 'clone', t: TV + 5, jeton: A(77), groupe: A(77), rang: 1, douteux: false }, { k: 'clone', t: TV + 65e3, jeton: A(78), groupe: A(77), rang: 2, douteux: false }]);
+    j17('2026-10-19.jsonl', [{ k: 'n', t: TR, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'm', t: TR + 5, jeton: A(1), nom: 'Pepe', symbole: 'PEPE3' }, { k: 'clone', t: TR + 5, jeton: A(1), groupe: A(77), rang: 3, douteux: false }]);
+    const g17 = banc({ dossier: D17, now: T0 + 3600e3 });
+    const B17 = g17.C.bilan();
+    ok(B17.parGroupeTaille['2-3'] && B17.parGroupeTaille['2-3'].n === 1 && !B17.parGroupeTaille['1'] && g17.C._registre()[A(77)].n === 3, 'grappe de 30 j+ avec un seul membre en memoire : taille 3 au registre -> « 2-3 », pas « 1 » (le compte des fiches en memoire disait 1)');
+    g17.C.naissance({ jeton: A(3), bloc: 20, t: g17.H.now, deployer: A(803) }); g17.C.meta(A(3), { nom: 'Pepe', symbole: 'PEPE4' });
+    g17.C.naissance({ jeton: A(4), bloc: 21, t: g17.H.now + 1, deployer: A(804) }); g17.C.meta(A(4), { nom: 'Pepe', symbole: 'PEPE5' });
+    g17.H.now += 11 * 60e3;
+    const B17b = g17.C.bilan(), v17 = g17.C.vue().clones;
+    ok(g17.C._fiches.get(A(3)).cl.rang === 4 && g17.C._fiches.get(A(4)).cl.rang === 5 && B17b.parGroupeTaille['4+'].n === 3 && v17.plusGrosDuJour && v17.plusGrosDuJour.n === 5 && v17.plusGrosDuJour.jour === 2 && v17.plusGrosDuJour.nom === 'Pepe', 'deux Pepe du jour : rangs 4 et 5, les 3 fiches en memoire dans « 4+ » (5 au registre), plus grosse du jour n = 5 au registre dont 2 du jour (' + JSON.stringify(v17.plusGrosDuJour) + ')');
+    /* la BORNE du registre au demarrage : une entree sans aucun membre note en memoire (tous sortis des 32 j, ou racine absorbee
+       par une fusion non sauvee) est hors d'atteinte — l'index des cles ne porte que la memoire — : effacee, comptee ; une
+       entree illisible aussi ; une grappe dont un membre est note en memoire reste, et son n ne descend jamais sous le registre */
+    const D18 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-m-'));
+    fs.mkdirSync(path.join(D18, 'lancements'));
+    const now18 = T0 + 3600e3;
+    fs.writeFileSync(path.join(D18, 'lancements', 'etat.json'), JSON.stringify({ grappes: { [A(50)]: { n: 7, bloc: 1, t: now18 - 60 * 86400e3, dt: now18 - 40 * 86400e3 }, [A(51)]: { n: 2, bloc: 2, t: now18 - 12 * 86400e3, dt: now18 - 10 * 86400e3 }, [A(52)]: { n: 'x' }, [A(53)]: { n: 6, bloc: 3, t: now18 - 50 * 86400e3, dt: now18 - 20 * 86400e3 } } }));
+    fs.writeFileSync(path.join(D18, 'lancements', '2026-10-19.jsonl'), [{ k: 'n', t: TR, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'm', t: TR + 5, jeton: A(1), nom: 'Brett', symbole: 'BRETT' }, { k: 'clone', t: TR + 5, jeton: A(1), groupe: A(53), rang: 4, douteux: false }].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const g18 = banc({ dossier: D18, now: now18 });
+    const R18 = g18.C._registre(), v18 = g18.C.vue().clones;
+    ok(!R18[A(50)] && !R18[A(51)] && !R18[A(52)] && R18[A(53)] && R18[A(53)].n === 6 && R18[A(53)].bloc === 3 && v18.registre.effacees === 3 && v18.registre.reconstruites === 0 && v18.grappes === 1, 'borne : les deux entrees sans membre note en memoire (40 j et 10 j) et l illisible effacees (3, comptees) ; la grappe de A1 (#4 note) gardee avec son n du registre (6, plus haut que le rang note), son bloc, rien a reconstruire (' + JSON.stringify(R18) + ')');
+    g18.C.naissance({ jeton: A(2), bloc: 30, t: now18, deployer: A(802) }); g18.C.meta(A(2), { nom: 'Brett', symbole: 'BRETT2' });
+    ok(g18.C._fiches.get(A(2)).cl.g === A(53) && g18.C._fiches.get(A(2)).cl.rang === 7, 'un Brett de plus : copie #7 (n du registre 6 + 1), bien que #5 et #6 ne soient notes nulle part en memoire');
+    await g18.C.tic();
+    const E18 = JSON.parse(fs.readFileSync(path.join(D18, 'lancements', 'etat.json'), 'utf8')).grappes;
+    ok(Object.keys(E18).length === 1 && E18[A(53)].n === 7 && E18[A(53)].dt === now18, 'le tic sauve le registre borne et a jour dans etat.json (n = 7, derniere naissance = celle du Brett du jour)');
+    /* un seul jeton : pas de grappe, pas de « plus grosse du jour » a 1 */
+    const g12 = banc();
+    g12.C.naissance({ jeton: A(1), bloc: 10, t: T0, deployer: A(801) }); g12.C.meta(A(1), { nom: 'Alone', symbole: 'ALONE' });
+    const v12 = g12.C.vue().clones, c12 = g12.C.vue().compteurs;
+    ok(g12.C._fiches.get(A(1)).cl.rang === 1 && v12.reperes === 0 && v12.grappes === 0 && v12.plusGrosDuJour === null && v12.indexes === 1 && c12.erreursClone === 0 && c12.clonesIncoherents === 0, 'un seul jeton : original de sa grappe, 0 copie, 0 grappe de 2+, pas de « plus grosse du jour » a 1 (' + JSON.stringify(v12) + ')');
+    /* le bilan refuse la part sous 40 fiches mesurees, la donne a 40 */
+    const g10 = banc();
+    const noms = ['Neiro', 'Brett', 'Mog', 'Andy', 'Bonk', 'Wojak', 'Turbo', 'Floki', 'Popcat', 'Giga'];
+    for (let i = 1; i <= 60; i++) {
+      g10.C.naissance({ jeton: A(i), t: T0 + i * 1000, bloc: 1000 + i, deployer: A(900 + i) });
+      g10.C.meta(A(i), { nom: noms[(i - 1) % 10], symbole: noms[(i - 1) % 10].toUpperCase() });
+      if (i <= 30) g10.marche.set(A(i), { prix: 1, fdv: 2e5, liq: 9000 });
+    }
+    await avance(g10, 61);
+    g10.H.now = T0 + 1441 * 60e3; await g10.C.tic(); await g10.C.tic();
+    const B10 = g10.C.bilan();
+    ok(B10.parClone.original.n === 10 && B10.parClone['copy #2'].n === 10 && B10.parClone['copy #3+'].n === 40, '60 fiches, 10 noms x 6 : 10 originaux, 10 copies #2, 40 copies #3+');
+    ok(B10.parClone.original['24h'].mesures === 10 && B10.parClone.original['24h'].assez === false && B10.parClone.original['24h'].vivantsPct === null, 'originaux : 10 mesures a 24 h, sous 40 -> la part est REFUSEE');
+    ok(B10.parClone['copy #3+']['24h'].mesures === 40 && B10.parClone['copy #3+']['24h'].assez && B10.parClone['copy #3+']['24h'].vivantsPct === 25, 'copies #3+ : 40 mesures, 10 vivantes -> 25 %');
+    ok(B10.parGroupeTaille['4+'].n === 60 && g10.C.vue().clones.grappes === 10, 'par taille de grappe : les 60 dans des grappes de 4+ ; 10 grappes');
+    ok(!/f\.cl|parClone|douteux/.test(fs.readFileSync(path.join(__dirname, 'smart_lancements.js'), 'utf8') + fs.readFileSync(path.join(__dirname, 'ai_colonie.js'), 'utf8')), 'aucune regle d achat, d alerte ni de vente ne lit les copies');
   }
 
   console.log('-- 6. branche dans les lancements et le serveur');
