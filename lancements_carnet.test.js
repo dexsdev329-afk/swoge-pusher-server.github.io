@@ -19,8 +19,9 @@
  *   8. les copies de jetons (22/10, methode novamp reecrite) : cles serree et
  *      lache (sosies, leetspeak, invisibles, remplissage), grappes par symbole,
  *      par nom ou a 1 edition (48 h), premier ne par bloc, rangs renumerotes
- *      quand l'original est lu apres, douteux a 2 faits, redemarrage relu,
- *      parClone refuse sous 40.
+ *      quand l'original est lu apres, douteux a 2 faits (createur en serie :
+ *      aucun des 5 d'avant vivant a 24 h), redemarrage relu, direct differe
+ *      pendant la migration, rang illisible ignore, parClone refuse sous 40.
  */
 const fs = require('fs');
 const os = require('os');
@@ -326,7 +327,14 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     g6.H.now += 11 * 60e3;     // le cache du bilan (10 min)
     ok(g6.C.bilan().parClone['original, doubtful'].n === 2 && c6(16).douteux === false, 'Wif : top 10 a 100 % lu a 24 h -> 2 faits, douteux au bilan ; la ligne de sa copie garde ce qu on savait alors');
     const v6 = g6.C.vue().clones;
-    ok(v6.reperes === 6 && v6.revus === 6 && v6.grappes === 5 && v6.plusGrosDuJour && v6.plusGrosDuJour.n === 5 && v6.plusGrosDuJour.original === A(10) && v6.plusGrosDuJour.nom === 'PEPE', 'vue : 6 copies reperees, 6 fiches renotees, 5 grappes, la plus grosse du jour : PEPE x5 (' + JSON.stringify(v6) + ')');
+    /* 9 fiches a rang > 1 : A1 A2 A4 A5 (PEPE), A8 A9 (Shiba), A11, A14, A16 — A1, notee « original » puis renumerotee copie
+       quand A10 est lu, compte (un compteur par detection la manquait : il disait 6) */
+    ok(v6.reperes === 9 && v6.revus === 6 && v6.grappes === 5 && v6.plusGrosDuJour && v6.plusGrosDuJour.n === 5 && v6.plusGrosDuJour.original === A(10) && v6.plusGrosDuJour.nom === 'PEPE', 'vue : 9 copies en memoire (fiches a rang > 1), 6 fiches renotees, 5 grappes, la plus grosse du jour : PEPE x5 (' + JSON.stringify(v6) + ')');
+    /* createur en serie : ≥ 5 lancements avant ET aucun vivant a 24 h (le « aucun gradue » de novamp, sur la definition du carnet) */
+    for (let i = 40; i <= 45; i++) ne(i, 1600 + i, T0 + 1800e3 + i * 1000, { deployer: A(999), exemptions: i === 45 ? 4 : 0 });
+    ok(g6.C.douteuxDe(F6.get(A(45))) === 2 && g6.C.douteuxDe(F6.get(A(44))) === 0, '6e lancement du meme createur, aucun des 5 d avant vivant a 24 h, 4 exemptes : 2 faits ; le 5e (4 avant, 0 exempte) : 0');
+    F6.get(A(41)).s['24h'] = { m: true, liq: 9000 };          // l'un des cinq vivait a 24 h (le champ que lit le bilan pour parDevDejaVivant)
+    ok(g6.C.douteuxDe(F6.get(A(45))) === 1 && g6.C.douteuxDe(F6.get(A(45)), 5, true) === 1 && g6.C.douteuxDe(F6.get(A(45)), 5, false) === 2, 'un des cinq vivait a 24 h : plus un fait (1) ; par le passe du bilan (5, vivant) : 1 ; (5, aucun) : 2');
     /* la distance d'edition ne regarde que 48 h ; la cle exacte n'a pas d'age */
     ne(20, 200, T0 + 3600e3); g6.C.meta(A(20), { nom: 'Kumo', symbole: 'KUMO' });     // (« Bork » serait a 1 edition de Bonk : voulu)
     g6.H.now = T0 + 50 * 3600e3;
@@ -357,11 +365,31 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
       { k: 'm', t: T0 + 5, jeton: A(1), nom: 'Neiro', symbole: 'NEIRO' }, { k: 'm', t: T0 + 6, jeton: A(2), nom: 'Neiro', symbole: 'NEIRO2' }].map((o) => JSON.stringify(o)).join('\n') + '\n');
     const g8 = banc({ dossier: D8, now: T0 + 3600e3 });
     ok(!g8.C._fiches.get(A(2)).cl && g8.C.vue().clones.aReperer === 2 && lignesClone(D8).length === 0, 'fiches d avant ce lot (nom lu, pas de ligne clone) : en attente au demarrage, rien d ecrit en bloc');
+    g8.C.naissance({ jeton: A(3), bloc: 12, t: g8.H.now, deployer: A(803) }); g8.C.meta(A(3), { nom: 'Neiro', symbole: 'NEIRO3' }); g8.C.meta(A(3), { nom: 'Neiro', symbole: 'NEIRO3' });
+    ok(!g8.C._fiches.get(A(3)).cl && g8.C.vue().clones.aReperer === 3 && lignesClone(D8).length === 0, 'une metadonnee en direct pendant la migration attend en fin de file, une fois (reperee tout de suite, elle serait « original » des plus vieux en attente)');
     await g8.C.tic();
-    ok(g8.C._fiches.get(A(2)).cl && g8.C._fiches.get(A(2)).cl.g === A(1) && g8.C._fiches.get(A(2)).cl.rang === 2 && lignesClone(D8).length === 2 && g8.C.vue().clones.migres === 2 && g8.C.vue().clones.aReperer === 0, 'au premier tic : reperees dans l ordre des naissances, ecrites une fois');
+    const F8 = g8.C._fiches, v8 = g8.C.vue().clones;
+    ok(F8.get(A(2)).cl && F8.get(A(2)).cl.g === A(1) && F8.get(A(2)).cl.rang === 2 && F8.get(A(3)).cl.g === A(1) && F8.get(A(3)).cl.rang === 3 && lignesClone(D8).length === 3 && v8.migres === 3 && v8.aReperer === 0 && v8.revus === 0, 'au premier tic : reperees dans l ordre des naissances, ecrites une fois, le direct en dernier (copie #3), rien de renumerote');
     const g9 = banc({ dossier: D8, now: T0 + 3600e3 });
     await g9.C.tic();
-    ok(lignesClone(D8).length === 2 && g9.C.vue().clones.aReperer === 0 && g9.C.vue().clones.migres === 0, 'au redemarrage suivant : relues, rien a reperer, rien de reecrit');
+    ok(lignesClone(D8).length === 3 && g9.C.vue().clones.aReperer === 0 && g9.C.vue().clones.migres === 0 && g9.C.vue().compteurs.clonesIncoherents === 0, 'au redemarrage suivant : relues, rien a reperer, rien de reecrit, aucune incoherence');
+    /* une ligne au rang illisible n'est pas un « original » par defaut ; l'original sorti de la memoire nomme encore la grappe */
+    const D11 = fs.mkdtempSync(path.join(os.tmpdir(), 'carnet-c-'));
+    fs.mkdirSync(path.join(D11, 'lancements'));
+    fs.writeFileSync(path.join(D11, 'lancements', '2026-10-21.jsonl'), [{ k: 'n', t: T0, jeton: A(1), bloc: 10, deployer: A(801) }, { k: 'n', t: T0 + 1, jeton: A(2), bloc: 11, deployer: A(802) }, { k: 'n', t: T0 + 2, jeton: A(3), bloc: 12, deployer: A(803) },
+      { k: 'm', t: T0 + 5, jeton: A(1), nom: 'Neiro', symbole: 'NEIRO' }, { k: 'm', t: T0 + 6, jeton: A(2), nom: 'Neiro', symbole: 'NEIRO2' }, { k: 'm', t: T0 + 7, jeton: A(3), nom: 'Neiro', symbole: 'NEIRO3' },
+      { k: 'clone', t: T0 + 8, jeton: A(1), groupe: A(77), rang: 2, douteux: false }, { k: 'clone', t: T0 + 8, jeton: A(2), groupe: A(77), rang: 3, douteux: false }, { k: 'clone', t: T0 + 8, jeton: A(3), groupe: A(77), rang: 'abc', douteux: false }].map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const g11 = banc({ dossier: D11, now: T0 + 3600e3 });
+    const F11 = g11.C._fiches, v11 = g11.C.vue().clones;
+    ok(F11.get(A(1)).cl.g === A(77) && F11.get(A(1)).cl.rang === 2 && !F11.get(A(3)).cl && v11.aReperer === 1 && v11.reperes === 2 && v11.grappes === 1, 'rang « abc » : la ligne est ignoree, la fiche attend le tic (jamais rang 1 par defaut) ; les deux autres gardent leur grappe dont l original (A77) est hors memoire');
+    ok(v11.plusGrosDuJour && v11.plusGrosDuJour.n === 2 && v11.plusGrosDuJour.original === A(77) && v11.plusGrosDuJour.nom === 'Neiro' && v11.plusGrosDuJour.sym === 'NEIRO', 'la plus grosse du jour est nommee par son plus vieux membre en memoire quand l original est sorti des 32 j (' + JSON.stringify(v11.plusGrosDuJour) + ')');
+    await g11.C.tic();
+    ok(F11.get(A(3)).cl && F11.get(A(3)).cl.g === A(77) && F11.get(A(3)).cl.rang === 4 && lignesClone(D11).length === 4 && g11.C.vue().clones.plusGrosDuJour.n === 3 && g11.C.vue().compteurs.clonesIncoherents === 0, 'au tic : reperee par la cle exacte, copie #4 derriere l original hors memoire et les deux relues ; une ligne ecrite');
+    /* un seul jeton : pas de grappe, pas de « plus grosse du jour » a 1 */
+    const g12 = banc();
+    g12.C.naissance({ jeton: A(1), bloc: 10, t: T0, deployer: A(801) }); g12.C.meta(A(1), { nom: 'Alone', symbole: 'ALONE' });
+    const v12 = g12.C.vue().clones, c12 = g12.C.vue().compteurs;
+    ok(g12.C._fiches.get(A(1)).cl.rang === 1 && v12.reperes === 0 && v12.grappes === 0 && v12.plusGrosDuJour === null && v12.indexes === 1 && c12.erreursClone === 0 && c12.clonesIncoherents === 0, 'un seul jeton : original de sa grappe, 0 copie, 0 grappe de 2+, pas de « plus grosse du jour » a 1 (' + JSON.stringify(v12) + ')');
     /* le bilan refuse la part sous 40 fiches mesurees, la donne a 40 */
     const g10 = banc();
     const noms = ['Neiro', 'Brett', 'Mog', 'Andy', 'Bonk', 'Wojak', 'Turbo', 'Floki', 'Popcat', 'Giga'];

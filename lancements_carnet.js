@@ -203,7 +203,12 @@ function reseauxDe(liens) {
  * Un symbole n'a de cle qu'a partir de 3 caracteres (serres), un nom a partir de 4 : en dessous, null —
  * jamais de grappe sur une cle vide ou trop courte. La distance de Damerau-Levenshtein (alignement
  * optimal, transposition comprise) tolere 1 edition si la plus courte des deux cles fait ≥ 4, 2 si ≥ 9,
- * sinon l'egalite stricte seulement. Le regroupement lui-meme est dans cree() (`repere`). */
+ * sinon l'egalite stricte seulement.
+ * Longueurs minimales 3 / 4 (novamp : MIN_SYMBOL_KEY et MIN_NAME_KEY dans src/vamp/cluster.ts — la sur la cle LACHE,
+ * ici sur la serree) et tolerance 1 (≥ 4) / 2 (≥ 9) (novamp : nearEnough dans src/vamp/normalize.ts) : valeurs de
+ * novamp reprises telles quelles, CHOISIES le 22/10/2026, NON MESUREES ici — a juger sur la vue (grappes, plus grosse
+ * du jour) et le bilan parGroupeTaille quand ils auront tourne. La table SOSIES est CHOISIE (pas les confusables
+ * Unicode complets), comme REMPLISSAGE. Le regroupement lui-meme est dans cree() (`repere`). */
 const SOSIES = new Map('а:a е:e о:o р:p с:c у:y х:x і:i ј:j ѕ:s һ:h ԛ:q ԝ:w ӏ:l ԁ:d ѵ:v в:b к:k м:m н:h т:t ь:b ԍ:g ѡ:w α:a ο:o ε:e ν:v ρ:p τ:t υ:u ι:i κ:k ϲ:c η:n β:b γ:y χ:x ω:w μ:u ı:i ł:l ø:o đ:d ð:d ħ:h ŧ:t ß:ss æ:ae œ:oe'
   .split(' ').map((p) => p.split(':')));
 const INVISIBLES = /[\p{Cf}\u115f\u1160\u3164\uffa0]/gu;
@@ -291,7 +296,7 @@ function cree(deps) {
      surement plus complique d'avoir du volume » — on mesure si moins de lancements survivent, on ne decide rien. */
   const marcheA = typeof d.marche === 'function' ? d.marche : null;
   const ETAT = path.join(D, 'etat.json');
-  const C = { naissances: 0, doublons: 0, metas: 0, metasVides: 0, metasAbandonnees: 0, metaFileDebordee: 0, suivis: 0, manques: 0, dsAppels: 0, dsErreurs: 0, erreursEcriture: 0, clones: 0, clonesRevus: 0, clonesMigres: 0 };
+  const C = { naissances: 0, doublons: 0, metas: 0, metasVides: 0, metasAbandonnees: 0, metaFileDebordee: 0, suivis: 0, manques: 0, dsAppels: 0, dsErreurs: 0, erreursEcriture: 0, clonesRevus: 0, clonesMigres: 0, clonesIncoherents: 0, erreursClone: 0 };
   /* la fiche compacte de chaque jeton, et l'ordre de naissance (pour les curseurs) */
   const F = new Map();
   let ordre = [];
@@ -310,13 +315,18 @@ function cree(deps) {
   const aReperer = [];             // fiches d'avant ce lot (nom lu, pas de ligne clone), reperees CLONE_MIGRE_PAR_TIC par tic
   let seq = 0;                     // index de journal des naissances (l'ordre des lignes « n »)
 
-  function ecrisLigne(o) {
+  /** Ecrit des lignes du MEME instant en un seul appendFileSync : une renumerotation de grappe (repere) est sur le
+   *  disque entiere ou pas du tout. Un arret (SIGTERM de Railway) entre deux lignes laisserait une grappe eclatee pour
+   *  toujours : les membres non reecrits garderaient leur ancien groupe, et une fiche notee n'est jamais re-reperee. */
+  function ecrisLignes(l) {
+    if (!l.length) return true;
     try {
       fs.mkdirSync(D, { recursive: true });
-      fs.appendFileSync(path.join(D, jour(o.t || maintenant()) + '.jsonl'), JSON.stringify(o) + '\n');
+      fs.appendFileSync(path.join(D, jour(l[0].t || maintenant()) + '.jsonl'), l.map((o) => JSON.stringify(o)).join('\n') + '\n');
       return true;
     } catch (e) { C.erreursEcriture++; return false; }
   }
+  function ecrisLigne(o) { return ecrisLignes([o]); }
   function sauveEtat() {
     try { fs.mkdirSync(D, { recursive: true }); fs.writeFileSync(ETAT + '.tmp', JSON.stringify(etat)); fs.renameSync(ETAT + '.tmp', ETAT); } catch (e) { C.erreursEcriture++; }
   }
@@ -362,8 +372,9 @@ function cree(deps) {
     } else if (o.k === 'clone') {
       /* la grappe de copies (22/10) : g = le jeton du premier ne, rang de naissance dans la grappe, original douteux */
       const f = F.get(j); if (!f) return;
+      if (!(num(o.rang) >= 1)) return;                         // rang illisible : la fiche reste sans grappe et repasse par le tic, jamais « original » par defaut
       const g = adr(o.groupe) || j;
-      f.cl = { g, rang: Math.max(1, num(o.rang) || 1), douteux: !!o.douteux };
+      f.cl = { g, rang: num(o.rang), douteux: !!o.douteux };
       enregistre(j, g);
     }
   }
@@ -386,6 +397,9 @@ function cree(deps) {
        naissances ; une fiche deja notee garde sa grappe (0,4 s pour 20 000) ; une fiche d'avant ce lot (nom lu, pas de
        ligne « clone ») attend le tic : reperee une fois, ecrite, dans l'ordre des naissances */
     for (const j of ordre) { const f = F.get(j); if (f.th && (f.nom || f.sym)) { if (f.cl) repere(j); else aReperer.push(j); } }
+    /* mesure (22/10) : une fiche dont la racine de l'union-find n'est pas le groupe note. Ne doit plus arriver depuis
+       que la renumerotation s'ecrit en un seul appel (ecrisLignes) ; compte dans la vue (attendu 0), pas repare. */
+    for (const j of ordre) { const f = F.get(j); if (f.cl && racine(j) !== f.cl.g) C.clonesIncoherents++; }
   }
   charge();
 
@@ -471,7 +485,15 @@ function cree(deps) {
     ecrisLigne(o);
     applique(o);
     C.metas++;
-    repere(j);
+    /* Le regroupement n'arrete jamais le lot RPC qui l'appelle (smart_lancements : metas puis soldes dans le meme try) :
+       une erreur est comptee, le lot continue. Pendant la migration des fiches d'avant le lot (aReperer), le direct
+       attend en fin de file : repere tout de suite, il serait « original » de toute grappe dont les membres plus vieux
+       attendent encore, et chaque membre migre ensuite la renumeroterait (mesure du 22/10 : un doublon d'avant le lot et
+       le meme en direct avant le tic -> 3 lignes « clone » au lieu de 2, le direct note original puis la grappe reecrite,
+       clonesRevus 1 ; a l'echelle d'un deploiement, des lignes en plus par grappe pour rien). En fin de file, il est ne
+       apres ce qui attend : 2 lignes, rien ne se renumerote (meme mesure). */
+    if (aReperer.length) { if (!aReperer.includes(j)) aReperer.push(j); }
+    else { try { repere(j); } catch (e) { C.erreursClone++; } }
   }
 
   // ---------------------------------------------------------- les copies (22/10)
@@ -518,15 +540,32 @@ function cree(deps) {
     for (let i = lo; i < ordre.length && F.get(ordre[i]).t <= t + CLONE_DL_MS; i++) out.push(ordre[i]);
     return out;
   }
-  /** Les lancements du meme createur nes avant f (le bilan les a dans f.devAvant ; ici on compte quand il n'a pas tourne). */
-  function lancementsAvant(f) { let n = 0; for (const x of (f.dev && PAR_DEV.get(f.dev)) || []) if (x !== f && avantF(x, f)) n++; return n; }
+  /** Vivant a l'horizon h : marche DexScreener avec ≥ VIVANT_LIQ de liquidite (la definition du bilan). */
+  const vivantA = (f, h) => !!(f.s[h] && f.s[h].m && (f.s[h].liq || 0) >= VIVANT_LIQ);
+  /** Le passe du createur de f, dans l'ordre des naissances : { n : lancements avant, vivant : l'un d'eux vivait a 24 h }
+   *  (le bilan l'a dans f.devAvant / f.devVivantAvant ; ici on compte quand il n'a pas tourne). */
+  function passeDev(f) {
+    let n = 0, vivant = false;
+    for (const x of (f.dev && PAR_DEV.get(f.dev)) || []) if (x !== f && avantF(x, f)) { n++; if (vivantA(x, '24h')) vivant = true; }
+    return { n, vivant };
+  }
   /** Le nombre de faits qui rendent un premier ne « douteux » (novamp : taint) ; 2 faits = douteux :
    *    achat du dev > 10 % de l'offre a T+2 (f.soldes.t2) · ≥ 4 wallets exemptes de la taxe (f.ex) ·
-   *    createur avec ≥ 5 lancements avant (ordre de naissance) · top 10 ≥ 30 % a 24 h quand c'est lu.
+   *    createur avec ≥ 5 lancements avant (ordre de naissance) dont AUCUN ne vivait a 24 h · top 10 ≥ 30 % a 24 h quand
+   *    c'est lu.
+   *  Seuils = les valeurs par defaut de novamp, reprises telles quelles (src/util/env.ts : TAINT_DEV_SHARE_PCT 10,
+   *  TAINT_EXEMPT_WALLETS 4, TAINT_SERIAL_LAUNCHES 5, RISK_HOLDER_RED_PCT 30 ; src/vamp/verdict.ts : tainted a
+   *  grounds.length >= 2 ; relus le 22/10/2026) : CHOISIS le 22/10/2026, NON MESURES ici — a juger sur la ligne parClone
+   *  « original, doubtful » contre « original » quand elles auront BILAN_ASSEZ fiches mesurees chacune.
+   *  « Aucun vivant a 24 h » tient lieu du « aucun gradue » de novamp (verdict.ts : dep.priorLaunches >= 5 &&
+   *  dep.graduated === 0) : la graduation Pons n'est pas gardee dans la fiche, « vivant a 24 h » est la definition du
+   *  carnet (parDevDejaVivant). A la detection (T+quelques minutes) un lancement de moins de 24 h n'est pas encore vivant,
+   *  comme un lancement de novamp n'est pas encore gradue : le bilan recompte sur la fiche.
    *  Le « meme financeur que les copies » de novamp n'est PAS lu ici (il faudrait la source des fonds du createur). */
-  function douteuxDe(f, devAvant) {
+  function douteuxDe(f, devAvant, devVivantAvant) {
     if (!f) return 0;
-    return (fini(f.soldes.t2) && f.soldes.t2 > 10 ? 1 : 0) + (f.ex >= 4 ? 1 : 0) + ((devAvant == null ? lancementsAvant(f) : devAvant) >= 5 ? 1 : 0)
+    const p = devAvant == null ? passeDev(f) : { n: devAvant, vivant: !!devVivantAvant };
+    return (fini(f.soldes.t2) && f.soldes.t2 > 10 ? 1 : 0) + (f.ex >= 4 ? 1 : 0) + (p.n >= 5 && !p.vivant ? 1 : 0)
       + (f.det['24h'] && fini(f.det['24h'].top10) && f.det['24h'].top10 >= 30 ? 1 : 0);
   }
   function clesIndex(c) { return [...new Set([].concat(c.nom ? ['n:' + c.nom.s, 'n:' + c.nom.l] : [], c.sym ? ['s:' + c.sym.s, 's:' + c.sym.l] : []))]; }
@@ -560,19 +599,21 @@ function cree(deps) {
     const simple = racines.size === 0 || (racines.size === 1 && avant(DERNIER.get([...racines][0]), j));
     let r = j;
     for (const x of voisins) r = unit(r, x);
-    const douteux = douteuxDe(F.get(r)) >= 2;
-    const ecris = (m, rang) => { const o = { k: 'clone', t: maintenant(), jeton: m, groupe: r, rang, douteux }; ecrisLigne(o); applique(o); };
-    if (simple) ecris(j, MEMBRES.get(r).size);
+    const douteux = douteuxDe(F.get(r)) >= 2, t = maintenant();
+    const ligne = (m, rang) => ({ k: 'clone', t, jeton: m, groupe: r, rang, douteux });
+    const lignes = [];
+    if (simple) lignes.push(ligne(j, MEMBRES.get(r).size));
     else {
       const membres = [...MEMBRES.get(r)].sort((a, b) => (a === b ? 0 : avant(a, b) ? -1 : 1));
       membres.forEach((m, i) => {
         const fm = F.get(m);
         if (!fm || (fm.cl && fm.cl.g === r && fm.cl.rang === i + 1)) return;
-        ecris(m, i + 1);
+        lignes.push(ligne(m, i + 1));
         if (m !== j) C.clonesRevus++;
       });
     }
-    if (f.cl && f.cl.rang > 1) C.clones++;
+    ecrisLignes(lignes);                                       // la grappe entiere en un appel : sur le disque entiere ou pas du tout
+    lignes.forEach(applique);
   }
 
   /** Les echeances dues, dans l'ordre des horizons, au plus `max`. */
@@ -645,7 +686,7 @@ function cree(deps) {
     try {
       const now = maintenant();
       /* les copies des fiches d'avant ce lot, par paquets (voir CLONE_MIGRE_PAR_TIC) */
-      for (let n = 0; n < CLONE_MIGRE_PAR_TIC && aReperer.length; n++) { repere(aReperer.shift()); C.clonesMigres++; }
+      for (let n = 0; n < CLONE_MIGRE_PAR_TIC && aReperer.length; n++) { const j = aReperer.shift(); try { repere(j); } catch (e) { C.erreursClone++; } C.clonesMigres++; }
       await ordresEtMetas(now);
       const l = dues(now, DS_LOT);
       if (!l.length) { sauveEtat(); return { fait: 'rien' }; }
@@ -729,7 +770,7 @@ function cree(deps) {
       const f = F.get(j);
       const p = f.dev ? (parDev.get(f.dev) || { n: 0, vivant: false }) : null;
       f.devAvant = p ? p.n : null; f.devVivantAvant = p ? p.vivant : null;
-      if (p) { p.n++; if (f.s['24h'] && f.s['24h'].m && (f.s['24h'].liq || 0) >= VIVANT_LIQ) p.vivant = true; parDev.set(f.dev, p); }
+      if (p) { p.n++; if (vivantA(f, '24h')) p.vivant = true; parDev.set(f.dev, p); }
     }
     /* les copies (22/10) : la taille de chaque grappe, par le groupe note dans les fiches en memoire */
     const tailleGrappe = new Map();
@@ -758,7 +799,7 @@ function cree(deps) {
       parBtc7d: groupe((f) => trancheMarche(f.t, 'btc7d')),
       /* les copies (22/10) : rang de naissance dans la grappe de noms / symboles ; l'original est « douteux » sur ce
          qu'on sait AU BILAN (un fait lu apres la detection compte) ; la taille de la grappe notee */
-      parClone: groupe((f) => (f.cl ? (f.cl.rang === 1 ? (douteuxDe(f, f.devAvant) >= 2 ? 'original, doubtful' : 'original') : f.cl.rang === 2 ? 'copy #2' : 'copy #3+') : null)),
+      parClone: groupe((f) => (f.cl ? (f.cl.rang === 1 ? (douteuxDe(f, f.devAvant, f.devVivantAvant) >= 2 ? 'original, doubtful' : 'original') : f.cl.rang === 2 ? 'copy #2' : 'copy #3+') : null)),
       parGroupeTaille: groupe((f) => (f.cl ? tranche(tailleGrappe.get(f.cl.g) || 1, [2, 4], ['1', '2-3', '4+']) : null)),
       parPlateforme: groupe((f) => f.plat),
       parVenteDevT2: groupe((f) => (f.vd > 0 ? 'dev sold by T+2' : 'dev held at T+2')),
@@ -782,15 +823,24 @@ function cree(deps) {
     return b;
   }
 
-  /** Les copies en un coup d'oeil : copies reperees, grappes de 2+, la plus grosse grappe parmi les jetons nes depuis 24 h. */
+  /** Les copies en un coup d'oeil : copies en memoire (fiches a rang > 1, quel que soit le moment ou elles l'ont recu —
+   *  un jeton note « original » puis renumerote copie compte ; un compteur par detection le manquait), grappes de 2+,
+   *  la plus grosse grappe de 2+ parmi les jetons nes depuis 24 h, nommee par son original ou, s'il est sorti de la
+   *  memoire (32 j), par son plus vieux membre en memoire. */
   function clonesVue() {
     const now = maintenant(), parG = new Map();
-    for (const f of F.values()) if (f.cl && now - f.t < 86400e3) parG.set(f.cl.g, (parG.get(f.cl.g) || 0) + 1);
+    let copies = 0;
+    for (const f of F.values()) if (f.cl) { if (f.cl.rang > 1) copies++; if (now - f.t < 86400e3) parG.set(f.cl.g, (parG.get(f.cl.g) || 0) + 1); }
     let gros = null;
-    for (const [g, n] of parG) if (!gros || n > gros.n) gros = { n, original: g, nom: F.get(g) ? F.get(g).nom : null, sym: F.get(g) ? F.get(g).sym : null };
+    for (const [g, n] of parG) {
+      if (n < 2 || (gros && n <= gros.n)) continue;
+      let fg = F.get(g) || null;
+      if (!fg) for (const m of MEMBRES.get(g) || []) { const fm = F.get(m); if (fm && (!fg || avantF(fm, fg))) fg = fm; }
+      gros = { n, original: g, nom: fg ? fg.nom : null, sym: fg ? fg.sym : null };
+    }
     let grappes = 0;
     for (const m of MEMBRES.values()) if (m.size > 1) grappes++;
-    return { reperes: C.clones, revus: C.clonesRevus, migres: C.clonesMigres, aReperer: aReperer.length, grappes, indexes: KJ.size, plusGrosDuJour: gros, dlFenetreH: CLONE_DL_MS / 3600e3 };
+    return { reperes: copies, revus: C.clonesRevus, migres: C.clonesMigres, aReperer: aReperer.length, grappes, indexes: KJ.size, plusGrosDuJour: gros, dlFenetreH: CLONE_DL_MS / 3600e3 };
   }
   const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileDetenteurs: etat.det.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES, clones: clonesVue() });
   return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES };
