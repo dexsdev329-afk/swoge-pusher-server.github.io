@@ -5933,6 +5933,55 @@ function noteAudit(cle, r) {
   if (r <= -30) b.effondres++;
 }
 
+/* ---- L'AUDIT PAR REGIME DE MARCHE BTC (22/10/2026, observation) ----
+ * Mesure du 22/10 : le regime du jour (BTC 24 h < -3 %) est le PIRE mesure
+ * sur le carnet des trades faits (net -11,5 % sur 31, t -2,64) et AUCUNE regle
+ * ne le lit. `parMarcheDe` ne decoupe que le carnet (les trades faits) ; ici on
+ * decoupe l'AUDIT DES OMBRES (tout ce que la colonie examine) par regime, pour
+ * savoir si une ligne monte differemment selon le marche. Deux axes seulement,
+ * btc24h et btc7d (ceux que le proprietaire regarde), lus a l'instant de
+ * l'ombre sur le meme contexte de marche que parMarcheDe. Aucune decision ne
+ * lit ceci : accumulateur parallele, meme chiffre net que `noteAudit`. */
+const AXES_REGIME = ['btc24h', 'btc7d'];
+function noteAuditRegime(cle, r, t0) {
+  const M = marcheCourant();
+  if (!M || typeof M.contexteA !== 'function' || !fini(t0)) return;
+  let c; try { c = M.contexteA(t0); } catch (e) { c = null; }
+  if (!c) return;
+  if (!E.auditRegime || typeof E.auditRegime !== 'object') E.auditRegime = {};
+  const R = E.auditRegime[cle] || (E.auditRegime[cle] = {});
+  for (const axe of AXES_REGIME) {
+    const k = MC.trancheDe(axe, c[axe]) || MC.SANS;
+    const A = R[axe] || (R[axe] = {});
+    const a = A[k] || (A[k] = { n: 0, s: 0, montes: 0, effondres: 0 });
+    a.n++; a.s += r;
+    if (r >= 20) a.montes++;
+    if (r <= -30) a.effondres++;
+  }
+}
+/** La part de montees de chaque ligne PAR REGIME, comparee a « achete ou
+ *  retenu » DU MEME regime ; « unknown » sous AUDIT_MIN_OBS. Observation. */
+function auditRegimeVue() {
+  const RG = E.auditRegime;
+  if (!RG || typeof RG !== 'object') return null;
+  const ligne = (cle) => {
+    const R = RG[cle]; if (!R) return null;
+    const out = {};
+    for (const axe of AXES_REGIME) {
+      const A = R[axe]; if (!A) continue;
+      out[axe] = Object.keys(A).map((k) => { const a = A[k];
+        return { tranche: k, n: a.n, moyenne: Math.round(a.s / a.n * 10) / 10,
+                 partMontes: a.n ? Math.round(a.montes / a.n * 100) : null,
+                 jugeable: a.n >= AUDIT_MIN_OBS };
+      }).sort((x, y) => y.n - x.n);
+    }
+    return out;
+  };
+  const out = { reference: ligne('achete ou retenu'), lignes: {} };
+  for (const cle in RG) if (cle !== 'achete ou retenu') out.lignes[cle] = ligne(cle);
+  return out;
+}
+
 /* ==========================================================================
  * L'AUDIT SUR 7 JOURS, A COTE DU CUMUL — ET CE QUI N'A JAMAIS ETE JUGE
  *
@@ -6024,6 +6073,26 @@ function jalonValable(h, age) { return age >= h && age <= h + Math.max(5, h * 0.
 const OMBRE_DISPARUE = -95;         /* ce que vaut un jeton dont la piscine s'est evaporee */
 const OMBRE_SILENCES = 2;           /* deux relectures muettes de suite, pas une */
 
+/* ---- MESURER AVANT DE CHANGER LA REGLE -95 (22/10/2026, observation) ----
+ * La regle « piscine evaporee -> -95 » n'a jamais tire (compteurs.ombreDisparue
+ * 0 sur ~145 000 ombres). Hypothese : une ombre VRAIMENT morte (vue par
+ * DexScreener a l'entree, avec piscine) est oubliee a 3 h avant d'atteindre les
+ * DEUX silences requis, parce qu'elle est relue trop rarement. Avant de toucher
+ * la relecture, on MESURE : a l'oubli, combien de silences (`muets`) une telle
+ * ombre avait-elle accumules, et avait-elle ete jugee « disparue » ? Si la masse
+ * est a 0 ou 1 silence et jamais 2, la regle ne peut pas tirer et le diagnostic
+ * tient. Accumulateur pur, aucune decision ne le lit. */
+function noteOubli(o) {
+  if (!o || o.hors) return;
+  const H = E.oubliHist || (E.oubliHist = { dexVuPool: {}, autres: {}, total: 0, disparueAvantOubli: 0, jugeeRef: 0 });
+  H.total++;
+  if (o.disparue) H.disparueAvantOubli++;
+  if (o.jalons && o.jalons[HORIZON_REF] !== undefined) H.jugeeRef++;
+  const muets = Math.min(5, (o.muets || 0) + (o.absente || 0));
+  const bac = (o.dexVu && o.pool) ? H.dexVuPool : H.autres;
+  bac[muets] = (bac[muets] || 0) + 1;
+}
+
 function regleLesOmbres(marche) {
   if (!Array.isArray(E.ombres) || !E.ombres.length) return 0;
   const now = Date.now();
@@ -6033,7 +6102,7 @@ function regleLesOmbres(marche) {
      passee — la strategie est rejouee une fois sur ce qu elle a laisse. */
   const rejoueEtPart = (o) => { rejoueLOmbre(o); return false; };
   E.ombres = E.ombres.filter((o) => {
-    if (now - o.t > OMBRE_OUBLI_MS) return rejoueEtPart(o);
+    if (now - o.t > OMBRE_OUBLI_MS) { noteOubli(o); return rejoueEtPart(o); }
     const age = (now - o.t) / 60000;
     if (!o.jalons) o.jalons = {};
     const brut = marche[o.adr];
@@ -6067,6 +6136,7 @@ function regleLesOmbres(marche) {
          la case ; les courbes, la memoire des agents et le frottement restent
          BRUTS, eux, pour ne pas se compter deux fois. Voir `coutCelluleDe`. */
       noteAudit(cleAudit(o), r - coutCelluleDe(o));
+      noteAuditRegime(cleAudit(o), r - coutCelluleDe(o), o.t);
       noteSondeAge(o, r - coutCelluleDe(o));
       if (!o.hors) PF.juge(o.adr, r, o.t);
       /* Une piscine evaporee : la strategie aurait tout perdu aussi, moins
@@ -6124,6 +6194,7 @@ function regleLesOmbres(marche) {
              `cleAudit` separe de la reference depuis le 20/09 (quota : 0
              achat au 26/09, donc aucune observation deplacee). */
           noteAudit(cleAudit(o), r - coutCelluleDe(o));
+          noteAuditRegime(cleAudit(o), r - coutCelluleDe(o), o.t);
           noteSondeAge(o, r - coutCelluleDe(o));
           /* Les acheteurs d'avant le regard recoivent le rendement BRUT
              vendable, comme les agents : le cout d'aller-retour est le notre. */
@@ -11277,6 +11348,22 @@ function vue() {
           actif: baseCourante() !== 0 }
       : null,
     audit: auditDesRefus(),
+    /* ---- L'AUDIT ENTIER, PAS SEULEMENT LES 25 LIGNES QUI MONTENT LE PLUS ----
+     * `audit` (auditDesRefus) coupe a 25 et trie par part de montees : les
+     * lignes qui PROTEGENT (part de montees sous la reference : « no public
+     * presence at all », « pool below the buy floor », baleine 70-90…) sont
+     * invisibles, alors que ce sont elles qui justifient les refus. On expose
+     * ici la liste COMPLETE (les decisions lisent deja auditComplet via
+     * auditPourDecider) pour que releve.js et l'analyse puissent lire ce qui
+     * protege, pas seulement ce qui coute. Observation : aucune decision ne
+     * change, c'est le meme auditComplet, expose en entier (22/10/2026). */
+    auditEntier: auditComplet(),
+    /* L'audit par regime de marche BTC (22/10/2026) : part de montees de chaque
+       ligne selon btc24h/btc7d, contre la reference du MEME regime. Observation. */
+    auditRegime: auditRegimeVue(),
+    /* Mesure de la regle -95 avant de la toucher (22/10/2026) : a l'oubli des
+       ombres, la distribution des silences accumules (voir `noteOubli`). */
+    oubliHist: E.oubliHist || null,
     /* Le signal du brief (15/10) : sa ligne d'audit, a cote de la reference,
        hors de `audit` (ce n'est pas un refus : la page la lirait comme une
        regle). Voir `smartVue`. */

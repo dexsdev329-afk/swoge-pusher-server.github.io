@@ -302,7 +302,12 @@ function banc(o) {
   ok(/marche: typeof deps\.marche === 'function' \? deps\.marche : null/.test(src('smart_money.js')), 'smart_money passe deps.marche au carnet');
   ok(/parBtc24h: groupe\(\(f\) => trancheMarche\(f\.t, 'btc24h'\)\)/.test(src('lancements_carnet.js')), 'le carnet des lancements groupe par BTC 24 h a la naissance');
   const col = src('ai_colonie.js');
-  ok(!/contexteA\(/.test(col.replace(/function parMarcheDe[\s\S]*?\n\}\n/, '')), 'AUCUNE regle de la colonie ne lit le marche : contexteA n apparait que dans parMarcheDe');
+  /* L'intention : aucune DECISION de la colonie ne lit le marche. Les seuls
+     lecteurs sont des accumulateurs d'OBSERVATION — `parMarcheDe` (decoupe le
+     carnet) et `noteAuditRegime` (decoupe l'audit des ombres, 22/10/2026).
+     On retire les deux et on verifie qu'il ne reste aucun `contexteA(`. */
+  const colObs = col.replace(/function parMarcheDe[\s\S]*?\n\}\n/, '').replace(/function noteAuditRegime[\s\S]*?\n\}\n/, '');
+  ok(!/contexteA\(/.test(colObs), 'AUCUNE decision de la colonie ne lit le marche : contexteA n apparait que dans parMarcheDe et noteAuditRegime (observation)');
   const rl = src('releve.js');
   ok(/'parBtc24h', 'parBtc7d', 'parEth24h'/.test(rl) && /x\.tranche \?\? x\.de \?\? x\.par/.test(rl) && /console\.log\('marche    '/.test(rl), 'releve.js : la ligne marche et les decoupages');
   ok(/lance marche "\$SRV" node marche_contexte\.test\.js/.test(src('verifie.sh')), 'la suite est dans verifie.sh');

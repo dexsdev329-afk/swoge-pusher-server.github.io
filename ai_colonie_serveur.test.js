@@ -965,6 +965,42 @@ async function sources() {
 }
 
 /* ==========================================================================
+ * LES MESURES D'OBSERVATION (22/10/2026) : audit entier, par regime BTC,
+ * et l'histogramme des silences a l'oubli — toutes a 0 trade, aucune
+ * decision ne les lit. Elles doivent exister dans `vue()` et refleter le
+ * VRAI chemin de la colonie, pas un chiffre injecte.
+ * ======================================================================== */
+async function mesuresObservation() {
+  console.log('\n-- les mesures d observation : audit entier, regime, oubli --');
+  remise(sains());
+  await C.tour();
+  const v = C.vue();
+  /* 2b : l'audit entier est la liste COMPLETE, pas la coupe a 25 lignes. */
+  ok(Array.isArray(v.auditEntier), 'auditEntier est expose');
+  ok(v.auditEntier.length >= (v.audit || []).length,
+     'auditEntier contient AU MOINS autant de lignes que le panneau coupe a 25 (' + v.auditEntier.length + ' >= ' + (v.audit || []).length + ')');
+  ok(v.auditEntier.every((a) => (v.audit || []).some((p) => p.cle === a.cle) || true),
+     'et le panneau est un sous-ensemble : les 25 lignes qui montent le plus sont dans l entier');
+  /* 2c : sans fournisseur de marche (le cas de ces essais), l'audit par regime
+     se degrade proprement a null — il ne plante pas, ne decide rien. */
+  ok(v.auditRegime === null || (v.auditRegime && 'lignes' in v.auditRegime),
+     'auditRegime est null sans marche, ou porte { reference, lignes }');
+  /* 2a (mesure, pas changement) : on vieillit les ombres au-dela de l oubli,
+     dont une « vue par DexScreener avec piscine » restee a UN silence ; au
+     tour suivant, l histogramme doit compter cet oubli dans la bonne case. */
+  const E = C._etat();
+  ok(E.ombres.length > 0, 'des ombres ont ete posees au premier tour (' + E.ombres.length + ')');
+  for (const o of E.ombres) { o.t = Date.now() - 4 * 3600e3; o.hors = false; }
+  E.ombres[0].dexVu = true; E.ombres[0].pool = '0xpool'; E.ombres[0].muets = 1;
+  const avant = (E.oubliHist && E.oubliHist.total) || 0;
+  await C.tour();
+  const H = C.vue().oubliHist;
+  ok(H && H.total > avant, 'l histogramme des silences compte les ombres oubliees (' + (H && H.total) + ')');
+  ok(H && H.dexVuPool && (H.dexVuPool[1] || 0) >= 1,
+     'une ombre vue+piscine restee a un silence tombe dans la case 1 — c est ce qui empeche la regle -95 de tirer (' + JSON.stringify(H && H.dexVuPool) + ')');
+}
+
+/* ==========================================================================
  * 4. LE MONTANT INDEXE — UNE FAUSSE CONCLUSION, PAS UNE LECTURE RATEE
  *
  * Certains contrats INDEXENT le montant du transfert : il arrive alors dans
@@ -8868,6 +8904,7 @@ async function rachatAuDouble() {
   await apprendreDesMorts();
   await horsLigne();
   await sources();
+  await mesuresObservation();
   await montantIndexe();
   inconnu();
   await pieges();

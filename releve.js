@@ -29,16 +29,29 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
   const P = d.planchers || {};
   console.log('planchers ', `piscine ${Math.round(P.liq)} · cap ${P.mc}-${P.mcMax} · age ${P.ageMin} min · pompe ${P.pumpM5}%`);
   console.log('positions ', (d.positions || []).map((p) => `${p.sym} ${n1(p.r)}% cap ${p.mcAchat} AR ${p.allerRetour ?? '?'}%`).join(' · ') || 'aucune');
-  const ref = (d.audit || []).find((a) => a.cle === 'achete ou retenu');
+  /* On lit l audit ENTIER (auditEntier), pas la coupe a 25 lignes (audit) : les
+     lignes qui protegent, sous la reference, sont hors des 25 qui montent le plus. */
+  const AUD = d.auditEntier || d.audit || [];
+  const ref = AUD.find((a) => a.cle === 'achete ou retenu');
   console.log('reference ', ref ? `n=${ref.n} montes=${ref.partMontes}% moy=${ref.moyenne} strat=${ref.strat}` : '—');
   /* l audit a la marge de chaque borne */
-  const A = Object.fromEntries((d.audit || []).map((a) => [a.cle, a]));
+  const A = Object.fromEntries(AUD.map((a) => [a.cle, a]));
   const marge = (motif) => Object.values(A).filter((a) => motif.test(a.cle)).sort((x, y) => y.n - x.n).slice(0, 4)
     .map((a) => `${a.cle.replace(/^scout · /, '')} n=${a.n} ${a.partMontes}%`).join(' | ');
   console.log('audit age ', marge(/too young/));
   console.log('audit cap ', marge(/buy ceiling|cap below/));
   console.log('audit pisc', marge(/pool below|nothing to sell/));
   console.log('portes    ', marge(/too volatile|too few public|round trip too costly/) || '(rien encore)');
+  /* ---- CE QUI PROTEGE : les lignes sous la reference, les plus consistantes ----
+     Le panneau montre les 25 qui MONTENT le plus (ce qui coute a refuser) ;
+     ici l envers, les refus dont la part de montees est sous la reference et
+     qui portent le plus d observations — ce qu on ne voyait nulle part. */
+  const refPct = ref ? ref.partMontes : 27;
+  const protege = AUD.filter((a) => a.cle !== 'achete ou retenu' && a.cle.indexOf('achete') !== 0
+      && typeof a.partMontes === 'number' && a.partMontes <= refPct && a.n >= 100)
+    .sort((x, y) => y.n - x.n).slice(0, 5)
+    .map((a) => `${a.cle.replace(/^(scout|whale|oracle|warden|whisper) · /, '')} n=${a.n} ${a.partMontes}%`);
+  console.log('protege   ', protege.join(' | ') || `(aucune ligne sous la reference ${refPct}% a n>=100)`);
   /* Le rachat a 1,5 fois et plus de l entree la plus basse (18/10, n=14 au carnet) : sa ligne contre la reference. */
   const RT = d.rentree;
   if (RT) console.log('rachat    ', `max x${RT.max} · memoire ${RT.gardeJours} j, ${RT.jetons} jetons · refus ${RT.refus}/${RT.vus} (autre piscine ${RT.autrePiscine})`
