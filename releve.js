@@ -90,6 +90,19 @@ const bil = (b) => b ? `n=${b.n} moy=${n1(b.moyenne)}% gagnants=${b.partGagnante
       for (const k of ['parBtc24h', 'parBtc7d']) if (b[k] && Object.keys(b[k]).length) console.log('  ' + k.slice(3).toLowerCase().padEnd(8), Object.entries(b[k]).map(([t, x]) => `${t} n=${x.n} 24h ${p(x['24h'])} 7j ${p(x['7j'])}`).join(' | '));
     } else console.log('lancem.    carnet inactif');
   } catch (e) { console.log('lancem.    illisible : ' + String(e.message || e).slice(0, 60)); }
+
+  /* L'observateur de courbe precoce (23/10) : la fenetre 0-60 min, OBSERVATION. */
+  try {
+    const O = await (await fetch(URL.replace(/\/ai\/colonie.*$/, '/ai/smart/observe'))).json();
+    if (O && O.actif) {
+      const r = O.lignes.find((l) => l.reference) || {};
+      console.log('courbe obs', `pas ${O.pas} · courbes suivies ${O.sante.courbesSuivies} · fraiches ${O.sante.fraichesCarnet} · jugees ${O.sante.jugees}`
+        + ` · ${O.dedie ? 'noeud dedie' : 'noeud public'} ${O.jour ? `(${O.jour.http} appels)` : ''}`
+        + (r.reference ? ` · reference ${r.reference.partMontes}%` : ''));
+      for (const l of O.lignes) console.log('  ' + l.cle.replace('curve: ', '').padEnd(22),
+        `n=${l.n} montes=${l.partMontes ?? '—'}% moy=${n1(l.moyenne)} · ${l.verdict}`);
+    } else console.log('courbe obs inactif (OBS_COURBE non pose)');
+  } catch (e) { console.log('courbe obs illisible : ' + String(e.message || e).slice(0, 60)); }
   /* L'entree papier au prix devise sur la chaine (21/10) : l'ecart devis / indexeur au moment d'acheter. */
   const ED = d.entreeDevis;
   if (ED) console.log('entree    ', `devis ${ED.mode} n=${ED.n} · ecart moyen ${ED.moyenne ?? '—'}% · au-dessus ${ED.hausse ?? '—'}% · pire ${ED.pire ?? '—'}%`

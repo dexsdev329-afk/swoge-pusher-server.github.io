@@ -11715,6 +11715,9 @@ module.exports = {
   /* 22/10 : marche_contexte debite ses lectures par la cle du MEME compteur mensuel (720 + 2 appels, 0,72 %) */
   debiteCg: () => { creditsCg().n++; },
   fournisseurMarche, carnetBilan, carnetNet,
+  /* La reference « achete ou retenu », pour l'observateur de courbe precoce (23/10) :
+     il compare ses lignes a ce qu'on achete reellement, en LECTURE SEULE. */
+  referenceAudit: () => { try { const t = auditComplet(); return t.find((x) => x.cle === 'achete ou retenu') || null; } catch (e) { return null; } },
   epreuveDeSortie,
   demarre, arrete, vue, tour, charge, sauve, reprendSansMethode, veille,
   poseMiroir, poseBanquePapier, _brasColonie: brasColonie, BRAS_COLONIE, _suitLeMiroir: suitLeMiroir, _partDuBanquier: partDuBanquier, MIROIR_PART_MAX,

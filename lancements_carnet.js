@@ -928,7 +928,21 @@ function cree(deps) {
       registre: { reconstruites: C.grappesReconstruites, effacees: C.grappesEffacees }, indexes: KJ.size, plusGrosDuJour: gros, dlFenetreH: CLONE_DL_MS / 3600e3 };
   }
   const vue = () => ({ fiches: F.size, fileMeta: etat.file.length, fileSoldes: etat.soldes.length, fileDetenteurs: etat.det.length, fileOrdres: etat.ordres.length, metasDS: (etat.metasDS.slugs || []).length, curseurs: etat.curseurs, horizons: HORIZONS.map(([h]) => h), compteurs: C, metaParCycle: META_PAR_CYCLE, joursGardes: JOURS_GARDES, clones: clonesVue() });
-  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES, _registre: () => etat.grappes };
+  /* ---- LES COURBES FRAICHES, POUR L'OBSERVATEUR DE COURBE PRECOCE (23/10/2026) ----
+   * Rend les lancements Pons de moins de `maxMin` minutes qui ont une courbe :
+   * { jeton, courbe, bloc, dev, t }. L'observateur (courbe_precoce.js) les suit
+   * dans leur 1re heure, ou la colonie est aveugle (DexScreener n'indexe pas
+   * avant ~10 min). LECTURE SEULE du carnet, aucune ecriture, aucune decision :
+   * le carnet vit en memoire, 0 appel reseau. */
+  const fraiches = (maxMin) => {
+    const now = maintenant(), lim = Math.max(1, Number(maxMin) || 60) * 60e3, out = [];
+    for (const [j, f] of F) {
+      if ((f.plat || 'pons') !== 'pons' || !f.courbe) continue;
+      if (now - f.t < lim) out.push({ jeton: j, courbe: f.courbe, bloc: f.bloc, dev: f.dev, t: f.t });
+    }
+    return out;
+  };
+  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, fraiches, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES, _registre: () => etat.grappes };
 }
 
 module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, clesDe, clesProches, distanceDL, CLONE_DL_MS, JOURS_MEMOIRE, REMPLISSAGE, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };

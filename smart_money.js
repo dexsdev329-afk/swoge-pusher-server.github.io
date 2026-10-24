@@ -242,6 +242,7 @@ function cree(deps0) {
   let instantane = null;
   let CARNET = null;
   let HISTOIRE = null;
+  let OBSERVE = null;
   /* le journal public (16/10) : il lit la base quand elle est ouverte */
   const PUB = SPUB.cree({ base: () => B, horloge: deps.horloge, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, tg: deps.tg, note,
     prixCourbe: (j) => (LZ ? LZ.prixCourbe(j) : null),
@@ -289,6 +290,28 @@ function cree(deps0) {
       CARNET = require('./lancements_carnet').cree({ dossier: deps.dossier, prendre: deps.prendre, horloge: deps.horloge, note,
         /* 22/10 : le contexte de marche BTC/ETH a la naissance (marche_contexte.contexteA), pose par le serveur comme mesureSmart */
         marche: typeof deps.marche === 'function' ? deps.marche : null });
+    /* l'observateur de courbe precoce (23/10, courbe_precoce.js) : un 5e client du
+       noeud, derriere OBS_COURBE (off par defaut), en OBSERVATION STRICTE (0 trade,
+       aucune porte d'achat). Il suit les courbes Pons fraiches (< 60 min) la ou la
+       colonie est aveugle (DexScreener n'indexe pas avant ~10 min, et une courbe
+       n'a pas de piscine DEX) ; 80 % des graduations se font dans la 1re heure. Il
+       a besoin du carnet (fraiches) : cree APRES CARNET. */
+    const envO = String(((deps.env || process.env).OBS_COURBE) == null ? '' : (deps.env || process.env).OBS_COURBE).trim().toLowerCase();
+    if (!OBSERVE && (deps.rpcObserve || envO === 'observe' || envO === '1') && CARNET) {
+      const CP = require('./courbe_precoce');
+      /* OBS_RPC_URL (ou, a defaut, PONS_HISTOIRE_RPC_URL) : un noeud dedie HyperRPC a
+         lui ; sinon le noeud public, dans le MEME rythme que la passe (pas de lane
+         concurrente de plus sur le public). */
+      const urlO = String((deps.env || process.env).OBS_RPC_URL || (deps.env || process.env).PONS_HISTOIRE_RPC_URL || '').trim();
+      const dedieO = /^https:\/\/[^\s]+$/.test(urlO);
+      const optsO = Object.assign({}, opts, { rythme: dedieO ? SR.nouveauRythme() : rythme, budgetAppels: 2, budgetOctets: dedieO ? 80e6 : 40e6,
+        prefixeHash: 'O', jourPropre: true, plafondJourHttp: dedieO ? 20000 : 3000, plafondJourOctets: dedieO ? 60e9 : 1.5e9,
+        espaceLegerMs: dedieO ? 1000 : 3000, espaceLourdMs: dedieO ? 1000 : 5000 });
+      if (dedieO) optsO.url = urlO;
+      const RO = deps.rpcObserve || SR.cree(optsO);
+      OBSERVE = CP.cree({ R: RO, carnet: CARNET, horloge: deps.horloge, note, dedie: dedieO,
+        pauseDirect: () => rythme.pause > deps.horloge(), reference: typeof deps.reference === 'function' ? deps.reference : null });
+    }
     LZ = SLZ.cree({ R: RL, B, envoie, note, horloge: deps.horloge, dors: deps.dors, prendre: deps.prendre, env: deps.env, explorer: deps.explorer, carnet: CARNET,
       faits: deps.faits, surSignal: deps.surSignalV2, exclu: (j) => (SOCLE.has(j) ? 'stablecoin or ETH' : (actionsCache && actionsCache.has(j)) ? 'tokenized stock' : null) });
     if (!instantane) instantane = construitVue();
@@ -1578,6 +1601,9 @@ function cree(deps0) {
     carnetLancements: () => (CARNET ? { actif: true, vue: CARNET.vue(), bilan: CARNET.bilan() } : { actif: false }),
     /** L'histoire de Pons : un pas (appele par sa minuterie) et sa vue. */
     histoirePas: async () => { await allume(); return HISTOIRE ? HISTOIRE.pas() : { fait: 'off' }; },
+    /** L'observateur de courbe precoce : un pas (minuterie) et sa vue (OBSERVATION). */
+    observePas: async () => { await allume(); return OBSERVE ? OBSERVE.pas() : { fait: 'off' }; },
+    observe: () => (OBSERVE ? OBSERVE.observe() : { actif: false }),
     histoire: () => (HISTOIRE ? Object.assign({ actif: true }, HISTOIRE.vue()) : { actif: false }),
     /** Le journal public : GET /ai/smart/alertes?depuis=<id> (base locale seulement). */
     alertesPubliques: (depuis) => PUB.vue(depuis),
@@ -1627,6 +1653,16 @@ function planifie(deps) {
       const ms = Math.max(5000, Number(((deps || {}).env || process.env).PONS_HISTOIRE_MS) || (/^https:\/\//.test(String(envU || '').trim()) ? 5000 : 30000));
       const h0 = setTimeout(garde(I.histoirePas, 'histoire'), 90000); if (h0.unref) h0.unref(); m.push(['t', h0]);
       const h = setInterval(garde(I.histoirePas, 'histoire'), ms); if (h.unref) h.unref(); m.push(['i', h]);
+    }
+    /* l'observateur de courbe precoce (23/10) : OFF par defaut (OBS_COURBE),
+       OBSERVATION STRICTE ; un pas toutes les OBS_COURBE_MS (dedie 5 s, public
+       60 s), le premier 90 s apres le demarrage. */
+    const envO = String((((deps || {}).env || process.env).OBS_COURBE) == null ? '' : ((deps || {}).env || process.env).OBS_COURBE).trim().toLowerCase();
+    if (envO === 'observe' || envO === '1') {
+      const urlO = ((deps || {}).env || process.env).OBS_RPC_URL || ((deps || {}).env || process.env).PONS_HISTOIRE_RPC_URL;
+      const msO = Math.max(5000, Number(((deps || {}).env || process.env).OBS_COURBE_MS) || (/^https:\/\//.test(String(urlO || '').trim()) ? 5000 : 60000));
+      const o0 = setTimeout(garde(I.observePas, 'observe'), 90000); if (o0.unref) o0.unref(); m.push(['t', o0]);
+      const o = setInterval(garde(I.observePas, 'observe'), msO); if (o.unref) o.unref(); m.push(['i', o]);
     }
   }
   return {

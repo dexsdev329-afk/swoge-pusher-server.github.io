@@ -5736,6 +5736,12 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, entete);
       return res.end(JSON.stringify(I && I.carnetLancements ? I.carnetLancements() : { actif: false }));
     }
+    /* L'observateur de courbe precoce (23/10/2026, courbe_precoce.js) : la fenetre
+       0-60 min ou la colonie est aveugle, en OBSERVATION STRICTE (aucun achat). */
+    if (path === '/ai/smart/observe') {
+      res.writeHead(200, entete);
+      return res.end(JSON.stringify(I && I.observe ? I.observe() : { actif: false }));
+    }
     const genre = { '/ai/smart/jeton': 'jeton', '/ai/smart/wallet': 'wallet', '/ai/smart/createur': 'createur' }[path];
     const a = String(new URLSearchParams(req.url.split('?')[1] || '').get('a') || '');
     if (!genre) { res.writeHead(404, entete); return res.end(JSON.stringify({ erreur: 'not found' })); }
@@ -12136,7 +12142,10 @@ server.listen(cfg.PORT, () => {
     faits: (a) => aiColonie.faitsPourSmart(a), surVerdict: (v) => aiColonie.signalSmart(v), surSignalV2: (v) => aiColonie.signalSmart(v),
     mesureSmart: (src) => aiColonie.mesureSourceSmart(src),
     /* 22/10 : le carnet des lancements decoupe ses naissances par le marche BTC/ETH (observation) */
-    marche: (t) => (marcheContexte ? marcheContexte.contexteA(t) : null) });
+    marche: (t) => (marcheContexte ? marcheContexte.contexteA(t) : null),
+    /* 23/10 : l'observateur de courbe precoce compare ses lignes a « achete ou retenu »,
+       en LECTURE SEULE (aucune ecriture dans l'audit de la colonie). */
+    reference: () => aiColonie.referenceAudit() });
   aiColonie.fournisseurPrixCourbe((a) => smartMoney.instance.prixCourbe(a));
   /* AgentLife (18/10/2026, agentlife.js) : les alertes de l'autre bot du proprietaire, lues toutes
      les 5 min, deviennent des OMBRES de la colonie par le meme `signalSmart` (une ligne d'audit par

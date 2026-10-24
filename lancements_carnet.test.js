@@ -578,6 +578,21 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
   ok(typeof M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements === 'function' && M.cree({ env: { SMART_MONEY: '1' } }).carnetLancements().actif === false, 'smart_money : carnetLancements (inactif avant l allumage)');
   ok(/path === '\/ai\/smart\/lancements'/.test(fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8')), 'la route /ai/smart/lancements (meme debit que /ai/smart)');
 
+  console.log('-- les courbes fraiches (pour l observateur de courbe precoce, 23/10)');
+  {
+    const g = banc();
+    g.C.naissance({ jeton: A(1), courbe: A(101), plateforme: 'pons', bloc: 10, t: g.H.now, deployer: A(700) });     // 0 min
+    g.H.now += 30 * 60e3;
+    g.C.naissance({ jeton: A(2), courbe: A(102), plateforme: 'pons', bloc: 20, t: g.H.now, deployer: A(701) });     // 0 min (now)
+    g.C.naissance({ jeton: A(3), courbe: A(103), plateforme: 'ignition', bloc: 30, t: g.H.now, deployer: A(702) }); // ignition : exclu
+    g.H.now += 40 * 60e3;   // A(1) a 70 min, A(2) a 40 min
+    const fr = g.C.fraiches(60);
+    const ids = fr.map((f) => f.courbe).sort();
+    ok(fr.length === 1 && fr[0].courbe === A(102), 'fraiches(60) rend la courbe de moins de 60 min, pas celle de 70 min, pas IGNITION (' + ids.join(',') + ')');
+    ok(fr[0].bloc === 20 && fr[0].dev === A(701) && fr[0].jeton === A(2), 'avec bloc, dev et jeton — ce qu il faut pour la suivre');
+    ok(g.C.fraiches(120).length === 2, 'fraiches(120) rend les deux courbes Pons (jamais IGNITION)');
+  }
+
   console.log(rates ? 'RATES : ' + rates + '/' + n : n + ' verifications OK');
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('EXCEPTION', e); process.exit(1); });
