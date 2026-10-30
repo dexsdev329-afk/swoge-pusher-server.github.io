@@ -593,6 +593,35 @@ const avance = async (b, min) => { for (let k = 0; k < min; k++) { b.H.now += 60
     ok(g.C.fraiches(120).length === 2, 'fraiches(120) rend les deux courbes Pons (jamais IGNITION)');
   }
 
+  console.log('-- le score de force a la naissance (23/10, OBSERVATION STRICTE)');
+  {
+    // la logique PURE (forceNaissance) : bati sur les SEULS traits mesures predictifs
+    const fn = K.forceNaissance;
+    ok(fn({ t2e: 3, t2a: 25, vd: 0 }).band === 'strong' && fn({ t2e: 3, t2a: 25, vd: 0 }).traits.join(';').includes('2+ ETH'), '2+ ETH des 2 premiers blocs + 20+ acheteurs : strong');
+    ok(fn({ t2e: 0.3, t2a: 2, vd: 0 }).band === 'medium', '0,1-0,5 ETH seul : medium (un trait faible mesure)');
+    ok(fn({ t2e: 0.01, t2a: 1, vd: 0 }).band === 'weak', 'rien de porteur, dev tenu : weak');
+    const ds = fn({ t2e: 3, t2a: 25, vd: 5 });
+    ok(ds.band === 'weak' && ds.score === 0 && ds.traits.join(';').includes('dev sold'), 'le dev vend au T+2 : weak d office (0 % vivant mesure), quel que soit le reste');
+    ok(fn({ t2e: 0.6, t2a: 2, vd: 0, devVivantAvant: true }).band === 'strong', '0,5-2 ETH + un jeton precedent du dev a vecu 24 h : strong (2+2)');
+    ok(fn({ t2e: null, t2a: null, vd: 0 }) === null && fn(null) === null, 'sans T+2 (IGNITION) ou sans fiche : null, rien a scorer');
+    const FR = /[àâäéèêëïîôûùüç]|\b(le|la|les|un|une|des|du|et|ou|vivant|acheteurs?|jeton|créateur|premier|vend)\b/i;
+    const noFR = (o) => !FR.test(JSON.stringify(o));
+    ok(noFR(fn({ t2e: 3, t2a: 25, vd: 5 })), 'les traits du score sont en anglais (ce que le joueur lit)');
+
+    // l instance scoreNaissance : lecture seule, la bande + la part mesuree de la bande (null sous 40)
+    const s = banc();
+    s.C.naissance({ jeton: A(1), courbe: A(101), plateforme: 'pons', bloc: 10, t: s.H.now, deployer: A(700), achatDevEth: 0.1, t2: { acheteurs: 25, eth: 3 }, ventesDev: 0 });
+    s.C.naissance({ jeton: A(2), courbe: A(102), plateforme: 'ignition', bloc: 20, t: s.H.now, deployer: A(701) });
+    const sc = s.C.scoreNaissance(A(1));
+    ok(sc && sc.band === 'strong' && sc.seuil === K.BILAN_ASSEZ, 'scoreNaissance(jeton fort) : band strong, le seuil est dit');
+    ok(sc.survie && sc.survie['24h'] && sc.survie['24h'].assez === false && sc.survie['24h'].vivantsPct === null, 'sous le seuil : la part vivante refuse de conclure (vivantsPct null), jamais une bande seule');
+    ok('base' in sc, 'la base (tout) est jointe pour comparer');
+    ok(s.C.scoreNaissance(A(2)) === null, 'IGNITION (sans T+2) : scoreNaissance null');
+    ok(s.C.scoreNaissance(A(9999)) === null && s.C.scoreNaissance('pas-une-adresse') === null, 'jeton inconnu ou adresse illisible : null');
+    const B = s.C.bilan();
+    ok(B.parScore && B.parScore.strong && B.parScore.strong['24h'] && B.parScore.strong['24h'].assez === false, 'parScore : groupe par bande, refuse de conclure sous 40 (meme machinerie que parEthT2)');
+  }
+
   console.log(rates ? 'RATES : ' + rates + '/' + n : n + ' verifications OK');
   process.exit(rates ? 1 : 0);
 })().catch((e) => { console.error('EXCEPTION', e); process.exit(1); });

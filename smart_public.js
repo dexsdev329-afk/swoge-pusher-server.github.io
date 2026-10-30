@@ -146,6 +146,12 @@ function usd(u) { if (!fini(u)) return '?'; if (u >= 1e9) return '$' + (u / 1e9)
 function ethTxt(e) { return !fini(e) ? '?' : e >= 1 ? e.toFixed(2) : e.toFixed(3); }
 function duree(min) { if (!fini(min)) return '?'; if (min < 1) return Math.max(0, Math.round(min * 60)) + ' s'; if (min < 120) return Math.round(min) + ' min'; if (min < 48 * 60) return Math.round(min / 60) + ' h'; return Math.round(min / 1440) + ' d'; }
 function mediane(l) { if (!l.length) return null; const a = l.slice().sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+/* un percentile robuste : le meilleur d'une categorie est le max BRUT d'une
+   seule alerte, que fausse un prix de reference quasi nul (reserve de lancement,
+   pool a quelques $) — meilleur_pct a montre 1e20 % en prod. p90 ignore cet
+   artefact unique des que n >= BILAN_ASSEZ. CHOISI : montrer p90, garder le max
+   a part (meilleur_pct) pour la transparence et le diagnostic. */
+function percentile(l, p) { if (!l.length) return null; const a = l.slice().sort((x, y) => x - y); return a[Math.min(a.length - 1, Math.floor(p * (a.length - 1)))]; }
 const arrondi = (x, d) => (fini(x) ? Math.round(x * 10 ** (d || 1)) / 10 ** (d || 1) : null);
 
 // ------------------------------------------------------------ les noms (anglais, par role)
@@ -304,6 +310,18 @@ function quiDetail(q) {
  * qui [{ adresse, role, eth, usd, apresLancementMin, ilYaMin, lancements }],
  * promo (objet | null | undefined), risque {cle, val}, plan {cle, val}.
  */
+/** La force a la naissance, NETTOYEE pour le public (23/10/2026) : bande, points, traits en
+ *  anglais, et la part VIVANTE mesuree de la bande (null sous le seuil) — jamais un conseil.
+ *  Metrique SURVIE a 24 h / 7 j, pas le prix a +30 min ; la page le dit. */
+function forcePub(x) {
+  if (!x || typeof x !== 'object' || !['weak', 'medium', 'strong'].includes(x.band)) return null;
+  const cell = (c) => (c && typeof c === 'object' ? { vivantsPct: num(c.vivantsPct), mesures: fini(c.mesures) ? Math.round(c.mesures) : 0, assez: !!c.assez } : null);
+  const sv = x.survie && typeof x.survie === 'object' ? x.survie : {};
+  return { band: x.band, score: fini(x.score) ? Math.round(x.score) : 0, seuil: fini(x.seuil) ? x.seuil : BILAN_ASSEZ,
+    traits: (Array.isArray(x.traits) ? x.traits : []).slice(0, 6).map((t) => sur(t, 48)).filter(Boolean),
+    survie: { '24h': cell(sv['24h']), '7j': cell(sv['7j']) },
+    base: { '24h': x.base ? num(x.base['24h']) : null, '7j': x.base ? num(x.base['7j']) : null } };
+}
 function construitFiche(jeton, pub, o) {
   const p = pub || {};
   const j = adr(jeton);
@@ -324,6 +342,8 @@ function construitFiche(jeton, pub, o) {
   };
   const jm = jugeParMesure(f.verdict, o && o.mesure);
   if (jm.mesure) { f.verdict = jm.verdict; f.mesure = jm.mesure; }
+  const fo = forcePub(p.force);
+  if (fo) f.force = fo;
   if (p.refDifferee) f.ref_differee = true;
   f.etat = etatTexte(f);
   return f;
@@ -371,13 +391,32 @@ function bilan(rows) {
   const out = {};
   const ligne = (l) => {
     const avec = l.map(mesureVue).filter((x) => x.ref);
+    /* La COURBE complete (23/10/2026) : part / mediane / n par palier 5-120 min,
+       pas seulement +30. La donnee est deja stockee par alerte (mesures), on ne
+       fait que l'agreger ; chaque palier refuse de conclure sous BILAN_ASSEZ. */
+    const paliers = {};
+    for (const x of PALIERS) {
+      const a = avec.map((v) => v.paliers[x]).filter((c) => c && fini(c.pct)).map((c) => c.pct);
+      const ax = a.length >= BILAN_ASSEZ;
+      paliers[x] = { n: a.length, assez: ax,
+        part: ax ? arrondi(a.filter((v) => v > 0).length / a.length * 100, 1) : null,
+        mediane: ax ? arrondi(mediane(a), 1) : null };
+    }
     const a30 = avec.map((x) => x.paliers[PALIER_BILAN]).filter((x) => x && fini(x.pct)).map((x) => x.pct);
     const assez = a30.length >= BILAN_ASSEZ;
     const meilleurs = avec.map((x) => x.meilleur_pct).filter(fini);
-    return { n: l.length, mesurees: avec.length, n30: a30.length, assez, seuil: BILAN_ASSEZ,
+    /* Le TROU, montre au lieu d'etre cache (biais du survivant) : sans_ref =
+       alertes jamais prixees (IGNITION pre-marche, dev sans courbe/DexScreener) ;
+       manque30 = alertes mesurees dont le palier +30 est perdu (jeton mort ou
+       delistee de DexScreener). Les deux sortent du denominateur de part_montee30,
+       donc la part sur-compte les survivants si on ne les dit pas. */
+    const manque30 = avec.filter((x) => x.paliers[PALIER_BILAN] && x.paliers[PALIER_BILAN].manque).length;
+    return { n: l.length, mesurees: avec.length, sans_ref: l.length - avec.length, n30: a30.length, manque30, assez, seuil: BILAN_ASSEZ,
       part_montee30: assez ? arrondi(a30.filter((x) => x > 0).length / a30.length * 100, 1) : null,
       mediane30: assez ? arrondi(mediane(a30), 1) : null,
-      meilleur_pct: assez && meilleurs.length ? Math.max(...meilleurs) : null };
+      meilleur_pct: assez && meilleurs.length ? Math.max(...meilleurs) : null,
+      meilleur_p90: assez && meilleurs.length ? arrondi(percentile(meilleurs, 0.9), 1) : null,
+      paliers };
   };
   for (const c of CATEGORIES) out[c] = Object.assign({ libelle: LIBELLE_CAT[c] }, ligne(rows.filter((r) => r.categorie === c && r.verdict !== 'rouge')));
   out.rouge = Object.assign({ libelle: LIBELLE_CAT.rouge }, ligne(rows.filter((r) => r.verdict === 'rouge')));
@@ -545,7 +584,18 @@ function cree(deps) {
     const visibles = B().tous('SELECT id, t, categorie, verdict, ref_prix, ref_t, ref_source, mesures, haut, bas, obs_n, fini FROM publiques WHERE publie_t <= ?', [now]);
     const dernier = (B().un('SELECT max(id) m FROM publiques WHERE publie_t <= ?', [now]) || {}).m || 0;
     const c = compteurs();
-    return { actif: true, t: now, dernier_id: dernier, alertes: alertes.map(ligne), vivantes: vivantes.map(mesureVue), bilan: bilan(visibles),
+    /* Le trou IGNITION, RENDU MESURABLE avant d'etre comble (precedent OBS_VIEUX_PAR_TOUR,
+       EXPLOITATION.md) : une alerte IGNITION naît avant tout marche, et NI la courbe Pons
+       NI DexScreener ne lisent son prix pre-marche — 63 alertes, 0 mesuree au 23/10. Avant
+       de decider d'un lecteur de prix on-chain dedie, on mesure le trou : combien d'IGNITION
+       obtiennent un jour un prix, apres quel delai, et combien se ferment sans prix. */
+    const ign = visibles.filter((r) => r.categorie === 'ignition');
+    const ignPrix = ign.filter((r) => r.ref_prix != null && fini(r.ref_t) && fini(r.t));
+    const differees = { n: ign.length, avec_prix: ignPrix.length,
+      sans_prix_finies: ign.filter((r) => r.ref_prix == null && r.fini).length,
+      en_attente: ign.filter((r) => r.ref_prix == null && !r.fini).length,
+      delai_median_min: ignPrix.length ? arrondi(mediane(ignPrix.map((r) => (r.ref_t - r.t) / 60)), 1) : null };
+    return { actif: true, t: now, dernier_id: dernier, alertes: alertes.map(ligne), vivantes: vivantes.map(mesureVue), bilan: bilan(visibles), differees,
       paliers: PALIERS, palier_bilan: PALIER_BILAN, seuil: BILAN_ASSEZ, fin_min: FIN_MIN, tg: C.tgLien ? { lien: C.tgLien } : null,
       compteurs: { publiees: c.publiees, retrogradees: c.retrogradees || 0, canal_envoyees: c.tg_envoyees, canal_plafond: c.tg_plafond, canal_refusees: c.tg_refusees }, max_h: C.maxH };
   }

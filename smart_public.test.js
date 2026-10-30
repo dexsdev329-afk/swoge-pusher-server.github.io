@@ -241,6 +241,39 @@ const PUB = (o) => Object.assign({ categorie: 'dev', verdict: 'vert', titre: { c
     ok(P.CATEGORIES.every((c) => br[c] && br[c].libelle && !FR.test(br[c].libelle)), 'chaque categorie a son libelle anglais (dev, pons, ignition, copie, rebond, analyste, smart)');
   }
 
+  // ========== 5bis. les trous MONTRES (biais du survivant) et la courbe par palier (23/10/2026)
+  console.log('-- 5bis. sans_ref, manque30, la courbe complete par palier --');
+  {
+    const ligne2 = (k, ref, p30) => ({ id: k, t: 1000, categorie: 'pons', verdict: 'vert',
+      ref_prix: ref, ref_t: ref != null ? 1000 : null, ref_source: 'dex',
+      haut: ref != null ? ref * (1 + Math.max(0, p30 === 'manque' ? 0 : p30) / 100) : null, bas: ref, obs_n: 5, fini: 1,
+      mesures: JSON.stringify(p30 === 'manque' ? { 30: { manque: true } } : { 5: { p: ref * 1.1, m: 5, s: 'dex' }, 30: { p: ref * (1 + p30 / 100), m: 30, s: 'dex' } }) });
+    const rows = [];
+    for (let k = 0; k < 40; k++) rows.push(ligne2(k, 1, k % 2 ? 20 : -10)); // 40 mesurees, palier +5 ET +30
+    for (let k = 40; k < 50; k++) rows.push(ligne2(k, null, 0));            // 10 JAMAIS prixees
+    for (let k = 50; k < 55; k++) rows.push(ligne2(k, 1, 'manque'));        // 5 mesurees, palier +30 perdu (jeton mort)
+    const b = P.bilan(rows).pons;
+    ok(b.n === 55 && b.mesurees === 45 && b.sans_ref === 10, 'sans_ref : 10 alertes jamais prixees, comptees et montrees (n=55, mesurees=45)');
+    ok(b.manque30 === 5, 'manque30 : 5 paliers +30 perdus (jeton mort / delistee) comptes, hors du denominateur de la part');
+    ok(b.n30 === 40 && b.assez && b.part_montee30 === 50, 'part +30 sur les 40 a pct fini seulement (20 montees / 40 = 50 %)');
+    ok(b.paliers && b.paliers[5] && b.paliers[5].assez && b.paliers[5].part === 100, 'la COURBE complete : +5 min agrege (40 obs, 100 % au-dessus de la reference), pas seulement +30');
+    ok(b.paliers[15].assez === false && b.paliers[15].part === null, 'un palier sous 40 obs refuse de conclure (+15 min : 0 obs ici)');
+    ok(typeof b.meilleur_pct === 'number' && typeof b.meilleur_p90 === 'number' && b.meilleur_p90 <= b.meilleur_pct, 'meilleur robuste : p90 <= max brut (un artefact 1e20 % serait ecrase par p90)');
+  }
+
+  // ========== 5ter. la force a la naissance recopiee sur la fiche (23/10/2026), nettoyee
+  console.log('-- 5ter. le score de force sur la fiche publique --');
+  {
+    const force = { band: 'strong', score: 6, seuil: 40, traits: ['first-block volume 2+ ETH', '20+ first-block buyers'],
+      survie: { '24h': { vivantsPct: 8.6, mesures: 120, assez: true }, '7j': { vivantsPct: null, mesures: 10, assez: false } }, base: { '24h': 0.6, '7j': 0.8 } };
+    const ff = P.construitFiche(J1, PUB({ force }), { explorer: 'https://robinhoodchain.blockscout.com', maintenant: Date.now() });
+    ok(ff.force && ff.force.band === 'strong' && ff.force.score === 6, 'construitFiche recopie la bande et les points');
+    ok(ff.force.survie['24h'].vivantsPct === 8.6 && ff.force.survie['24h'].mesures === 120 && ff.force.survie['7j'].vivantsPct === null, 'la part VIVANTE mesuree de la bande, null sous le seuil (jamais une bande seule)');
+    ok(!FR.test(JSON.stringify(ff.force)), 'la force est en anglais (ce que le joueur lit)');
+    ok(P.construitFiche(J1, PUB({ force: { band: 'nope' } }), { explorer: 'https://robinhoodchain.blockscout.com' }).force === undefined, 'une force invalide : ignoree (pas de champ force)');
+    ok(P.construitFiche(J1, PUB(), { explorer: 'https://robinhoodchain.blockscout.com' }).force === undefined, 'sans force (naissance au T+0, IGNITION) : pas de champ force');
+  }
+
   // ================================================== 6. la route
   console.log('-- 6. la route --');
   {
@@ -343,6 +376,9 @@ const PUB = (o) => Object.assign({ categorie: 'dev', verdict: 'vert', titre: { c
     await d.avance(130);
     ok(d.I.vue(0).alertes[0].mesure.fini, 'close 150 min apres son premier prix');
     egal(d.I.vue(0).bilan.ignition.mesurees, 1, 'elle entre au bilan de sa categorie');
+    /* le trou IGNITION rendu mesurable : ici l'alerte differee A obtenu un prix (40 min apres) */
+    const diff = d.I.vue(0).differees;
+    ok(diff && diff.n === 1 && diff.avec_prix === 1 && diff.sans_prix_finies === 0 && diff.delai_median_min >= 40, 'differees : le trou IGNITION mesure (1 differee, prix obtenu, delai median >= 40 min, 0 fermee sans prix)');
     const e = await banc({});
     await e.I.publie('ignition', 'ignition:contrat:' + J2, J2, PUB({ categorie: 'ignition', verdict: 'jaune', refDifferee: true }));
     await e.avance(6 * 60 + 2, false);

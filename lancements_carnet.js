@@ -188,6 +188,40 @@ function reseauxDe(liens) {
   return { n: l.length, x, tg, site };
 }
 
+/* LE SCORE DE FORCE A LA NAISSANCE (23/10/2026) — OBSERVATION STRICTE, jamais un achat (pur).
+ * Bati UNIQUEMENT sur les traits que le carnet a MESURES comme predictifs de la survie (vivant a
+ * 24 h / 7 j, liq DexScreener >= 5000 $), presents des le T+2 blocs sur la fiche :
+ *   - t2e (volume ETH des 2 premiers blocs) : le plus fort signal — releve du 28/10, >= 2 ETH donne
+ *     8,6 % vivants a 24 h et 13 % a 7 j contre 0,6 % de base (14x) ;
+ *   - t2a (acheteurs des 2 premiers blocs) : 20+ -> 2,9 % ;
+ *   - vd > 0 (le dev a vendu au T+2) : la MORT mesuree (0 % vivant, « dev sold by T+2 ») -> faible d'office ;
+ *   - devVivantAvant (un jeton precedent du dev a vecu 24 h) : 1,6 % contre 0,2 %.
+ * Les bornes des tranches sont CELLES du bilan (parEthT2 [0.1,0.5,2], parAcheteursT2 [1,5,20]) : le
+ * score ne fait que combiner des buckets deja mesures. Les POINTS sont choisis, pas mesures ; c'est
+ * pourquoi le bilan mesure ensuite la part vivante PAR BANDE (parScore) — la bande ne s'affiche
+ * qu'avec sa part mesuree, jamais seule (precedent OBS_VIEUX_PAR_TOUR, seuil BILAN_ASSEZ). Rend null
+ * sans T+2 (IGNITION, 0 mesure). Metrique : SURVIE a 24 h / 7 j, PAS le prix a +30 min des alertes. */
+const BANDES = ['weak', 'medium', 'strong'];
+function forceNaissance(f) {
+  if (!f || (f.t2e == null && f.t2a == null)) return null; // pas de T+2 (IGNITION) : rien a scorer
+  const traits = [];
+  let pts = 0;
+  if (fini(f.t2e)) {
+    if (f.t2e >= 2) { pts += 4; traits.push('first-block volume 2+ ETH'); }
+    else if (f.t2e >= 0.5) { pts += 2; traits.push('first-block volume 0.5-2 ETH'); }
+    else if (f.t2e >= 0.1) { pts += 1; traits.push('first-block volume 0.1-0.5 ETH'); }
+  }
+  if (fini(f.t2a)) {
+    if (f.t2a >= 20) { pts += 2; traits.push('20+ first-block buyers'); }
+    else if (f.t2a >= 5) { pts += 1; traits.push('5-19 first-block buyers'); }
+  }
+  if (f.devVivantAvant) { pts += 2; traits.push('creator had a token that lived 24 h'); }
+  const devSold = f.vd > 0; // la vente du dev ecrase tout : 0 % vivant mesure
+  if (devSold) traits.push('dev sold within 2 blocks');
+  const band = devSold ? 'weak' : pts >= 4 ? 'strong' : pts >= 1 ? 'medium' : 'weak';
+  return { score: devSold ? 0 : pts, band, traits };
+}
+
 /* ---- LES COPIES DE JETONS (22/10/2026) : les cles d'un nom et d'un symbole, pures ----
  * Methode REPRISE ET REECRITE (rien n'est importe) de bored2boar/novamp —
  * https://github.com/bored2boar/novamp, licence MIT, « Copyright (c) 2026 novamp contributors »
@@ -873,6 +907,9 @@ function cree(deps) {
       parAchatDev: groupe((f) => tranche(f.devEth, [1e-9, 0.05, 0.5, 2], ['0', '<0.05 ETH', '0.05-0.5', '0.5-2', '2+ ETH'])),
       parAcheteursT2: groupe((f) => tranche(f.t2a, [1, 5, 20], ['0', '1-4', '5-19', '20+'])),
       parEthT2: groupe((f) => tranche(f.t2e, [0.1, 0.5, 2], ['<0.1 ETH', '0.1-0.5', '0.5-2', '2+ ETH'])),
+      /* la part vivante PAR BANDE du score de force (23/10) : la preuve que le score separe
+         bien les survivants, mesuree AVANT que la bande ne s'affiche sur une alerte (OBS strict) */
+      parScore: groupe((f) => { const s = forceNaissance(f); return s ? s.band : null; }),
       parPasseDev: groupe((f) => (f.devAvant == null ? 'unknown' : f.devAvant === 0 ? 'first launch' : f.devAvant < 5 ? '1-4 before' : '5+ before')),
       parDevDejaVivant: groupe((f) => (f.devAvant ? (f.devVivantAvant ? 'a previous one lived 24 h' : 'none lived 24 h') : null)),
       parHeureUtc: groupe((f) => tranche(new Date(f.t).getUTCHours(), [6, 12, 18, 24], ['00-06', '06-12', '12-18', '18-24'])),
@@ -942,7 +979,23 @@ function cree(deps) {
     }
     return out;
   };
-  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, fraiches, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES, _registre: () => etat.grappes };
+  /* ---- LE SCORE DE FORCE D'UN JETON (23/10/2026), LECTURE SEULE, OBSERVATION STRICTE ----
+   * Rend la bande (weak/medium/strong) batie sur les SEULS traits presents au T+2 (forceNaissance)
+   * et la part VIVANTE mesuree de cette bande (parScore du bilan en cache, null sous BILAN_ASSEZ),
+   * plus la base (tout) pour comparer. Ne lit JAMAIS f.s du jeton lui-meme : un predicteur, pas le
+   * resultat. Rend null si inconnu ou sans T+2 (IGNITION). Aucune ecriture, aucune porte d'achat :
+   * une alerte peut l'appeler par adresse pour MONTRER la force, jamais pour decider. */
+  function scoreNaissance(j) {
+    const f = F.get(adr(j)); if (!f) return null;
+    const s = forceNaissance(f); if (!s) return null;
+    const b = bilan();
+    const cell = (b.parScore && b.parScore[s.band]) || null;
+    const part = (h) => (cell && cell[h] ? { vivantsPct: cell[h].assez ? cell[h].vivantsPct : null, mesures: cell[h].mesures, assez: cell[h].assez } : null);
+    return { band: s.band, score: s.score, traits: s.traits, seuil: BILAN_ASSEZ,
+      survie: { '24h': part('24h'), '7j': part('7j') },
+      base: { '24h': b.tout['24h'] ? b.tout['24h'].vivantsPct : null, '7j': b.tout['7j'] ? b.tout['7j'].vivantsPct : null } };
+  }
+  return { naissance, aLire, meta, soldesALire, solde, detenteursALire, detenteurs, tic, bilan, vue, gouvernance, douteuxDe, fraiches, scoreNaissance, _fiches: F, _etat: () => etat, _grappes: () => MEMBRES, _registre: () => etat.grappes };
 }
 
-module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, clesDe, clesProches, distanceDL, CLONE_DL_MS, JOURS_MEMOIRE, REMPLISSAGE, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };
+module.exports = { cree, analyseTransferts, TOPIC_TRANSFER, EXCLUS_FIXES, BLOCS_24H, themesDe, reseauxDe, forceNaissance, BANDES, clesDe, clesProches, distanceDL, CLONE_DL_MS, JOURS_MEMOIRE, REMPLISSAGE, HORIZONS, THEMES, META_PAR_CYCLE, BILAN_ASSEZ, VIVANT_LIQ, JOURS_GARDES, retardAdmisMin, SEL_BALANCE, LOT_RPC, SOLDES_H, ORDRES_H };

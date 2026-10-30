@@ -197,6 +197,12 @@ function cree(deps) {
   async function alerte(genre, cle, jeton, a) {
     const texte = SP.texteAlerte(Object.assign({ explorer: deps.explorer }, a), maintenant());
     const pub = a.pub ? Object.assign({ verdict: a.verdict, symbole: a.symbole, ageMin: a.ageMin, courbe: a.courbe, capUsd: a.capUsd, promo: a.promo }, a.pub) : null;
+    /* la force a la naissance (23/10), OBSERVATION STRICTE : MONTREE sur l'alerte quand le jeton a
+       deja son T+2 (carnet.scoreNaissance, LECTURE SEULE ; null au T+0 et pour IGNITION) — jamais
+       un conseil d'achat, jamais branchee sur une porte. La metrique est la SURVIE, pas +30 min. */
+    if (pub && deps.carnet && typeof deps.carnet.scoreNaissance === 'function') {
+      try { const sc = deps.carnet.scoreNaissance(jeton); if (sc) pub.force = sc; } catch (e) { /* une force illisible reste illisible */ }
+    }
     const ok = await deps.envoie(genre, cle, jeton, texte, pub);
     etat.alertes++;
     return { ok, texte };
