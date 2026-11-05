@@ -1127,6 +1127,15 @@ module.exports = {
   SMASH_MIN_BET: parseInt(env('SMASH_MIN_BET', '1'), 10),
   SMASH_MAX_BET: parseInt(env('SMASH_MAX_BET', '1000'), 10),
 
+  // ---- SWOGE Roulette (05/11/2026) ----
+  // Roue europeenne : 37 cases equiprobables, le seul avantage maison est le 0.
+  // RTP = 36/37 ~= 97,297 % sur TOUT pari standard (pas de table de poids : les
+  // cotes donnent la marge). ROULETTE_MIN_BET = mise minimale PAR pari posee sur
+  // le tapis ; ROULETTE_MAX_BET = plafond de la SOMME des mises d'une manche.
+  // Exposition maximale d'une manche = ROULETTE_MAX_BET x 36 (tout sur un plein).
+  ROULETTE_MIN_BET: parseInt(env('ROULETTE_MIN_BET', '1'), 10),
+  ROULETTE_MAX_BET: parseInt(env('ROULETTE_MAX_BET', '1000'), 10),
+
   // ---- SWOGE Blackjack ----
   BJ_MAX_BET: parseInt(env('BJ_MAX_BET', '100000'), 10),  // max $SWOGE per hand
   BJ_MIN_BET: parseInt(env('BJ_MIN_BET', '1'), 10),

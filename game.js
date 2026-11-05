@@ -351,6 +351,54 @@ const MINW = WEI(cfg.MIN_WITHDRAW);
 const BN = (n) => ethers.BigNumber.from(n);
 const MS_YEAR = BN('31536000000'); // 365*24*3600*1000
 
+/* ---- SWOGE Roulette : roue europeenne (05/11/2026) ----
+ * 37 cases (0-36), toutes equiprobables ; le seul avantage maison est le 0
+ * (RTP = 36/37 ~= 97,297 % sur TOUT pari standard — pas de table de poids, la
+ * marge vient des cotes). LE SERVEUR FAIT FOI : il tient le CATALOGUE de TOUS les
+ * paris legaux, chacun identifie par la liste TRIEE de ses cases. Le gain se
+ * deduit du NOMBRE de cases couvertes (cotes standard) :
+ *   1 -> 35:1   2 -> 17:1   3 -> 11:1   4 -> 8:1   6 -> 5:1   12 -> 2:1   18 -> 1:1
+ * Ainsi le client ne peut NI inventer une couverture (une liste de cases absente
+ * du catalogue est refusee) NI un multiplicateur (il tombe du nombre de cases). */
+const ROULETTE_ROUGE = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+const ROULETTE_PAIE = { 1: 35, 2: 17, 3: 11, 4: 8, 6: 5, 12: 2, 18: 1 };
+/* L'ordre des cases sur la roue (sens horaire depuis le 0) : pour l'animation de la
+   page seulement — le tirage est un entier uniforme 0-36, l'ordre n'influe en rien. */
+const ROULETTE_ROUE = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+/* Le catalogue : cle = cases triees jointes par '-'. num(col,row) = la case du tapis
+   (colonne 0-11, rangee 0-2 ; rangee 0 = {1,4,..}, 1 = {2,5,..}, 2 = {3,6,..}). */
+function _rouletteCatalogue() {
+  const legaux = new Set();
+  const num = (col, row) => col * 3 + row + 1;
+  const pose = (ns) => legaux.add(ns.slice().sort((a, b) => a - b).join('-'));
+  for (let n = 0; n <= 36; n++) pose([n]);                                   // plein (35)
+  for (let c = 0; c < 12; c++) {                                             // cheval (17)
+    pose([num(c, 0), num(c, 1)]); pose([num(c, 1), num(c, 2)]);              //   vertical
+    if (c < 11) for (let r = 0; r < 3; r++) pose([num(c, r), num(c + 1, r)]); //   horizontal
+  }
+  pose([0, 1]); pose([0, 2]); pose([0, 3]);                                  //   chevaux avec le 0
+  for (let c = 0; c < 12; c++) pose([num(c, 0), num(c, 1), num(c, 2)]);      // transversale (11)
+  pose([0, 1, 2]); pose([0, 2, 3]);                                          // trio (11)
+  for (let c = 0; c < 11; c++) for (let r = 0; r < 2; r++)                   // carre (8)
+    pose([num(c, r), num(c, r + 1), num(c + 1, r), num(c + 1, r + 1)]);
+  pose([0, 1, 2, 3]);                                                        // premiers quatre (8)
+  for (let c = 0; c < 11; c++)                                              // sixain (5)
+    pose([num(c, 0), num(c, 1), num(c, 2), num(c + 1, 0), num(c + 1, 1), num(c + 1, 2)]);
+  for (let row = 0; row < 3; row++) { const ns = []; for (let c = 0; c < 12; c++) ns.push(num(c, row)); pose(ns); } // colonne (2)
+  pose([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);                            // douzaine (2)
+  pose([13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+  pose([25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]);
+  const rouge = [], noir = [], pair = [], impair = [], bas = [], haut = []; // chances simples (1)
+  for (let n = 1; n <= 36; n++) {
+    (ROULETTE_ROUGE.has(n) ? rouge : noir).push(n);
+    (n % 2 === 0 ? pair : impair).push(n);
+    (n <= 18 ? bas : haut).push(n);
+  }
+  pose(rouge); pose(noir); pose(pair); pose(impair); pose(bas); pose(haut);
+  return legaux;
+}
+const ROULETTE_LEGAUX = _rouletteCatalogue();
+
 class Game {
   constructor() {
     /* Les paris sportifs. Ils vivent plus longtemps qu'une manche : poses
@@ -6164,6 +6212,60 @@ class Game {
     }
     this._manche(p, 'smash', bet, payout, { jeton });
     return { mult, payout, bet };
+  }
+
+  /**
+   * SWOGE Roulette : roue europeenne (0-36). `paris` = [{ numeros:[...], bet }].
+   * Synchrone comme spin() : debite la SOMME des mises du bon coffre AVANT le
+   * tirage (Node mono-thread => deux manches ne passent pas deux fois la garde),
+   * tire UN numero provably-fair (HMAC(serverSeed, clientSeed:nonce) % 37, puis
+   * nonce++), paie la somme des paris gagnants. Le serveur REFUSE tout pari dont
+   * les cases ne forment pas un pari legal (ROULETTE_LEGAUX) ; le gain se deduit
+   * du nombre de cases (ROULETTE_PAIE), jamais d'un multiplicateur du client.
+   * Retourne { numero, paris, totalBet, payout, jeton, balance, betBalance,
+   * fairness }, null (fonds insuffisants) ou { error }.
+   */
+  rouletteSpin(addr, paris, jetonRaw) {
+    const p = this._p(addr);
+    const jeton = Game.jetonMise(jetonRaw);     // coffre choisi, fige pour CETTE manche
+    if (!Array.isArray(paris) || paris.length === 0) return { error: 'no bets' };
+    if (paris.length > 64) return { error: 'too many bets' };
+    // Valider chaque pari sur le catalogue, borner, SOMMER les mises (0 debit ici)
+    const mis = [];
+    let totalBet = 0;
+    for (const b of paris) {
+      const bet = Math.floor(Number(b && b.bet));
+      if (!(bet >= 1)) return { error: 'bad bet' };
+      if (bet < cfg.ROULETTE_MIN_BET) return { error: 'min bet is ' + cfg.ROULETTE_MIN_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE') };
+      if (!Array.isArray(b.numeros) || b.numeros.length === 0) return { error: 'bad bet' };
+      const ns = b.numeros.map((n) => Math.floor(Number(n)));
+      if (ns.some((n) => !(n >= 0 && n <= 36))) return { error: 'bad bet' };
+      const uniq = [...new Set(ns)];
+      if (uniq.length !== ns.length) return { error: 'illegal bet' };
+      const cle = uniq.slice().sort((x, y) => x - y).join('-');
+      if (!ROULETTE_LEGAUX.has(cle)) return { error: 'illegal bet' };
+      mis.push({ numeros: uniq.slice().sort((x, y) => x - y), bet });
+      totalBet += bet;
+    }
+    if (totalBet < 1) return { error: 'no bets' };
+    if (totalBet > cfg.ROULETTE_MAX_BET) return { error: 'max bet is ' + cfg.ROULETTE_MAX_BET + (jeton === 'swogebet' ? ' $SWOGEBET' : ' $SWOGE') };
+    const totalWei = WEI(totalBet);
+    if ((jeton === 'swogebet' ? (p.betBalance || BN(0)) : p.balance).lt(totalWei)) return null;
+    this._debiteMise(p, totalWei, jeton);       // garde + debit, UNE fois, sur le bon coffre
+    p.dropsToday++;
+    this._markWager(p, totalWei, 'roulette');   // pose p.nonceDebut AVANT le tirage
+    const h = crypto.createHmac('sha256', this.serverSeed).update(p.clientSeed + ':' + p.nonce).digest('hex');
+    p.nonce++;
+    const numero = Number(BigInt('0x' + h.slice(0, 15)) % 37n);  // 0-36 uniforme, UN seul tirage
+    let payout = 0;
+    for (const b of mis) {
+      b.gagne = b.numeros.includes(numero);
+      if (b.gagne) payout += b.bet * (ROULETTE_PAIE[b.numeros.length] + 1);  // RETOUR total (mise comprise)
+    }
+    if (payout > 0) { this._payeGain(p, WEI(payout), jeton); p.winsToday++; }
+    this._manche(p, 'roulette', totalBet, payout, { jeton });
+    return { numero, paris: mis, totalBet, payout, jeton,
+      balance: this.balanceStr(addr), betBalance: this.betBalanceStr(addr), fairness: this.fairness(addr) };
   }
 
   volcanoMeterOf(addr) { return this._p(addr).volcanoMeter || 0; }

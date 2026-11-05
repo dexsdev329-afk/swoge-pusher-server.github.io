@@ -372,7 +372,7 @@ const NOM_TABLE = { holdem: "Casino Hold'em", three: 'Three Card', hilo: 'Hi-Lo'
                     plinko: 'Plinko', bj: 'Blackjack', smash: 'Smash', spin: 'SWOGE Spin',
                     boulier: 'Boulier',
                     crash: 'Crash', p4: 'Connect 4', mp: 'Tic-Tac-Toe', dm: 'Checkers',
-                    paris: 'SWOGE Bet', bonanza: 'SWOGE Bonanza',
+                    paris: 'SWOGE Bet', bonanza: 'SWOGE Bonanza', roulette: 'Roulette',
                     dod: 'DEAD SWOGE', chenil: 'SWOGE Kennel' };
 /* L'image du jeu accompagne l'annonce. Ce sont les MEMES vignettes que sur la
    page des jeux, extraites une fois dans media/ : une annonce illustree se
@@ -493,6 +493,7 @@ const PAGE_JEU = {
   hilo: 'swoge_casino.html?game=hilo', mines: 'swoge_casino.html?game=mines',
   plinko: 'plinko.html', bj: 'swoge_blackjack.html', smash: 'swoge_smash.html',
   spin: 'swoge_spin.html', boulier: 'boulier.html', crash: 'crash.html',
+  roulette: 'roulette.html',
   p4: 'connect4.html', mp: 'morpion.html', dm: 'dames.html',
   bonanza: 'swoge_bonanza.html',
   dod: 'swoge_dod.html',
@@ -8298,6 +8299,20 @@ wss.on('connection', (ws) => {
         notifyTableWin(ws.addr, 'smash', { net: r.payout - r.bet, staked: r.bet,
                                            payout: r.payout, note: `${r.mult}×` }, Game.jetonMise(m.jeton));
         return send(ws, { type: 'spinResult', mult: r.mult, payout: r.payout, bet: r.bet,
+                          jeton: m.jeton === 'swogebet' ? 'swogebet' : 'swoge',
+                          balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
+      }
+      if (m.type === 'rouletteSpin') {
+        // SWOGE Roulette : roue europeenne 0-36, provably-fair, meme solde partage.
+        // L'adresse est TOUJOURS ws.addr (jamais une adresse lue dans m) ; le serveur
+        // revalide la legalite de chaque pari et le coffre a chaque geste.
+        const r = game.rouletteSpin(ws.addr, m.paris, m.jeton);
+        if (r === null) return send(ws, { type: 'need_deposit', balance: game.balanceStr(ws.addr) });
+        if (r.error) return send(ws, { type: 'error', error: r.error });
+        persistSoon();
+        notifyTableWin(ws.addr, 'roulette', { net: r.payout - r.totalBet, staked: r.totalBet,
+                                              payout: r.payout, note: `#${r.numero}` }, Game.jetonMise(m.jeton));
+        return send(ws, { type: 'rouletteResult', numero: r.numero, paris: r.paris, totalBet: r.totalBet, payout: r.payout,
                           jeton: m.jeton === 'swogebet' ? 'swogebet' : 'swoge',
                           balance: game.balanceStr(ws.addr), betBalance: game.betBalanceStr(ws.addr), fairness: game.fairness(ws.addr) });
       }
